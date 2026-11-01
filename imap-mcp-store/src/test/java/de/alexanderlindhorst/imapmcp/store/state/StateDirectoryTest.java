@@ -42,6 +42,8 @@ class StateDirectoryTest {
     void captureLogs() {
         logger = (Logger) LoggerFactory.getLogger("de.alexanderlindhorst.imapmcp.store.state");
         logger.setLevel(Level.DEBUG);
+        // keep logback's default console appender out of the stdout assertion (production logs to file)
+        logger.setAdditive(false);
         logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
@@ -50,6 +52,7 @@ class StateDirectoryTest {
     @AfterEach
     void detach() {
         logger.detachAppender(logs);
+        logger.setAdditive(true);
     }
 
     private String logText() {
