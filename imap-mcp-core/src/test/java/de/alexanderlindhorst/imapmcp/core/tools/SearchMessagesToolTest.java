@@ -284,8 +284,8 @@ class SearchMessagesToolTest {
         long unseenBefore = env.unseenCount();
         List<String> one = commands(() -> env.ok(SearchEnv.T1, args("page_size", 1, "subject", "Subject")));
         List<String> hundred = commands(() -> env.ok(SearchEnv.T1, args("page_size", 100, "subject", "Subject")));
-        assertThat(one).hasSize(5).hasSameSizeAs(hundred); // EXAMINE, SEARCH, FETCH UID, FETCH page, CLOSE
-        assertThat(hundred.stream().filter(c -> c.contains("FETCH")).count()).isEqualTo(2);
+        assertThat(one).hasSize(4).hasSameSizeAs(hundred); // EXAMINE, SEARCH, FETCH page, CLOSE (#27: no UID FETCH)
+        assertThat(hundred.stream().filter(c -> c.contains("FETCH")).count()).isEqualTo(1);
         assertThat(hundred).anyMatch(c -> c.contains("EXAMINE")).noneMatch(c -> c.contains("SELECT"))
                 .noneMatch(c -> c.contains("STORE")).noneMatch(c -> c.contains("EXPUNGE"));
         for (String c : hundred) {
@@ -373,8 +373,8 @@ class SearchMessagesToolTest {
         assertThat(out).containsEntry("total", 2);
     }
 
-    // #28 AC3: the candidates' FETCH carries INTERNALDATE together with UID, so since adds no command at all
-    // compared with #27 (EXAMINE, SEARCH, FETCH, FETCH, CLOSE); a search that is only a since is not special.
+    // #28 AC3: the candidates' FETCH carries INTERNALDATE together with UID, so since costs exactly one FETCH more
+    // than a search without it (EXAMINE, SEARCH, FETCH, FETCH, CLOSE vs EXAMINE, SEARCH, FETCH, CLOSE).
     @Test
     void sinceAddsNoCommandBecauseInternaldateRidesOnTheUidFetch() throws Exception {
         for (int i = 0; i < 6; i++) {
@@ -384,7 +384,8 @@ class SearchMessagesToolTest {
         List<String> without = commands(() -> env.ok(SearchEnv.T1, args("subject", "m")));
         List<String> with = commands(() -> env.ok(SearchEnv.T1,
                 args("subject", "m", "since", "2026-03-05T10:00:02Z", "page_size", 1)));
-        assertThat(with).hasSameSizeAs(without).hasSize(5);
+        assertThat(without).hasSize(4);
+        assertThat(with).hasSize(5);
         List<String> fetches = with.stream().filter(c -> c.contains("FETCH")).toList();
         assertThat(fetches).hasSize(2);
         assertThat(fetches.get(0)).contains("(UID INTERNALDATE)").doesNotContain("ENVELOPE");
