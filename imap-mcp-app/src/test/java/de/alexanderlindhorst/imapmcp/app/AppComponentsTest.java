@@ -149,7 +149,8 @@ class AppComponentsTest {
         String handle = (String) msgs.get(0).get("handle");
 
         Map<String, Object> msg = call(byName, ex, "get_message", Map.of("account", acct, "message", handle));
-        assertThat(msg).containsKey("body");
+        assertThat(((Map<String, Object>) ((Map<String, Object>) msg.get("untrusted")).get("body")).get("text"))
+                .isEqualTo("body text");
         Map<String, Object> atts = call(byName, ex, "list_attachments", Map.of("account", acct, "message", handle));
         assertThat(atts.get("total")).isEqualTo(0);
     }
