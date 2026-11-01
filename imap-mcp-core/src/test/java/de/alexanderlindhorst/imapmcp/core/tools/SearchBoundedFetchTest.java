@@ -181,4 +181,26 @@ class SearchBoundedFetchTest {
         List<String> hundredC = commands(() -> env.ok(SearchEnv.T1, args("page_size", 100, "subject", "Subject")));
         assertThat(oneC).hasSameSizeAs(hundredC).hasSize(4); // EXAMINE, SEARCH, FETCH page, CLOSE
     }
+
+    // deficit fetch: the folder view is stale (messages expunged after EXISTS was cached), so the boundary is too high
+    @Test
+    void staleBoundaryIsCompensatedByADeficitFetch() throws Exception {
+        env.deliver(10);
+        java.util.Properties props = new java.util.Properties();
+        props.put("mail.imaps.ssl.trust", "*");
+        props.put("mail.imaps.ssl.checkserveridentity", "false");
+        try (jakarta.mail.Store st = jakarta.mail.Session.getInstance(props).getStore("imaps")) {
+            st.connect("127.0.0.1", env.greenMail.getImaps().getPort(), SearchEnv.USER, "pw");
+            org.eclipse.angus.mail.imap.IMAPFolder f = (org.eclipse.angus.mail.imap.IMAPFolder) st.getFolder("INBOX");
+            f.open(jakarta.mail.Folder.READ_ONLY);
+            long top = ((jakarta.mail.UIDFolder) f).getUID(f.getMessage(10));
+            assertThat(f.getMessageCount()).isEqualTo(10);
+            env.expungeUids(top, top - 1);
+            de.alexanderlindhorst.imapmcp.core.search.PageFetcher.Page page =
+                    de.alexanderlindhorst.imapmcp.core.search.PageFetcher.page(f, null, 0, 3);
+            assertThat(page.rows()).extracting(r -> r.uid()).containsExactly(top - 2, top - 3, top - 4);
+            assertThat(page.hasMore()).isTrue();
+            f.close(false);
+        }
+    }
 }
