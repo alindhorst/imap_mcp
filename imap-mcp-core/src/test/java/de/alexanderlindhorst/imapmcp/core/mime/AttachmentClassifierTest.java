@@ -1,0 +1,276 @@
+package de.alexanderlindhorst.imapmcp.core.mime;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.icegreen.greenmail.junit5.GreenMailExtension;
+import com.icegreen.greenmail.user.GreenMailUser;
+import com.icegreen.greenmail.util.ServerSetupTest;
+import de.alexanderlindhorst.imapmcp.core.mime.AttachmentList.Entry;
+import jakarta.activation.DataHandler;
+import jakarta.mail.Folder;
+import jakarta.mail.Message;
+import jakarta.mail.Session;
+import jakarta.mail.Store;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.internet.MimeUtility;
+import jakarta.mail.util.ByteArrayDataSource;
+import java.util.Properties;
+import org.eclipse.angus.mail.imap.IMAPFolder;
+import org.eclipse.angus.mail.imap.protocol.BODYSTRUCTURE;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+/** Fixtures are real BODYSTRUCTUREs fetched from GreenMail by UID over IMAPS (no body fetch). */
+class AttachmentClassifierTest {
+
+    @RegisterExtension
+    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS);
+
+    private GreenMailUser user;
+
+    private static final Session MAIL = Session.getInstance(new Properties());
+
+    @BeforeEach
+    void purge() throws Exception {
+        GREEN_MAIL.purgeEmailFromAllMailboxes();
+        user = GREEN_MAIL.setUser("user@localhost", "user", "secret");
+    }
+
+    // ---- fixture helpers ----
+
+    private static MimeBodyPart text(String subtype, String content) throws Exception {
+        MimeBodyPart p = new MimeBodyPart();
+        p.setText(content, "UTF-8", subtype);
+        return p;
+    }
+
+    private static MimeBodyPart binary(String type, byte[] data, String disposition) throws Exception {
+        MimeBodyPart p = new MimeBodyPart();
+        p.setDataHandler(new DataHandler(new ByteArrayDataSource(data, type)));
+        if (disposition != null) {
+            p.setHeader("Content-Disposition", disposition);
+        }
+        return p;
+    }
+
+    private static MimeMessage message(MimeMultipart mp) throws Exception {
+        MimeMessage m = new MimeMessage(MAIL);
+        m.setFrom("a@localhost");
+        m.setRecipients(Message.RecipientType.TO, "user@localhost");
+        m.setSubject("fixture");
+        m.setContent(mp);
+        m.saveChanges();
+        return m;
+    }
+
+    private BODYSTRUCTURE structureOf(MimeMessage msg) throws Exception {
+        user.deliver(msg);
+        Properties props = new Properties();
+        props.put("mail.imaps.ssl.trust", "*");
+        props.put("mail.imaps.ssl.checkserveridentity", "false");
+        try (Store store = Session.getInstance(props).getStore("imaps")) {
+            store.connect("127.0.0.1", GREEN_MAIL.getImaps().getPort(), "user", "secret");
+            IMAPFolder inbox = (IMAPFolder) store.getFolder("INBOX");
+            inbox.open(Folder.READ_ONLY);
+            try {
+                long uid = inbox.getUID(inbox.getMessage(1));
+                int seq = inbox.getMessageByUID(uid).getMessageNumber();
+                return (BODYSTRUCTURE) inbox.doCommand(p -> p.fetchBodyStructure(seq));
+            } finally {
+                inbox.close(false);
+            }
+        }
+    }
+
+    private static String enc(String s) throws Exception {
+        return MimeUtility.encodeText(s, "UTF-8", "B");
+    }
+
+    // ---- AC1 ----
+
+    @Test
+    void textPlusPdfIsOneAttachment() throws Exception {
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "hello"));
+        mp.addBodyPart(binary("application/pdf", new byte[300], "attachment; filename=\"Report.PDF\""));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, "1");
+        assertThat(list.entries()).hasSize(1);
+        Entry e = list.entries().get(0);
+        assertThat(e.part()).isEqualTo("2");
+        assertThat(e.untrusted().contentType()).isEqualTo("application/pdf");
+        assertThat(e.untrusted().filename()).isEqualTo("Report.PDF");
+        assertThat(e.inline()).isFalse();
+        assertThat(e.size()).isGreaterThan(0).isLessThanOrEqualTo(310);
+        assertThat(list.total()).isEqualTo(1);
+        assertThat(list.truncated()).isFalse();
+        assertThat(AttachmentClassifier.hasAttachments(bs, "1")).isTrue();
+    }
+
+    // ---- AC2 ----
+
+    @Test
+    void alternativeOnlyHasNoAttachments() throws Exception {
+        MimeMultipart mp = new MimeMultipart("alternative");
+        mp.addBodyPart(text("plain", "hello"));
+        mp.addBodyPart(text("html", "<p>hello</p>"));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        assertThat(AttachmentClassifier.classify(bs, "1").entries()).isEmpty();
+        assertThat(AttachmentClassifier.hasAttachments(bs, "1")).isFalse();
+    }
+
+    // ---- AC3 ----
+
+    @Test
+    void relatedCidImageWithoutFilenameIsNotAnAttachment() throws Exception {
+        MimeMultipart related = new MimeMultipart("related");
+        related.addBodyPart(text("html", "<img src=cid:x>"));
+        MimeBodyPart img = binary("image/png", new byte[50], null);
+        img.setContentID("<x@localhost>");
+        related.addBodyPart(img);
+        BODYSTRUCTURE bs = structureOf(message(related));
+
+        assertThat(AttachmentClassifier.classify(bs, "1").entries()).isEmpty();
+        assertThat(AttachmentClassifier.hasAttachments(bs, "1")).isFalse();
+    }
+
+    @Test
+    void relatedCidImageWithFilenameIsInlineAttachment() throws Exception {
+        MimeMultipart related = new MimeMultipart("related");
+        related.addBodyPart(text("html", "<img src=cid:x>"));
+        MimeBodyPart img = binary("image/png", new byte[50], "inline; filename=\"logo.png\"");
+        img.setContentID("<x@localhost>");
+        related.addBodyPart(img);
+        BODYSTRUCTURE bs = structureOf(message(related));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, "1");
+        assertThat(list.entries()).hasSize(1);
+        assertThat(list.entries().get(0).part()).isEqualTo("2");
+        assertThat(list.entries().get(0).inline()).isTrue();
+        assertThat(list.entries().get(0).untrusted().filename()).isEqualTo("logo.png");
+        assertThat(AttachmentClassifier.hasAttachments(bs, "1")).isFalse();
+    }
+
+    // ---- AC4 ----
+
+    @Test
+    void forwardedMessageIsOneEntryWithoutRecursion() throws Exception {
+        MimeMultipart innerMp = new MimeMultipart("mixed");
+        innerMp.addBodyPart(text("plain", "inner"));
+        innerMp.addBodyPart(binary("application/pdf", new byte[20], "attachment; filename=\"inner.pdf\""));
+        MimeMessage inner = message(innerMp);
+
+        MimeBodyPart fwd = new MimeBodyPart();
+        fwd.setContent(inner, "message/rfc822");
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "see attached"));
+        mp.addBodyPart(fwd);
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, "1");
+        assertThat(list.entries()).hasSize(1);
+        assertThat(list.entries().get(0).part()).isEqualTo("2");
+        assertThat(list.entries().get(0).untrusted().contentType()).isEqualTo("message/rfc822");
+        assertThat(list.entries().get(0).untrusted().filename()).isNull();
+    }
+
+    // ---- AC5 ----
+
+    @Test
+    void hostileEncodedFilenameIsSanitized() throws Exception {
+        String hostile = "..\\..\\evil‮fdp.exe";
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "x"));
+        mp.addBodyPart(binary("application/octet-stream", new byte[5],
+                "attachment; filename=\"" + enc(hostile) + "\""));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        String name = AttachmentClassifier.classify(bs, "1").entries().get(0).untrusted().filename();
+        assertThat(name).isEqualTo("evilfdp.exe");
+    }
+
+    @Test
+    void rfc2231FilenameIsDecodedWithoutGlobalProperty() throws Exception {
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "x"));
+        mp.addBodyPart(binary("application/octet-stream", new byte[5],
+                "attachment; filename*=UTF-8''%C3%A4%2Ftxt.doc"));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        assertThat(AttachmentClassifier.classify(bs, "1").entries().get(0).untrusted().filename())
+                .isEqualTo("txt.doc");
+    }
+
+    @Test
+    void emptyFilenameBecomesNullAndUnnamedNonTextInMixedCounts() throws Exception {
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "x"));
+        mp.addBodyPart(binary("image/jpeg", new byte[5], "inline; filename=\"/\""));
+        mp.addBodyPart(binary("application/zip", new byte[5], null));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, "1");
+        assertThat(list.entries()).hasSize(2);
+        assertThat(list.entries().get(0).untrusted().filename()).isNull();
+        assertThat(list.entries().get(1).untrusted().filename()).isNull();
+        assertThat(list.entries().get(1).untrusted().contentType()).isEqualTo("application/zip");
+        assertThat(list.entries().get(1).inline()).isFalse();
+    }
+
+    // ---- AC6 ----
+
+    @Test
+    void capsEntriesAtHundredKeepingTrueTotal() throws Exception {
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "x"));
+        for (int i = 0; i < 150; i++) {
+            mp.addBodyPart(binary("application/pdf", new byte[3], "attachment; filename=\"f" + i + ".pdf\""));
+        }
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, "1");
+        assertThat(list.entries()).hasSize(100);
+        assertThat(list.total()).isEqualTo(150);
+        assertThat(list.truncated()).isTrue();
+    }
+
+    // ---- AC7 ----
+
+    @Test
+    void pathologicalNestingStopsWithoutException() throws Exception {
+        MimeMultipart current = new MimeMultipart("mixed");
+        current.addBodyPart(binary("application/pdf", new byte[3], "attachment; filename=\"deep.pdf\""));
+        for (int i = 0; i < 45; i++) {
+            MimeBodyPart wrapper = new MimeBodyPart();
+            wrapper.setContent(current);
+            MimeMultipart outer = new MimeMultipart("mixed");
+            outer.addBodyPart(wrapper);
+            current = outer;
+        }
+        BODYSTRUCTURE bs = structureOf(message(current));
+
+        AttachmentList list = AttachmentClassifier.classify(bs, null);
+        assertThat(list.entries()).isEmpty();
+    }
+
+    @Test
+    void nullStructureYieldsEmptyList() {
+        assertThat(AttachmentClassifier.classify(null, null).entries()).isEmpty();
+    }
+
+    @Test
+    void sizeOfBase64PartIsDecodedEstimate() throws Exception {
+        MimeMultipart mp = new MimeMultipart("mixed");
+        mp.addBodyPart(text("plain", "x"));
+        mp.addBodyPart(binary("application/pdf", new byte[3000], "attachment; filename=\"a.pdf\""));
+        BODYSTRUCTURE bs = structureOf(message(mp));
+
+        long size = AttachmentClassifier.classify(bs, "1").entries().get(0).size();
+        assertThat(size).isBetween(2900L, 3100L);
+    }
+}
