@@ -18,7 +18,7 @@ import org.slf4j.LoggerFactory;
  * Entry point for tools: leases an exclusive {@link IMAPStore} for one tool call (SPEC 5.5). The whole borrow,
  * including connect, TLS and LOGIN, is bounded by the acquire timeout: it runs on its own virtual thread and the
  * caller waits with a timeout (the pool's {@code maxWait} only covers waiting for a free slot). Admission control
- * (#19) wraps this seam later.
+ * is applied here, before any I/O.
  */
 public final class StoreLeases {
 
@@ -26,10 +26,17 @@ public final class StoreLeases {
 
     private final StorePool pool;
     private final Duration acquireTimeout;
+    private final Admission admission;
 
     public StoreLeases(StorePool pool, Duration acquireTimeout) {
+        this(pool, acquireTimeout, null);
+    }
+
+    /** {@code admission} may be null (no limiting, tests only); production wiring always passes one. */
+    public StoreLeases(StorePool pool, Duration acquireTimeout, Admission admission) {
         this.pool = Objects.requireNonNull(pool, "pool");
         this.acquireTimeout = Objects.requireNonNull(acquireTimeout, "acquireTimeout");
+        this.admission = admission;
     }
 
     /**
@@ -39,6 +46,19 @@ public final class StoreLeases {
     public ImapLease lease(PoolKey key, ToolCallContext ctx) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(ctx, "ctx");
+        // Fail fast before any I/O; the permit is handed to the lease, which releases it exactly once.
+        Admission.Permit permit = admission == null ? null : admission.tryAcquire(key);
+        try {
+            return borrow(key, ctx, permit);
+        } catch (Throwable t) {
+            if (permit != null) {
+                permit.close();
+            }
+            throw t;
+        }
+    }
+
+    private ImapLease borrow(PoolKey key, ToolCallContext ctx, Admission.Permit permit) {
         if (ctx.isCancelled()) {
             throw new StoreUnavailableException(new InterruptedException("cancelled"));
         }
@@ -72,7 +92,7 @@ public final class StoreLeases {
             discard(key, store);
             throw new StoreUnavailableException(new InterruptedException("cancelled"));
         }
-        return new ImapLease(pool, key, store, ctx);
+        return new ImapLease(pool, key, store, ctx, permit);
     }
 
     /** Marks the borrow as abandoned; returns the Store if it arrived in the meantime, else throws. */

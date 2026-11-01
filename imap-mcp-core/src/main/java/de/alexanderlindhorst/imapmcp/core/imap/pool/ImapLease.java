@@ -29,13 +29,15 @@ public final class ImapLease implements AutoCloseable {
     private final ToolCallContext ctx;
     private final AtomicBoolean broken = new AtomicBoolean();
     private final AtomicBoolean finished = new AtomicBoolean();
+    private final Admission.Permit permit; // nullable
     private IMAPFolder folder; // worker thread only
 
-    ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx) {
+    ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx, Admission.Permit permit) {
         this.pool = pool;
         this.key = key;
         this.store = Objects.requireNonNull(store, "store");
         this.ctx = ctx;
+        this.permit = permit;
         // Runs on the cancelling thread (deadline path): the Store is invalidated without waiting for the worker.
         // Note: store.close() alone does NOT unblock a worker stuck in a socket read (LOGOUT blocks as well);
         // what unblocks it is the executor's interrupt of the virtual worker thread, which closes the socket.
@@ -116,6 +118,10 @@ public final class ImapLease implements AutoCloseable {
             }
         } catch (Exception e) {
             LOG.debug("releasing store failed: {}", e.getClass().getSimpleName());
+        } finally {
+            if (permit != null) {
+                permit.close();
+            }
         }
     }
 }
