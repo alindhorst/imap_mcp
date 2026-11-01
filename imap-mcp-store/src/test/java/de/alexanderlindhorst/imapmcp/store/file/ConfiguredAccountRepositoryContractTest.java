@@ -23,7 +23,7 @@ class ConfiguredAccountRepositoryContractTest extends AccountRepositoryContract 
         accountsByTenant.forEach((t, a) -> perTenant.put(t, new ConfiguredAccountRepository(t, a, SALT)));
         return new AccountRepository() {
             @Override
-            public List<MailAccount> findByTenant(TenantId tenant) {
+            public List<de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount> findByTenant(TenantId tenant) {
                 return perTenant.values().stream().flatMap(r -> r.findByTenant(tenant).stream()).toList();
             }
 

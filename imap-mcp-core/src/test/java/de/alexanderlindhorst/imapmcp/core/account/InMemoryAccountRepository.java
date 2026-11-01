@@ -1,36 +1,37 @@
 package de.alexanderlindhorst.imapmcp.core.account;
 
-import de.alexanderlindhorst.imapmcp.core.tenancy.AccountHandle;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Trivial reference implementation; handle format is a stand-in, not the real derivation. */
-class InMemoryAccountRepository implements AccountRepository {
+/** Trivial reference implementation (test scope); handles use the real derivation with a fixed salt. */
+public class InMemoryAccountRepository implements AccountRepository {
 
     private final Map<TenantId, List<MailAccount>> accounts;
 
-    InMemoryAccountRepository(Map<TenantId, List<MailAccount>> accounts) {
+    public InMemoryAccountRepository(Map<TenantId, List<MailAccount>> accounts) {
         this.accounts = Map.copyOf(accounts);
     }
 
-    static String handle(TenantId tenant, AccountId account) {
-        return "acc_" + tenant.value() + "_" + account.value();
+    private static final byte[] SALT = new byte[AccountHandles.SALT_LENGTH];
+
+    public static String handle(TenantId tenant, AccountId account) {
+        return AccountHandles.derive(SALT, tenant, account);
     }
 
     @Override
-    public List<MailAccount> findByTenant(TenantId tenant) {
-        return accounts.getOrDefault(tenant, List.of());
+    public List<ResolvedAccount> findByTenant(TenantId tenant) {
+        return accounts.getOrDefault(tenant, List.of()).stream()
+                .map(a -> new ResolvedAccount(tenant, a, handle(tenant, a.id()))).toList();
     }
 
     @Override
     public Optional<ResolvedAccount> findByTenantAndHandle(TenantId tenant, String handle) {
-        if (AccountHandle.parse(handle).isEmpty()) {
+        if (!AccountHandles.isValid(handle)) {
             return Optional.empty();
         }
-        return findByTenant(tenant).stream().filter(a -> handle(tenant, a.id()).equals(handle)).findFirst()
-                .map(a -> new ResolvedAccount(tenant, a));
+        return findByTenant(tenant).stream().filter(r -> r.handle().equals(handle)).findFirst();
     }
 }

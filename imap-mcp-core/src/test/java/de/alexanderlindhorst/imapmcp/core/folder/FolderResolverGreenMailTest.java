@@ -50,7 +50,7 @@ class FolderResolverGreenMailTest {
         greenMail.setUser(USER + "@localhost", USER, "pw");
         MailAccount account = new MailAccount(new AccountId("a"), "label", null, "127.0.0.1",
                 greenMail.getImaps().getPort(), Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
-        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account));
+        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account, "acc_test"));
         CredentialStore credentials = (t, a) -> Optional.of(new Secret("pw".toCharArray()));
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
             p.put("mail.imaps.ssl.trust", "*");

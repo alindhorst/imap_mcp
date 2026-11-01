@@ -87,7 +87,7 @@ class ImapLeaseTest {
     private void useAccountOnPort(int port) {
         account = new MailAccount(new AccountId("a"), "label", null, "127.0.0.1", port,
                 Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
-        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account));
+        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account, "acc_test"));
     }
 
     private StoreLeases leases(Duration acquireTimeout) {

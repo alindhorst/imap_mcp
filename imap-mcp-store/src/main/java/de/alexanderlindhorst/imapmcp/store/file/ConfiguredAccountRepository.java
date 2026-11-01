@@ -18,26 +18,30 @@ import java.util.Optional;
 public final class ConfiguredAccountRepository implements AccountRepository {
 
     private final TenantId owner;
-    private final List<MailAccount> accounts;
+    private final List<ResolvedAccount> accounts;
     private final Map<String, ResolvedAccount> byHandle;
 
     public ConfiguredAccountRepository(TenantId owner, List<MailAccount> accounts, byte[] installationSalt) {
         this.owner = Objects.requireNonNull(owner, "owner");
-        this.accounts = List.copyOf(accounts);
+        List<MailAccount> configured = List.copyOf(accounts);
+        List<ResolvedAccount> resolved = new java.util.ArrayList<>();
         Map<String, ResolvedAccount> handles = new HashMap<>();
         java.util.Set<String> ids = new java.util.HashSet<>();
-        for (MailAccount account : this.accounts) {
+        for (MailAccount account : configured) {
             if (!ids.add(account.id().value())) {
                 throw new IllegalArgumentException("duplicate account id in configuration: " + account.id().value());
             }
-            handles.put(AccountHandles.derive(installationSalt, owner, account.id()),
-                    new ResolvedAccount(owner, account));
+            String handle = AccountHandles.derive(installationSalt, owner, account.id());
+            ResolvedAccount r = new ResolvedAccount(owner, account, handle);
+            handles.put(handle, r);
+            resolved.add(r);
         }
+        this.accounts = List.copyOf(resolved);
         this.byHandle = Map.copyOf(handles);
     }
 
     @Override
-    public List<MailAccount> findByTenant(TenantId tenant) {
+    public List<ResolvedAccount> findByTenant(TenantId tenant) {
         return owner.equals(tenant) ? accounts : List.of();
     }
 

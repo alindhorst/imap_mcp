@@ -10,7 +10,7 @@ import java.util.Optional;
  */
 public interface AccountRepository {
 
-    List<MailAccount> findByTenant(TenantId tenant);
+    List<ResolvedAccount> findByTenant(TenantId tenant);
 
     /** Empty for unknown, foreign or malformed handles; never throws on client input. */
     Optional<ResolvedAccount> findByTenantAndHandle(TenantId tenant, String handle);
