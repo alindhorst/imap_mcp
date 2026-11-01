@@ -34,6 +34,10 @@ class MessageHandlesTest {
     private static final MessageHandles HANDLES = new MessageHandles(RING);
     private static final MessageRef REF = new MessageRef("INBOX", 12345L, 678L);
 
+    private static String cp(int codePoint) {
+        return Character.toString(codePoint);
+    }
+
     private static byte[] raw(String handle) {
         return Base64.getUrlDecoder().decode(handle.substring(3));
     }
@@ -44,7 +48,7 @@ class MessageHandlesTest {
 
     @Test
     void roundTripIncludingNonAsciiFolder() {
-        for (String folder : new String[] {"INBOX", "Entwürfe/Ärger", "日本語", "a b/c.d"}) {
+        for (String folder : new String[] {"INBOX", "Entw" + cp(0xFC) + "rfe/" + cp(0xC4) + "rger", cp(0x65E5) + cp(0x672C) + cp(0x8A9E), "a b/c.d"}) {
             MessageRef ref = new MessageRef(folder, 4294967295L, 4294967295L);
             String h = HANDLES.encode(T, A, ref);
             assertThat(h).startsWith("m1.").doesNotContain("=");
@@ -134,7 +138,7 @@ class MessageHandlesTest {
 
     @Test
     void folderLimitIs1000Bytes() {
-        String ok = "ä".repeat(500);
+        String ok = cp(0xE4).repeat(500);
         assertThat(ok.getBytes(StandardCharsets.UTF_8)).hasSize(1000);
         MessageRef ref = new MessageRef(ok, 1, 1);
         assertThat(HANDLES.decode(T, A, HANDLES.encode(T, A, ref))).isEqualTo(new Decoded.Ok(ref));
