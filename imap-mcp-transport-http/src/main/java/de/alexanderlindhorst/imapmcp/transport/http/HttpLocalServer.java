@@ -44,6 +44,9 @@ public final class HttpLocalServer {
     private final String bind;
     private final int port;
     private final boolean allowNonLoopbackBind;
+    private final int maxRequestBytes;
+    private final String serverName;
+    private final String serverVersion;
     private final McpJsonMapper jsonMapper;
     private final List<McpStatelessServerFeatures.SyncToolSpecification> tools;
     private final Function<HttpServletRequest, McpTransportContext> contextExtractor;
@@ -60,6 +63,9 @@ public final class HttpLocalServer {
         this.bind = b.bind;
         this.port = b.port;
         this.allowNonLoopbackBind = b.allowNonLoopbackBind;
+        this.maxRequestBytes = b.maxRequestBytes;
+        this.serverName = b.serverName;
+        this.serverVersion = b.serverVersion;
         this.jsonMapper = b.jsonMapper;
         this.tools = List.copyOf(b.tools);
         this.contextExtractor = b.contextExtractor;
@@ -77,6 +83,9 @@ public final class HttpLocalServer {
         private String bind = "127.0.0.1";
         private int port = 8080;
         private boolean allowNonLoopbackBind;
+        private int maxRequestBytes = MAX_REQUEST_BYTES;
+        private String serverName = "imap-mcp";
+        private String serverVersion = "dev";
         private McpJsonMapper jsonMapper = McpJsonDefaults.getMapper();
         private final List<McpStatelessServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
         private Function<HttpServletRequest, McpTransportContext> contextExtractor = req -> McpTransportContext.EMPTY;
@@ -97,6 +106,22 @@ public final class HttpLocalServer {
 
         public Builder allowNonLoopbackBind(boolean allow) {
             this.allowNonLoopbackBind = allow;
+            return this;
+        }
+
+        /** Upper bound of a request body; defaults to {@link #MAX_REQUEST_BYTES}. */
+        public Builder maxRequestBytes(int bytes) {
+            if (bytes < 1) {
+                throw new IllegalArgumentException("maxRequestBytes must be positive");
+            }
+            this.maxRequestBytes = bytes;
+            return this;
+        }
+
+        /** Name and version announced in the MCP initialize response. */
+        public Builder serverInfo(String name, String version) {
+            this.serverName = Objects.requireNonNull(name, "name");
+            this.serverVersion = Objects.requireNonNull(version, "version");
             return this;
         }
 
@@ -149,10 +174,10 @@ public final class HttpLocalServer {
                     + "the host/network level", bind);
         }
         HttpServletStatelessServerTransport transport = HttpServletStatelessServerTransport.builder()
-                .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(MAX_REQUEST_BYTES)
+                .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
                 .contextExtractor(contextExtractor::apply).build();
         // validateToolInputs(false): input validation is ours (ValidatingToolHandler), the SDK's error shape differs.
-        mcpServer = McpServer.sync(transport).serverInfo("imap-mcp", "0.1.0").immediateExecution(true)
+        mcpServer = McpServer.sync(transport).serverInfo(serverName, serverVersion).immediateExecution(true)
                 .validateToolInputs(false).tools(tools).build();
 
         QueuedThreadPool pool = new QueuedThreadPool();
