@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  File-only logging (SPEC 5.6): no ConsoleAppender, stdout is the MCP protocol in stdio mode.
+  The properties are set by LoggingBootstrap before the first SLF4J call:
+    IMAP_MCP_LOG_DIR             log directory
+    IMAP_MCP_LOG_LEVEL           root level (TRACE|DEBUG|INFO|WARN|ERROR, default INFO)
+    imapmcp.log.maxFileSize      rotation size (default 10MB; overridable for tests)
+-->
+<configuration>
+  <!-- JUL levels follow logback levels, so Angus' FINE/FINEST protocol records are dropped at the source. -->
+  <contextListener class="ch.qos.logback.classic.jul.LevelChangePropagator">
+    <resetJUL>true</resetJUL>
+  </contextListener>
+
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${IMAP_MCP_LOG_DIR:-${java.io.tmpdir}/imap-mcp-logs}/imap-mcp.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${IMAP_MCP_LOG_DIR:-${java.io.tmpdir}/imap-mcp-logs}/imap-mcp.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+      <maxFileSize>${imapmcp.log.maxFileSize:-10MB}</maxFileSize>
+      <maxHistory>7</maxHistory>
+      <totalSizeCap>100MB</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %X{req} %X{tenant} %X{tool} %X{acct} %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Level caps: a named logger with an explicit level is not raised by the root level. -->
+  <logger name="org.eclipse.angus.mail" level="INFO"/>
+  <logger name="jakarta.mail" level="INFO"/>
+  <logger name="io.modelcontextprotocol" level="INFO"/>
+  <logger name="org.eclipse.jetty" level="INFO"/>
+  <!-- Opt-in IMAP protocol trace (#15, imap.trace: true); events only exist when the trace is enabled. -->
+  <logger name="imapmcp.imap.trace" level="DEBUG"/>
+
+  <root level="${IMAP_MCP_LOG_LEVEL:-INFO}">
+    <appender-ref ref="FILE"/>
+  </root>
+</configuration>
