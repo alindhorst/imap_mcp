@@ -111,16 +111,17 @@ class SearchTermMapperGreenMailTest {
     @Test
     void combinationReturnsExactlyTheExpectedUids() throws Exception {
         SearchCriteria c = new SearchCriteria(null, null, null, null, null, null, null, false, null, null, null,
-                List.of("proj"), null).withFrom("alice");
+                List.of("proj"), null).withFrom("alice@localhost");
         List<Long> found = search(new SearchTermMapper().map(c));
         assertThat(found).containsExactly(uids.get(0));
     }
 
     @Test
+    // GreenMail matches FROM on the full address, real servers on substrings: full addresses are used here
     void individualCriteriaAgainstServer() throws Exception {
         SearchTermMapper mapper = new SearchTermMapper();
         assertThat(search(mapper.map(SearchCriteria.empty().withSeen(true)))).containsExactly(uids.get(1));
-        assertThat(search(mapper.map(SearchCriteria.empty().withFrom("bob")))).containsExactly(uids.get(3));
+        assertThat(search(mapper.map(SearchCriteria.empty().withFrom("bob@localhost")))).containsExactly(uids.get(3));
         assertThat(search(mapper.map(SearchCriteria.empty().withSubject("thr")))).containsExactly(uids.get(2));
         assertThat(search(mapper.map(SearchCriteria.empty().withKeywords(List.of("proj", "nope"))))).isEmpty();
     }
