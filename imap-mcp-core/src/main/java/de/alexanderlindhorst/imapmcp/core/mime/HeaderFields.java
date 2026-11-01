@@ -6,6 +6,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Turns a raw RFC 5322 header block into sanitized fields for {@code get_message}: message order, unfolded,
@@ -53,6 +54,16 @@ public final class HeaderFields {
             fields.add(new Field(name, value));
         }
         return new Result(List.copyOf(fields), truncated);
+    }
+
+    /** Raw (unfolded, undecoded, uncapped) value of the first field with this name, for structural parsing. */
+    public static Optional<String> firstValue(byte[] raw, String name) {
+        for (String[] f : split(new String(raw, StandardCharsets.UTF_8))) {
+            if (f[0].equalsIgnoreCase(name)) {
+                return Optional.of(f[1]);
+            }
+        }
+        return Optional.empty();
     }
 
     /** Splits into (name, unfolded raw value) pairs; stops at the blank line that ends the header block. */

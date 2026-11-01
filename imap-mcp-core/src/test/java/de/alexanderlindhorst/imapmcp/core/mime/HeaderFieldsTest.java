@@ -90,4 +90,16 @@ class HeaderFieldsTest {
     void emptyInputGivesNoFields() {
         assertThat(HeaderFields.parse(new byte[0]).fields()).isEqualTo(List.of());
     }
+
+    @Test
+    void firstValueFindsAFieldCaseInsensitivelyEvenBeyondTheFieldCap() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 150; i++) {
+            sb.append("X-").append(i).append(": v\r\n");
+        }
+        sb.append("date: Tue, 3 Jun 2025 11:05:30 +0200\r\n\r\n");
+        assertThat(HeaderFields.firstValue(sb.toString().getBytes(StandardCharsets.UTF_8), "Date"))
+                .contains("Tue, 3 Jun 2025 11:05:30 +0200");
+        assertThat(HeaderFields.firstValue("A: b\r\n\r\n".getBytes(StandardCharsets.UTF_8), "Date")).isEmpty();
+    }
 }
