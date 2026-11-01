@@ -6,6 +6,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
+import de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
@@ -30,6 +31,11 @@ import org.slf4j.LoggerFactory;
  * {@code structuredContent} plus exactly one text block with the same JSON, as MCP clients that ignore
  * structured output still need the text. The SDK validates a success result's structuredContent against
  * the tool's outputSchema and turns a mismatch into an error result; error results are not validated.
+ *
+ * <p>Input validation is ours ({@link ValidatingToolHandler}, wrapped around every handler here) so that
+ * errors are INVALID_ARGUMENT tool results with exact field/reason. Servers built with these specs MUST call
+ * {@code validateToolInputs(false)}: the SDK default validates first and answers with its own, differently
+ * shaped error without structuredContent.
  */
 public final class McpToolAdapter {
 
@@ -60,13 +66,18 @@ public final class McpToolAdapter {
     /** Stateful (stdio) flavour; the account context comes from the exchange's transport context. */
     public McpServerFeatures.SyncToolSpecification stateful(ToolDefinition def, ToolHandler handler) {
         return McpServerFeatures.SyncToolSpecification.builder().tool(tool(def))
-                .callHandler((exchange, request) -> call(handler, exchange.transportContext(), request)).build();
+                .callHandler((exchange, request) -> call(validating(def, handler), exchange.transportContext(), request)).build();
     }
 
     /** Stateless (HTTP) flavour. */
     public McpStatelessServerFeatures.SyncToolSpecification stateless(ToolDefinition def, ToolHandler handler) {
         return McpStatelessServerFeatures.SyncToolSpecification.builder().tool(tool(def))
-                .callHandler((transportContext, request) -> call(handler, transportContext, request)).build();
+                .callHandler((transportContext, request) -> call(validating(def, handler), transportContext, request)).build();
+    }
+
+    /** Validation is applied here so no registered tool can run on unvalidated input (outermost wrapper). */
+    private static ToolHandler validating(ToolDefinition def, ToolHandler handler) {
+        return new ValidatingToolHandler(def, handler);
     }
 
     private McpSchema.CallToolResult call(ToolHandler handler, McpTransportContext transportContext,

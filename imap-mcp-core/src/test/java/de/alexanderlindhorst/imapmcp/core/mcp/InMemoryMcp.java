@@ -44,7 +44,7 @@ final class InMemoryMcp {
         final McpStatelessSyncServer server;
 
         Stateless(McpStatelessServerFeatures.SyncToolSpecification... tools) {
-            this.server = McpServer.sync(this).serverInfo("test", "0").tools(tools).build();
+            this.server = McpServer.sync(this).serverInfo("test", "0").validateToolInputs(false).tools(tools).build();
         }
 
         @Override
@@ -77,7 +77,7 @@ final class InMemoryMcp {
         final McpSyncServer server;
 
         Stateful(McpServerFeatures.SyncToolSpecification... tools) {
-            this.server = McpServer.sync(this).serverInfo("test", "0").tools(tools).build();
+            this.server = McpServer.sync(this).serverInfo("test", "0").validateToolInputs(false).tools(tools).build();
             this.session = factory.create(new Wire());
             send(McpSchema.METHOD_INITIALIZE, new McpSchema.InitializeRequest(ProtocolVersions.MCP_2025_06_18,
                     McpSchema.ClientCapabilities.builder().build(), new McpSchema.Implementation("client", "0")));

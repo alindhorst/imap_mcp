@@ -22,7 +22,8 @@ import org.junit.jupiter.api.Test;
 class McpToolAdapterTest {
 
     static final String DESC = "Count things in the account. Read-only; does not change flags or mark messages as read.";
-    static final Map<String, Object> INPUT = Map.of("type", "object", "properties", Map.of("n", Map.of("type", "integer")));
+    static final Map<String, Object> INPUT = Map.of("type", "object",
+            "properties", Map.of("n", Map.of("type", "integer", "minimum", 1, "maximum", 10)), "additionalProperties", false);
     static final Map<String, Object> OUTPUT = Map.of("type", "object",
             "properties", Map.of("count", Map.of("type", "integer")), "required", List.of("count"));
     static final ToolDefinition SAMPLE =
@@ -94,7 +95,11 @@ class McpToolAdapterTest {
 
     @Test
     void identityComesFromTransportNotFromArguments() {
-        adapter.stateless(SAMPLE, this::ok).callHandler().apply(TCTX,
+        // even if a tool declared such parameters, they never reach the AccountContext
+        Map<String, Object> input = Map.of("type", "object", "additionalProperties", false,
+                "properties", Map.of("tenant", Map.of("type", "string"), "tenantId", Map.of("type", "string")));
+        ToolDefinition def = new ToolDefinition("count_things", "Count things", DESC, input, OUTPUT, ToolHints.READ_ONLY_OPEN_WORLD);
+        adapter.stateless(def, this::ok).callHandler().apply(TCTX,
                 new McpSchema.CallToolRequest("count_things", Map.of("tenant", "evil", "tenantId", "evil")));
         assertThat(seen).hasSize(1);
         assertThat(seen.get(0).accountContext().tenantId()).isEqualTo(new TenantId("tenant-from-transport"));
@@ -163,5 +168,28 @@ class McpToolAdapterTest {
         assertThat(textOf(r)).containsIgnoringCase("valid");
         McpSchema.CallToolResult r2 = new InMemoryMcp.Stateful(adapter.stateful(SAMPLE, (c, a) -> wrong)).call("count_things", Map.of());
         assertThat(r2.isError()).isTrue();
+    }
+
+    // --- #12: validation runs before every handler ---
+
+    @Test
+    void invalidInputIsErrorResultAndHandlerNotInvoked() {
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, this::ok).callHandler()
+                .apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of("n", 11)));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isEqualTo(ToolError.invalidArgument("n", "out_of_range", 10, "req-1").toMap());
+        assertThat(seen).isEmpty();
+    }
+
+    @Test
+    void invalidInputThroughRealServersIsToolErrorNotJsonRpcError() {
+        McpSchema.CallToolResult r = new InMemoryMcp.Stateless(adapter.stateless(SAMPLE, this::ok))
+                .call("count_things", Map.of("n", "5"), TCTX);
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isEqualTo(ToolError.invalidArgument("n", "type", null, "req-1").toMap());
+        McpSchema.CallToolResult r2 = new InMemoryMcp.Stateful(adapter.stateful(SAMPLE, this::ok))
+                .call("count_things", Map.of("n", 0));
+        assertThat(r2.isError()).isTrue();
+        assertThat(seen).isEmpty();
     }
 }

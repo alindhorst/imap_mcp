@@ -12,6 +12,7 @@ public record ToolDefinition(String name, String title, String description, Map<
         Objects.requireNonNull(title, "title");
         Objects.requireNonNull(description, "description");
         Objects.requireNonNull(inputSchema, "inputSchema");
+        new InputValidator(inputSchema); // fail fast on unsupported schema keywords
         Objects.requireNonNull(outputSchema, "outputSchema");
         Objects.requireNonNull(hints, "hints");
     }
