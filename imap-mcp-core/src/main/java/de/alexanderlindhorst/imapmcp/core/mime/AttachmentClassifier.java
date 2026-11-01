@@ -60,16 +60,12 @@ public final class AttachmentClassifier {
             return;
         }
         String filename = filename(part);
-        String disposition = part.disposition == null ? null : part.disposition.toLowerCase(Locale.ROOT);
-        boolean attachmentDisposition = "attachment".equals(disposition);
-        String type = part.type == null ? "" : part.type.toLowerCase(Locale.ROOT);
-        boolean rfc822 = "message".equals(type) && "rfc822".equalsIgnoreCase(part.subtype);
-        boolean inMixed = parent != null && "mixed".equalsIgnoreCase(parent.subtype);
-        boolean inRelated = parent != null && "related".equalsIgnoreCase(parent.subtype);
-
-        if (!(rfc822 || attachmentDisposition || filename != null || (inMixed && !"text".equals(type)))) {
+        if (!isAttachment(part, parent, filename)) {
             return;
         }
+        String disposition = disposition(part);
+        boolean attachmentDisposition = "attachment".equals(disposition);
+        boolean inRelated = parent != null && "related".equalsIgnoreCase(parent.subtype);
         boolean inline = !attachmentDisposition
                 && ("inline".equals(disposition) || (inRelated && part.id != null));
         total++;
@@ -79,6 +75,26 @@ public final class AttachmentClassifier {
         if (entries.size() < MAX_ENTRIES) {
             entries.add(new Entry(path, size(part), inline, new Untrusted(filename, contentType(part))));
         }
+    }
+
+    /**
+     * Whether a leaf part counts as attachment (shared with {@link BodyPartSelector}): message/rfc822, disposition
+     * attachment, any filename, or a non-text leaf directly inside multipart/mixed.
+     */
+    static boolean isAttachment(BODYSTRUCTURE part, BODYSTRUCTURE parent) {
+        return isAttachment(part, parent, filename(part));
+    }
+
+    private static boolean isAttachment(BODYSTRUCTURE part, BODYSTRUCTURE parent, String filename) {
+        String type = part.type == null ? "" : part.type.toLowerCase(Locale.ROOT);
+        boolean rfc822 = "message".equals(type) && "rfc822".equalsIgnoreCase(part.subtype);
+        boolean inMixed = parent != null && "mixed".equalsIgnoreCase(parent.subtype);
+        return rfc822 || "attachment".equals(disposition(part)) || filename != null
+                || (inMixed && !"text".equals(type));
+    }
+
+    private static String disposition(BODYSTRUCTURE part) {
+        return part.disposition == null ? null : part.disposition.toLowerCase(Locale.ROOT);
     }
 
     /** Approximate decoded size: base64 encoded octets * 3/4, otherwise the encoded octets. */

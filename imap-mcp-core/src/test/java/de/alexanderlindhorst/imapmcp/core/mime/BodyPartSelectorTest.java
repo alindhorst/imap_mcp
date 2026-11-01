@@ -4,6 +4,7 @@ import static de.alexanderlindhorst.imapmcp.core.mime.BodyStructureFixtures.bina
 import static de.alexanderlindhorst.imapmcp.core.mime.BodyStructureFixtures.message;
 import static de.alexanderlindhorst.imapmcp.core.mime.BodyStructureFixtures.text;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.user.GreenMailUser;
@@ -14,6 +15,9 @@ import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import java.util.Properties;
 import org.eclipse.angus.mail.imap.protocol.BODYSTRUCTURE;
+import org.eclipse.angus.mail.imap.protocol.FetchResponse;
+import org.eclipse.angus.mail.imap.protocol.IMAPResponse;
+import org.eclipse.angus.mail.imap.protocol.IMAPProtocol;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -63,15 +67,22 @@ class BodyPartSelectorTest {
         assertThat(p.contentType()).isEqualTo("text/plain");
     }
 
+    /**
+     * GreenMail reports part sizes including the part headers, so an empty body cannot be produced by a
+     * fixture message; this one is parsed from a raw FETCH response with a real zero-size plain part.
+     */
     @Test
     void alternativeWithEmptyPlainUsesHtml() throws Exception {
-        MimeMultipart mp = new MimeMultipart("alternative");
-        mp.addBodyPart(text("plain", ""));
-        mp.addBodyPart(text("html", "<p>hi</p>"));
+        BODYSTRUCTURE bs = parse("* 1 FETCH (BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL "
+                + "\"7BIT\" 0 0)(\"TEXT\" \"HTML\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 9 1) \"ALTERNATIVE\"))");
 
-        SelectedPart p = BodyPartSelector.select(structureOf(message(mp))).orElseThrow();
+        SelectedPart p = BodyPartSelector.select(bs).orElseThrow();
         assertThat(p.sectionPath()).isEqualTo("2");
         assertThat(p.contentType()).isEqualTo("text/html");
+    }
+
+    private static BODYSTRUCTURE parse(String fetchLine) throws Exception {
+        return new FetchResponse(new IMAPResponse(fetchLine), null, mock(IMAPProtocol.class)).getItem(BODYSTRUCTURE.class);
     }
 
     @Test
