@@ -3,7 +3,10 @@ package de.alexanderlindhorst.imapmcp.core.tool;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
+import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -30,8 +33,18 @@ public final class ToolExecutor {
 
     private final Duration deadline;
     private final LogIds logIds;
+    private final MetricsRecorder metrics;
 
     public ToolExecutor(Duration deadline, LogIds logIds) {
+        this(deadline, logIds, MetricsRecorder.NOOP);
+    }
+
+    /**
+     * {@code metrics} gets the per-tool call latency (op "call") and, per tenant from the AccountContext, every
+     * AUTH_FAILED and TIMEOUT outcome. The pool key is not known here, so these are tenant-level counters.
+     */
+    public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics) {
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.deadline = Objects.requireNonNull(deadline, "deadline");
         this.logIds = Objects.requireNonNull(logIds, "logIds");
     }
@@ -43,6 +56,21 @@ public final class ToolExecutor {
     }
 
     private ToolOutcome execute(String toolName, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args) {
+        Instant start = metrics.now();
+        ToolOutcome outcome = run(toolName, delegate, ctx, args);
+        TenantId tenant = ctx.accountContext().tenantId();
+        metrics.operation(tenant, toolName, "call", Duration.between(start, metrics.now()));
+        if (outcome instanceof ToolOutcome.Failure f) {
+            switch (f.error().code()) {
+                case AUTH_FAILED -> metrics.authFailure(tenant);
+                case TIMEOUT -> metrics.timeout(tenant);
+                default -> { }
+            }
+        }
+        return outcome;
+    }
+
+    private ToolOutcome run(String toolName, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args) {
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
         Thread worker = Thread.ofVirtual().name("tool-" + toolName).unstarted(() -> {
             try {

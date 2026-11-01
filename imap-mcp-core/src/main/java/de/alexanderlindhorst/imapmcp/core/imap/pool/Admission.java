@@ -2,7 +2,9 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.error.ServerBusyException;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,7 +26,13 @@ public final class Admission {
     /** Notified on every refusal (metrics hook, #20). Must not throw or block. */
     @FunctionalInterface
     public interface Listener {
-        void rejected(Scope scope);
+        void rejected(PoolKey key, Scope scope);
+    }
+
+    /** Adapter that reports every refusal to the metrics recorder. */
+    public static Listener recording(MetricsRecorder recorder) {
+        Objects.requireNonNull(recorder, "recorder");
+        return (key, scope) -> recorder.busyRejection(key, scope.name().toLowerCase(Locale.ROOT));
     }
 
     /** Held for the duration of a lease; {@link #close()} releases exactly once. */
@@ -57,7 +65,7 @@ public final class Admission {
     private final Map<PoolKey, Semaphore> mailboxes = new ConcurrentHashMap<>();
 
     public Admission(PoolSettings settings) {
-        this(settings, scope -> { });
+        this(settings, (key, scope) -> { });
     }
 
     public Admission(PoolSettings settings, Listener listener) {
@@ -72,23 +80,23 @@ public final class Admission {
         Semaphore tenant = tenants.computeIfAbsent(key.tenantId(), k -> new Semaphore(settings.maxPerTenant()));
         Semaphore mailbox = mailboxes.computeIfAbsent(key, k -> new Semaphore(settings.maxPerMailbox()));
         if (!global.tryAcquire()) {
-            throw busy(Scope.GLOBAL);
+            throw busy(key, Scope.GLOBAL);
         }
         if (!tenant.tryAcquire()) {
             global.release();
-            throw busy(Scope.TENANT);
+            throw busy(key, Scope.TENANT);
         }
         if (!mailbox.tryAcquire()) {
             tenant.release();
             global.release();
-            throw busy(Scope.MAILBOX);
+            throw busy(key, Scope.MAILBOX);
         }
         return new Permit(global, tenant, mailbox);
     }
 
-    private ServerBusyException busy(Scope scope) {
+    private ServerBusyException busy(PoolKey key, Scope scope) {
         try {
-            listener.rejected(scope);
+            listener.rejected(key, scope);
         } catch (RuntimeException ignored) {
             // metrics must never change admission behaviour
         }
