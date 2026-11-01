@@ -168,12 +168,12 @@ class ConfigLoaderTest {
     @Test
     void namedEnvOverridesWinOverFile() throws IOException {
         AppConfig c = load(ACCOUNT + "http: {bind: 10.0.0.1, port: 9000}\n", Map.of(
-                "IMAP_MCP_MODE", "http",
+                "IMAP_MCP_MODE", "http-local",
                 "IMAP_MCP_LOG_LEVEL", "debug",
                 "IMAP_MCP_HTTP_BIND", "0.0.0.0",
                 "IMAP_MCP_HTTP_PORT", "9999",
                 "IMAP_MCP_HTTP_ALLOW_NON_LOOPBACK_BIND", "true"));
-        assertThat(c.mode()).isEqualTo("http");
+        assertThat(c.mode()).isEqualTo("http-local");
         assertThat(c.logLevel()).isEqualTo("DEBUG");
         assertThat(c.http().bind()).isEqualTo("0.0.0.0");
         assertThat(c.http().port()).isEqualTo(9999);
@@ -190,8 +190,11 @@ class ConfigLoaderTest {
     void invalidEnvOverrideNamesVariable() {
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_HTTP_PORT", "abc")))
                 .hasMessageContaining("IMAP_MCP_HTTP_PORT");
-        assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_MODE", "grpc")))
-                .hasMessageContaining("IMAP_MCP_MODE");
+        for (String bad : List.of("grpc", "http", "http-public")) {
+            assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_MODE", bad)))
+                    .hasMessageContaining("IMAP_MCP_MODE").message().doesNotContain(bad);
+        }
+        assertThat(load(ACCOUNT, Map.of("IMAP_MCP_MODE", "stdio")).mode()).isEqualTo("stdio");
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_LOG_LEVEL", "loud")))
                 .hasMessageContaining("IMAP_MCP_LOG_LEVEL");
     }
