@@ -188,10 +188,14 @@ public final class HttpLocalServer {
 
     /** Flips /health to 503 shutting_down; call before {@link #stop()} so orchestrators see it. Idempotent. */
     public void beginShutdown() {
+        if (healthServlet instanceof HealthServlet h) {
+            h.beginShutdown();
+        }
     }
 
     /** Graceful: stops accepting, lets in-flight requests finish (bounded), then closes the MCP server. */
     public synchronized void stop() throws Exception {
+        beginShutdown();
         if (server != null) {
             server.stop();
         }
