@@ -26,8 +26,9 @@ import org.eclipse.angus.mail.imap.protocol.RFC822SIZE;
 import org.eclipse.angus.mail.imap.protocol.UID;
 
 /**
- * The IMAP side of one search_messages page, on an open READ_ONLY folder. Per page exactly three commands,
- * independent of the page size: SEARCH, one FETCH (UID, plus INTERNALDATE when filtering by since) over all matches, one FETCH of the page's summary items
+ * The IMAP side of one search_messages page, on an open READ_ONLY folder. Commands per page, independent of the
+ * page size: a SEARCH (only with criteria), on cursor pages one {@code UID FETCH <lastUid> (UID)} boundary
+ * command, and one FETCH of the page's summary items
  * (UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE and BODY.PEEK[HEADER.FIELDS (Date)], which is the
  * only way to get the Date header's original offset; no body content, nothing is marked \Seen). The matches are
  * ordered by UID descending and cut by the keyset ({@code uid < beforeUid}) here. Angus can only address messages
@@ -66,6 +67,14 @@ public final class PageFetcher {
     }
 
     /**
+     * Without {@code since} the UID data moved per page is bounded by the page, not the folder. EXISTS is read
+     * first, then the boundary {@code b} (messages with a UID below {@code beforeUid}; UIDs ascend strictly with
+     * sequence numbers, RFC 3501 2.3.1.1) from one raw {@code UID FETCH <beforeUid> (UID)}. Without criteria no
+     * SEARCH is issued and the page is the seqs just below {@code b}; with criteria the SEARCH result (seqs only)
+     * is cut at {@code b} and the highest ones form the page. A concurrent expunge can make {@code b} too high
+     * (never too low); rows at or above {@code beforeUid} are then dropped and the deficit is fetched from the next
+     * lower seqs, so a short page never ends paging by itself.
+     * <p>
      * With {@code since} the SEARCH term already carries the coarse day bound; the candidate FETCH then also asks
      * for INTERNALDATE (same command, so no extra round trip) and everything received before {@code since} is
      * dropped, which makes {@code total} exact. If the SEARCH returned more than {@code maxCandidates} hits the
@@ -73,17 +82,51 @@ public final class PageFetcher {
      */
     public static Page page(IMAPFolder folder, SearchTerm term, long beforeUid, int pageSize, Instant since,
             int maxCandidates) throws MessagingException {
+        if (since != null) {
+            return sincePage(folder, term, beforeUid, pageSize, since, maxCandidates);
+        }
+        int exists = folder.getMessageCount(); // before any other command: no NOOP may slip in between
+        if (exists == 0) {
+            return new Page(0, false, List.of());
+        }
+        int boundary = beforeUid == 0 ? exists : boundary(folder, beforeUid, exists);
+        int total;
+        Candidates candidates;
+        if (term == null) {
+            total = exists;
+            candidates = Candidates.range(boundary);
+        } else {
+            int[] seqs = matches(folder, term);
+            total = seqs.length;
+            candidates = Candidates.upTo(seqs, boundary);
+        }
+        int need = Math.min(pageSize, candidates.size());
+        List<Row> rows = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        while (rows.size() < need && candidates.hasMore()) {
+            for (Row r : rows(folder, candidates.take(need - rows.size()))) {
+                if ((beforeUid == 0 || r.uid() < beforeUid) && seen.add(r.uid())) {
+                    rows.add(r);
+                }
+            }
+        }
+        rows.sort(Comparator.comparingLong(Row::uid).reversed());
+        return new Page(total, candidates.hasMore(), rows);
+    }
+
+    private static Page sincePage(IMAPFolder folder, SearchTerm term, long beforeUid, int pageSize, Instant since,
+            int maxCandidates) throws MessagingException {
         int[] seqs = matches(folder, term);
         if (seqs.length == 0) {
             return new Page(0, false, List.of());
         }
-        if (since != null && seqs.length > maxCandidates) {
+        if (seqs.length > maxCandidates) {
             return new Page(0, false, List.of(), true);
         }
         List<Hit> matched = new ArrayList<>();
-        for (Hit h : hits(folder, seqs, since != null)) {
+        for (Hit h : hits(folder, seqs)) {
             // a message without a readable INTERNALDATE cannot be shown to be at or after since
-            if (since == null || (h.received() != null && !h.received().toInstant().isBefore(since))) {
+            if (h.received() != null && !h.received().toInstant().isBefore(since)) {
                 matched.add(h);
             }
         }
@@ -96,8 +139,100 @@ public final class PageFetcher {
         eligible.sort(Comparator.comparingLong(Hit::uid).reversed());
         List<Hit> page = eligible.subList(0, Math.min(pageSize, eligible.size()));
         boolean hasMore = eligible.size() > page.size();
-        return new Page(since == null ? seqs.length : matched.size(), hasMore,
-                page.isEmpty() ? List.of() : rows(folder, page));
+        List<Row> rows = List.of();
+        if (!page.isEmpty()) {
+            Set<Long> wanted = new HashSet<>();
+            page.forEach(h -> wanted.add(h.uid()));
+            rows = new ArrayList<>();
+            for (Row r : rows(folder, page.stream().mapToInt(Hit::seq).toArray())) {
+                if (wanted.remove(r.uid())) { // not a message of this page (shifted by an expunge) or a duplicate
+                    rows.add(r);
+                }
+            }
+        }
+        return new Page(matched.size(), hasMore, rows);
+    }
+
+    /** Descending source of candidate sequence numbers, consumed page by page. */
+    private static final class Candidates {
+        private final int[] seqs; // ascending, null for a plain range 1..hi
+        private int hi; // range: highest seq not yet taken; array: number of entries not yet taken
+
+        private Candidates(int[] seqs, int hi) {
+            this.seqs = seqs;
+            this.hi = hi;
+        }
+
+        static Candidates range(int boundary) {
+            return new Candidates(null, Math.max(0, boundary));
+        }
+
+        static Candidates upTo(int[] ascending, int boundary) {
+            int[] sorted = ascending.clone();
+            java.util.Arrays.sort(sorted);
+            int n = 0;
+            while (n < sorted.length && sorted[n] <= boundary) {
+                n++;
+            }
+            return new Candidates(sorted, n);
+        }
+
+        int size() {
+            return hi;
+        }
+
+        boolean hasMore() {
+            return hi > 0;
+        }
+
+        /** The next {@code n} highest candidates, ascending. */
+        int[] take(int n) {
+            int count = Math.min(n, hi);
+            int[] out = new int[count];
+            for (int i = 0; i < count; i++) {
+                int idx = hi - count + i;
+                out[i] = seqs == null ? idx + 1 : seqs[idx];
+            }
+            hi -= count;
+            return out;
+        }
+    }
+
+    /**
+     * Number of messages with a UID below {@code beforeUid}. One raw {@code UID FETCH <uid> (UID)}; if that message
+     * was expunged meanwhile, {@code UID FETCH <uid>:* (UID)} gives the first message above it. Angus has no API
+     * for this; the sequence numbers stay inside this class.
+     */
+    private static int boundary(IMAPFolder folder, long beforeUid, int exists) throws MessagingException {
+        for (FetchResponse f : uidFetch(folder, beforeUid + " (UID)")) {
+            if (f.getItem(UID.class) instanceof UID u && u.uid == beforeUid) {
+                return f.getNumber() - 1;
+            }
+        }
+        int min = Integer.MAX_VALUE;
+        for (FetchResponse f : uidFetch(folder, beforeUid + ":* (UID)")) {
+            // `*` also yields the last message when its UID is below beforeUid: filter by UID
+            if (f.getItem(UID.class) instanceof UID u && u.uid >= beforeUid) {
+                min = Math.min(min, f.getNumber());
+            }
+        }
+        return min == Integer.MAX_VALUE ? exists : min - 1;
+    }
+
+    private static List<FetchResponse> uidFetch(IMAPFolder folder, String setAndItems) throws MessagingException {
+        Response[] responses = (Response[]) folder.doCommand(p -> {
+            Response[] r = p.command("UID FETCH " + setAndItems, null);
+            p.notifyResponseHandlers(r);
+            p.handleResult(r[r.length - 1]);
+            return r;
+        });
+        List<FetchResponse> out = new ArrayList<>();
+        for (Response r : responses) {
+            if (r instanceof FetchResponse f) {
+                out.add(f);
+            }
+        }
+        return out;
     }
 
     private static int[] matches(IMAPFolder folder, SearchTerm term) throws MessagingException {
@@ -116,15 +251,15 @@ public final class PageFetcher {
         return seqs;
     }
 
-    private static List<Hit> hits(IMAPFolder folder, int[] seqs, boolean withReceived) throws MessagingException {
-        Response[] responses = fetch(folder, seqs, withReceived ? "UID INTERNALDATE" : "UID");
+    private static List<Hit> hits(IMAPFolder folder, int[] seqs) throws MessagingException {
+        Response[] responses = fetch(folder, seqs, "UID INTERNALDATE");
         List<Hit> hits = new ArrayList<>();
         for (Response r : responses) {
             // getItem hands out each item once, so it is read exactly once per class
             if (r instanceof FetchResponse f) {
                 UID uid = f.getItem(UID.class);
                 if (uid != null) {
-                    INTERNALDATE received = withReceived ? f.getItem(INTERNALDATE.class) : null;
+                    INTERNALDATE received = f.getItem(INTERNALDATE.class);
                     hits.add(new Hit(uid.uid, f.getNumber(), received == null ? null : received.getDate()));
                 }
             }
@@ -132,18 +267,18 @@ public final class PageFetcher {
         return hits;
     }
 
-    private static List<Row> rows(IMAPFolder folder, List<Hit> page) throws MessagingException {
-        int[] seqs = page.stream().mapToInt(Hit::seq).sorted().toArray();
-        Set<Long> wanted = new HashSet<>();
-        page.forEach(h -> wanted.add(h.uid()));
+    /** The summary rows of the given seqs, identified by the UID in each response, newest first. */
+    private static List<Row> rows(IMAPFolder folder, int[] seqs) throws MessagingException {
+        int[] sorted = seqs.clone();
+        java.util.Arrays.sort(sorted);
         List<Row> rows = new ArrayList<>();
-        for (Response r : fetch(folder, seqs, SUMMARY_ITEMS)) {
+        for (Response r : fetch(folder, sorted, SUMMARY_ITEMS)) {
             if (!(r instanceof FetchResponse f)) {
                 continue;
             }
             UID id = f.getItem(UID.class);
-            if (id == null || !wanted.remove(id.uid)) {
-                continue; // not a message of this page (shifted by a concurrent expunge) or a duplicate
+            if (id == null) {
+                continue;
             }
             INTERNALDATE received = f.getItem(INTERNALDATE.class);
             RFC822SIZE size = f.getItem(RFC822SIZE.class);
