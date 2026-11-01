@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import jakarta.mail.MessagingException;
 import java.net.ConnectException;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import java.time.Duration;
@@ -46,6 +47,32 @@ public final class StoreLeases {
         this.pool = Objects.requireNonNull(pool, "pool");
         this.acquireTimeout = Objects.requireNonNull(acquireTimeout, "acquireTimeout");
         this.admission = admission;
+    }
+
+    /** Work executed on a lease; a {@link MessagingException} is the tool's to map and to judge. */
+    @FunctionalInterface
+    public interface LeaseWork<T> {
+        T apply(ImapLease lease) throws MessagingException;
+    }
+
+    /**
+     * The only way for tools to obtain a lease. Runs {@code work} on a lease; a {@link RuntimeException} or
+     * {@link Error} escaping the work marks the lease broken (the Store is invalidated) and is rethrown unchanged.
+     * A {@link MessagingException} is propagated as is: whether the connection survives is the tool's decision
+     * (via {@code ImapErrorMapper.discardConnection} and {@link ImapLease#markBroken()}).
+     *
+     * @throws StoreUnavailableException see {@link #lease}
+     */
+    public <T> T withLease(PoolKey key, ToolCallContext ctx, LeaseWork<T> work) throws MessagingException {
+        Objects.requireNonNull(work, "work");
+        try (ImapLease lease = lease(key, ctx)) {
+            try {
+                return work.apply(lease);
+            } catch (RuntimeException | Error e) {
+                lease.markBroken();
+                throw e;
+            }
+        }
     }
 
     /**
