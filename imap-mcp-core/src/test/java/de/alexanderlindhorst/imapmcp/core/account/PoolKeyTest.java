@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 class PoolKeyTest {
 
     private static final TenantId TENANT = new TenantId("t1");
-    private static final ResolvedAccount RESOLVED = new ResolvedAccount(TENANT, AccountRepositoryContract.account("w"));
+    private static final ResolvedAccount RESOLVED = new ResolvedAccount(TENANT, AccountRepositoryContract.account("w"), "acc_test");
 
     @Test
     void derivedFromContextAndResolvedAccount() {

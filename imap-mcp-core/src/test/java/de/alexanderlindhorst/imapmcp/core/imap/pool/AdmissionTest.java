@@ -27,7 +27,7 @@ class AdmissionTest {
         TenantId t = new TenantId(tenant);
         MailAccount a = new MailAccount(new AccountId(account), "l", null, "h", 993, Security.IMPLICIT_TLS,
                 Flavor.GENERIC, "u", new SecretRef("env:X"));
-        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a));
+        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a, "acc_test"));
     }
 
     private static PoolSettings settings(int mailbox, int tenant, int total) {

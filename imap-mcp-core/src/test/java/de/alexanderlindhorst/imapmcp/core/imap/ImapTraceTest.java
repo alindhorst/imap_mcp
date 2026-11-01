@@ -82,7 +82,7 @@ class ImapTraceTest {
 
     private Session session(ImapSessionFactory f) {
         MailAccount a = account();
-        return f.sessionFor(PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, a)), a);
+        return f.sessionFor(PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, a, "acc_test")), a);
     }
 
     private void login(Session s) throws Exception {
@@ -122,7 +122,7 @@ class ImapTraceTest {
             login(s);
             MailAccount other = new MailAccount(new AccountId("b"), "l", null, "127.0.0.1",
                     GREEN_MAIL.getImaps().getPort(), Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
-            f.sessionFor(PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, other)), other);
+            f.sessionFor(PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, other, "acc_test")), other);
 
             assertThat(traceEvents.list).isNotEmpty().allMatch(e -> e.getLevel() == Level.DEBUG);
             assertThat(traceMessages()).noneMatch(m -> m.contains(PASSWORD) || m.contains(USER));

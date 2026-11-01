@@ -50,7 +50,7 @@ class LeaseMetricsTest {
         greenMail.setUser("u@localhost", "u", "pw");
         MailAccount account = new MailAccount(new AccountId("a"), "label", null, "127.0.0.1",
                 greenMail.getImaps().getPort(), Security.IMPLICIT_TLS, Flavor.GENERIC, "u", new SecretRef("env:X"));
-        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account));
+        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account, "acc_test"));
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");

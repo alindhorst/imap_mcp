@@ -58,7 +58,7 @@ class StorePoolTest {
         greenMail.setUser(USER + "@localhost", USER, PASSWORD);
         account = new MailAccount(new AccountId("a"), "label", null, "127.0.0.1", greenMail.getImaps().getPort(),
                 Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
-        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account));
+        key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, account, "acc_test"));
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");
@@ -228,7 +228,7 @@ class StorePoolTest {
     void unknownKeyOrMissingCredentialFailsWithoutLeaking() {
         StorePool p = pool(PoolSettings.DEFAULTS);
         PoolKey other = PoolKey.of(new AccountContext(new TenantId("t2")),
-                new ResolvedAccount(new TenantId("t2"), account));
+                new ResolvedAccount(new TenantId("t2"), account, "acc_test"));
         assertThatThrownBy(() -> p.borrow(other)).isInstanceOf(Exception.class);
         assertThat(p.numActive(other)).isZero();
         assertThat(credentialLookups.get()).isZero();

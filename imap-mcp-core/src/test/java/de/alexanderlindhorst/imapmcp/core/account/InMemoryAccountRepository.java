@@ -21,8 +21,9 @@ class InMemoryAccountRepository implements AccountRepository {
     }
 
     @Override
-    public List<MailAccount> findByTenant(TenantId tenant) {
-        return accounts.getOrDefault(tenant, List.of());
+    public List<ResolvedAccount> findByTenant(TenantId tenant) {
+        return accounts.getOrDefault(tenant, List.of()).stream()
+                .map(a -> new ResolvedAccount(tenant, a, handle(tenant, a.id()))).toList();
     }
 
     @Override
@@ -30,7 +31,6 @@ class InMemoryAccountRepository implements AccountRepository {
         if (AccountHandle.parse(handle).isEmpty()) {
             return Optional.empty();
         }
-        return findByTenant(tenant).stream().filter(a -> handle(tenant, a.id()).equals(handle)).findFirst()
-                .map(a -> new ResolvedAccount(tenant, a));
+        return findByTenant(tenant).stream().filter(r -> r.handle().equals(handle)).findFirst();
     }
 }

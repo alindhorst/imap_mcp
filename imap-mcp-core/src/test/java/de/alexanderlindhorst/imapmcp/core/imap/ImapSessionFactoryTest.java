@@ -44,7 +44,7 @@ class ImapSessionFactoryTest {
     }
 
     private static PoolKey key(MailAccount a) {
-        return PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, a));
+        return PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, a, "acc_test"));
     }
 
     private Properties props(MailAccount a) {
@@ -126,7 +126,7 @@ class ImapSessionFactoryTest {
         assertThat(factory.sessionFor(key(b), b)).isNotSameAs(sa);
         // same account id under another tenant is another key
         TenantId other = new TenantId("t2");
-        PoolKey otherKey = PoolKey.of(new AccountContext(other), new ResolvedAccount(other, a));
+        PoolKey otherKey = PoolKey.of(new AccountContext(other), new ResolvedAccount(other, a, "acc_test"));
         assertThat(factory.sessionFor(otherKey, a)).isNotSameAs(sa);
     }
 

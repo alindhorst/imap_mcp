@@ -45,7 +45,7 @@ class CapabilityCacheTest {
         TenantId t = new TenantId(tenant);
         MailAccount a = new MailAccount(new AccountId(account), "Label", null, "imap.example.org", 993,
                 MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "user", new SecretRef("env:x"));
-        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a));
+        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a, "acc_test"));
     }
 
     @Test

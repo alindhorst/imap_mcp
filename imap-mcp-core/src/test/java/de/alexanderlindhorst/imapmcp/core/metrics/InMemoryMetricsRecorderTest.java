@@ -54,7 +54,7 @@ class InMemoryMetricsRecorderTest {
     static PoolKey key(TenantId t, String account) {
         MailAccount a = new MailAccount(new AccountId(account), "label", null, "imap.example.org", 993,
                 Security.IMPLICIT_TLS, Flavor.GENERIC, "user@example.org", new SecretRef("env:X"));
-        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a));
+        return PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a, "acc_test"));
     }
 
     @Test
