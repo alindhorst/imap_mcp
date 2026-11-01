@@ -16,7 +16,6 @@ import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
-import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
@@ -72,9 +71,8 @@ class FolderResolverGreenMailTest {
     }
 
     private FolderResolver.Resolution resolve(String folder, FolderRole role) throws Exception {
-        try (ImapLease lease = leases.lease(key, new ToolCallContext(new AccountContext(TENANT), "rid"))) {
-            return FolderResolver.resolve(lease, folder, role, "rid");
-        }
+        return leases.withLease(key, new ToolCallContext(new AccountContext(TENANT), "rid"),
+                lease -> FolderResolver.resolve(lease, folder, role, "rid"));
     }
 
     private void createFolder(String name) throws Exception {
@@ -110,11 +108,12 @@ class FolderResolverGreenMailTest {
     @Test
     void noselectFolderIsNotFound() throws Exception {
         createFolder("Parent.Child");
-        try (ImapLease l = leases.lease(key, new ToolCallContext(new AccountContext(TENANT), "rid"))) {
+        leases.withLease(key, new ToolCallContext(new AccountContext(TENANT), "rid"), l -> {
             var pf = (org.eclipse.angus.mail.imap.IMAPFolder) l.store().getFolder("Parent");
             assertThat(pf.exists()).isTrue(); // the parent exists in LIST ...
             assertThat(pf.getAttributes()).contains("\\Noselect"); // ... but is not selectable
-        }
+            return null;
+        });
         FolderResolver.Resolution r = resolve("Parent", null);
         assertThat(r.error().code()).isEqualTo(ErrorCode.FOLDER_NOT_FOUND);
         assertThat(r.error().details()).isEqualTo(Map.of("folder", "Parent"));
@@ -131,10 +130,11 @@ class FolderResolverGreenMailTest {
     void resolutionIssuesOnlyStoreLevelCommands() throws Exception {
         createFolder("Work");
         // closing the lease after resolve must not find an open folder: resolving never SELECT/EXAMINEs
-        try (ImapLease lease = leases.lease(key, new ToolCallContext(new AccountContext(TENANT), "rid"))) {
+        leases.withLease(key, new ToolCallContext(new AccountContext(TENANT), "rid"), lease -> {
             FolderResolver.resolve(lease, "Work", null, "rid");
             FolderResolver.resolve(lease, null, FolderRole.SENT, "rid");
             assertThat(lease.store()).isNotNull(); // would throw if a folder were open
-        }
+            return null;
+        });
     }
 }

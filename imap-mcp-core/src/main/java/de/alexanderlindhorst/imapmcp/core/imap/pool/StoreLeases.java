@@ -79,7 +79,7 @@ public final class StoreLeases {
      * @throws StoreUnavailableException on connect failure, acquire timeout or cancellation; nothing is leaked
      *         in any of these cases, a Store that finishes connecting late is invalidated
      */
-    public ImapLease lease(PoolKey key, ToolCallContext ctx) {
+    ImapLease lease(PoolKey key, ToolCallContext ctx) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(ctx, "ctx");
         // Fail fast before any I/O; the permit is handed to the lease, which releases it exactly once.

@@ -147,6 +147,12 @@ class ImapLeaseTest {
     }
 
     @Test
+    void rawLeaseIsNotPublicSoToolsMustGoThroughWithLease() throws Exception {
+        var m = StoreLeases.class.getDeclaredMethod("lease", PoolKey.class, ToolCallContext.class);
+        assertThat(java.lang.reflect.Modifier.isPublic(m.getModifiers())).isFalse();
+    }
+
+    @Test
     void withLeaseDiscardsOnRuntimeExceptionAndRethrowsUnchanged() throws Exception {
         leases(Duration.ofSeconds(10));
         IllegalStateException boom = new IllegalStateException("boom");

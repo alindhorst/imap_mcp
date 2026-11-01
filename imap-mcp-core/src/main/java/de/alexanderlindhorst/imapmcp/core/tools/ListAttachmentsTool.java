@@ -2,7 +2,6 @@ package de.alexanderlindhorst.imapmcp.core.tools;
 
 import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
-import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentClassifier;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentList;
@@ -72,26 +71,28 @@ public final class ListAttachmentsTool implements ToolHandler {
         if (!(checked instanceof MessageLocator.Checked.Ok ref)) {
             return new ToolOutcome.Failure(((MessageLocator.Checked.Invalid) checked).error());
         }
-        try (ImapLease lease = leases.lease(ok.key(), ctx)) {
-            try {
-                MessageLocator.Located located = locator.locate(lease, ctx, ref.ref());
-                if (!(located instanceof MessageLocator.Located.Found found)) {
-                    return new ToolOutcome.Failure(((MessageLocator.Located.Failed) located).error());
+        try {
+            return leases.withLease(ok.key(), ctx, lease -> {
+                try {
+                    MessageLocator.Located located = locator.locate(lease, ctx, ref.ref());
+                    if (!(located instanceof MessageLocator.Located.Found found)) {
+                        return new ToolOutcome.Failure(((MessageLocator.Located.Failed) located).error());
+                    }
+                    // FETCH n (BODYSTRUCTURE) only; the sequence number is internal to this open folder.
+                    int seq = found.message().getMessageNumber();
+                    BODYSTRUCTURE bs = (BODYSTRUCTURE) found.folder().doCommand(p -> p.fetchBodyStructure(seq));
+                    String bodyPath = BodyPartSelector.select(bs).map(SelectedPart::sectionPath).orElse(null);
+                    return new ToolOutcome.Success(output(accountHandle, messageHandle,
+                            AttachmentClassifier.classify(bs, bodyPath)));
+                } catch (MessagingException e) {
+                    ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, ctx.requestId());
+                    if (mapped.discardConnection()) {
+                        lease.markBroken();
+                    }
+                    return new ToolOutcome.Failure(mapped.error());
                 }
-                // FETCH n (BODYSTRUCTURE) only; the sequence number is internal to this open folder.
-                int seq = found.message().getMessageNumber();
-                BODYSTRUCTURE bs = (BODYSTRUCTURE) found.folder().doCommand(p -> p.fetchBodyStructure(seq));
-                String bodyPath = BodyPartSelector.select(bs).map(SelectedPart::sectionPath).orElse(null);
-                return new ToolOutcome.Success(output(accountHandle, messageHandle,
-                        AttachmentClassifier.classify(bs, bodyPath)));
-            } catch (MessagingException | RuntimeException e) {
-                ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, ctx.requestId());
-                if (mapped.discardConnection()) {
-                    lease.markBroken();
-                }
-                return new ToolOutcome.Failure(mapped.error());
-            }
-        } catch (RuntimeException e) {
+            });
+        } catch (MessagingException | RuntimeException e) {
             return new ToolOutcome.Failure(ImapErrorMapper.map(e, ctx.requestId()).error());
         }
     }

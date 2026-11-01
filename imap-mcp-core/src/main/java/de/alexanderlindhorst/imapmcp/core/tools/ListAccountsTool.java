@@ -8,13 +8,13 @@ import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
-import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
+import jakarta.mail.MessagingException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -162,11 +162,13 @@ public final class ListAccountsTool implements ToolHandler {
 
     /** Probes with a short-lived lease; returns the account status. Never throws for connection problems. */
     private String refresh(ToolCallContext ctx, PoolKey key) {
-        try (ImapLease lease = leases.lease(key, ctx)) {
-            // A reused pooled Store did not run makeObject, so read the capabilities explicitly (local, no I/O).
-            capabilities.put(key, ImapCapabilities.from(lease.store()));
-            return "ok";
-        } catch (RuntimeException e) {
+        try {
+            return leases.withLease(key, ctx, lease -> {
+                // A reused pooled Store did not run makeObject, so read the capabilities explicitly (local, no I/O).
+                capabilities.put(key, ImapCapabilities.from(lease.store()));
+                return "ok";
+            });
+        } catch (MessagingException | RuntimeException e) {
             ErrorCode code = ImapErrorMapper.map(e, ctx.requestId()).error().code();
             LOG.debug("account probe failed: {}", code);
             return code == ErrorCode.AUTH_FAILED ? "auth_failed" : "unreachable";

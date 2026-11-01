@@ -20,7 +20,6 @@ import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
-import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
@@ -189,11 +188,11 @@ class ListFoldersCountsTest {
         List<Map<String, Object>> entries = new ArrayList<>();
         entries.add(entry("Ghost"));
         entries.add(entry("INBOX"));
-        boolean complete;
-        try (ImapLease lease = leases.lease(key, ctx())) {
-            complete = new StatusCountEnricher().enrich(lease, ctx(), entries);
+        boolean complete = leases.withLease(key, ctx(), lease -> {
+            boolean c = new StatusCountEnricher().enrich(lease, ctx(), entries);
             assertThat(lease.store().isConnected()).isTrue(); // a NO answer does not break the lease
-        }
+            return c;
+        });
         assertThat(complete).isFalse();
         assertThat(entries.get(0)).containsEntry("total", null).containsEntry("unread", null);
         assertThat(entries.get(1)).containsEntry("total", 1).containsEntry("unread", 1);
