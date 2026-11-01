@@ -14,7 +14,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 class ImapCapabilitiesTest {
 
     @RegisterExtension
-    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS);
+    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());
 
     @Test
     void mapsCapabilityNamesCaseInsensitively() {
