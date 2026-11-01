@@ -8,7 +8,6 @@ import de.alexanderlindhorst.imapmcp.transport.stdio.ProtocolStreams;
 import de.alexanderlindhorst.imapmcp.transport.stdio.StdioServer;
 import de.alexanderlindhorst.imapmcp.transport.stdio.StdioStreams;
 import io.modelcontextprotocol.json.McpJsonDefaults;
-import io.modelcontextprotocol.spec.McpSchema;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Map;
@@ -19,8 +18,6 @@ import java.util.Map;
  * logger here, and startup failures go to stderr (never stdout) as one line.
  */
 public final class StdioMain {
-
-    private static final String SERVER_NAME = "imap-mcp";
 
     private StdioMain() {
     }
@@ -51,7 +48,7 @@ public final class StdioMain {
             components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv());
             // 5. serve until stdin reaches EOF.
             StdioServer server = StdioServer.start(streams, McpJsonDefaults.getMapper(),
-                    components.statefulToolSpecs(), serverInfo());
+                    components.statefulToolSpecs(), AppVersion.serverInfo());
             if (loggingUp) {
                 org.slf4j.LoggerFactory.getLogger("imapmcp.app").info("imap-mcp stdio server started");
             }
@@ -81,11 +78,5 @@ public final class StdioMain {
             org.slf4j.LoggerFactory.getLogger("imapmcp.app").error("Startup failed: {}", message);
         }
         return 1;
-    }
-
-    /** Server name and the jar's {@code Implementation-Version} (fallback "dev" when run from classes). */
-    static McpSchema.Implementation serverInfo() {
-        String version = StdioMain.class.getPackage().getImplementationVersion();
-        return new McpSchema.Implementation(SERVER_NAME, version != null ? version : "dev");
     }
 }

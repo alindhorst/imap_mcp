@@ -55,6 +55,8 @@ public final class HttpLocalMain {
             char[] token = components.httpToken();
             HealthServlet health = new HealthServlet();
             HttpLocalServer.Builder builder = HttpLocalServer.builder()
+                    .maxRequestBytes((int) Math.min(h.maxRequestBytes(), Integer.MAX_VALUE))
+                    .serverInfo(AppVersion.SERVER_NAME, AppVersion.version())
                     .bind(h.bind()).port(h.port()).allowNonLoopbackBind(h.allowNonLoopbackBind())
                     .hostFilter(new HostFilter(h.allowedHosts()))
                     .originFilter(new OriginFilter(h.allowedOrigins()))
