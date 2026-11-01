@@ -1,0 +1,147 @@
+package de.alexanderlindhorst.imapmcp.app;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import de.alexanderlindhorst.imapmcp.app.config.AppConfig;
+import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
+import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/** #60: the README must stay consistent with the implemented config, env variables and launch commands. */
+class ReadmeTest {
+
+    private static String readme;
+
+    @BeforeAll
+    static void readReadme() throws IOException {
+        // Surefire runs with the module directory as working directory.
+        readme = Files.readString(Path.of("..", "README.md"));
+    }
+
+    private static List<String> yamlBlocks() {
+        List<String> blocks = new ArrayList<>();
+        Matcher m = Pattern.compile("(?s)```yaml\\R(.*?)```").matcher(readme);
+        while (m.find()) {
+            blocks.add(m.group(1));
+        }
+        return blocks;
+    }
+
+    /** AC1: every YAML example loads with the real config loader (secret refs are checked syntactically). */
+    @Test
+    void yamlExamplesLoadWithConfigLoader(@TempDir Path dir) throws IOException {
+        List<String> blocks = yamlBlocks();
+        assertThat(blocks).as("README has YAML examples").isNotEmpty();
+        assertThat(blocks).anyMatch(b -> b.contains("keyring:imap-mcp/"));
+        assertThat(blocks).anyMatch(b -> b.contains("env:"));
+        assertThat(blocks).anyMatch(b -> b.contains("file:"));
+        int i = 0;
+        for (String block : blocks) {
+            Path f = dir.resolve("config-" + i++ + ".yaml");
+            Files.writeString(f, block);
+            AppConfig c = ConfigLoader.load(f, Map.of());
+            assertThat(c.accounts()).isNotEmpty();
+        }
+    }
+
+    /** AC2: env variables named in the README are exactly known ones (config overrides + path variables). */
+    @Test
+    void namedEnvVariablesAreKnown() {
+        Set<String> known = new HashSet<>(AppPaths.ENV_VARS);
+        known.addAll(ConfigLoader.ENV_OVERRIDES);
+        Set<String> named = new HashSet<>();
+        Matcher m = Pattern.compile("\\b(IMAP_MCP_[A-Z_]+|XDG_[A-Z_]+)\\b").matcher(readme);
+        while (m.find()) {
+            named.add(m.group(1));
+        }
+        assertThat(named).isNotEmpty().isSubsetOf(known);
+        // Everything the code reads is documented.
+        assertThat(named).containsAll(known);
+    }
+
+    /** AC3: no real addresses, no secret-looking literals. */
+    @Test
+    void containsNoRealAddressesOrSecrets() {
+        Matcher m = Pattern.compile("[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\\.[A-Za-z]{2,})").matcher(readme);
+        while (m.find()) {
+            assertThat(m.group(1)).as("address domain in README").isEqualTo("example.com");
+        }
+        assertThat(readme).doesNotContainPattern("\\b(?![A-Z_]+\\b)[A-Za-z0-9_-]{32,}");
+        Matcher pw = Pattern.compile("(?m)^\\s*(password|token|handleKey):\\s*(\\S+)").matcher(readme);
+        while (pw.find()) {
+            assertThat(pw.group(2)).as("secret value of " + pw.group(1))
+                    .matches("(env:|file:|keyring:).+");
+        }
+    }
+
+    /** AC4: stdio launch command and trace warning appear verbatim. */
+    @Test
+    void containsStdioCommandAndTraceWarning() {
+        assertThat(readme).contains("java -Xlog:disable -Xlog:all=warning:stderr -jar")
+                .contains("--mode stdio");
+        assertThat(readme).contains("WARNING")
+                .contains("may contain message content (subjects, addresses, bodies)")
+                .contains("credentials stay redacted")
+                .contains("disable it after diagnosis");
+    }
+
+    @Test
+    void describesImplementedBehaviourOnly() {
+        assertThat(readme).doesNotContain("specification phase").doesNotContain("no code yet")
+                .doesNotContain("IMAP_MCP_LOG_MAX_FILE_SIZE");
+        assertThat(readme).contains("JDK 25 or newer").contains("java-26").contains("3.9.6");
+        assertThat(readme).contains("docker exec").contains("/config/state/http-token")
+                .contains("claude mcp add").contains("--transport http").contains("Authorization: Bearer")
+                .contains("flavor: auto").contains("gimaps").contains("secret-tool store")
+                .contains("security add-generic-password").contains("within 5 minutes");
+    }
+
+    /**
+     * The option table: every documented key must be accepted by the loader, and loading all of them at their
+     * documented defaults must equal loading a minimal config (so the table cannot drift from the code).
+     */
+    @Test
+    void optionTableMatchesLoaderDefaults(@TempDir Path dir) throws IOException {
+        Map<String, StringBuilder> sections = new java.util.LinkedHashMap<>();
+        Matcher m = Pattern.compile("(?m)^\\| `([a-zA-Z]+)\\.([a-zA-Z]+)` \\| `([^`]*)` \\|").matcher(readme);
+        int rows = 0;
+        while (m.find()) {
+            rows++;
+            sections.computeIfAbsent(m.group(1), k -> new StringBuilder(k + ":\n"))
+                    .append("  ").append(m.group(2)).append(": ").append(m.group(3)).append('\n');
+        }
+        assertThat(sections.keySet()).containsExactlyInAnyOrder("imap", "pool", "tools", "secrets", "http");
+        assertThat(rows).isGreaterThanOrEqualTo(24);
+        String account = "accounts:\n  - id: a\n    host: imap.example.com\n    username: u\n    password: env:X\n";
+        Path minimal = dir.resolve("minimal.yaml");
+        Files.writeString(minimal, account);
+        Path full = dir.resolve("full.yaml");
+        Files.writeString(full, account + String.join("", sections.values().stream().map(StringBuilder::toString).toList()));
+        AppConfig expected = ConfigLoader.load(minimal, Map.of());
+        AppConfig actual = ConfigLoader.load(full, Map.of());
+        assertThat(actual.imap()).isEqualTo(expected.imap());
+        assertThat(actual.pool()).isEqualTo(expected.pool());
+        assertThat(actual.tools()).isEqualTo(expected.tools());
+        assertThat(actual.secrets()).isEqualTo(expected.secrets());
+        assertThat(actual.http()).isEqualTo(expected.http());
+        assertThat(readme).contains("`http.token`").contains("`security.handleKey`");
+    }
+
+    @Test
+    void logStatementNamesTheTraceException() {
+        assertThat(readme).contains(
+                "not logged (except in the opt-in IMAP protocol trace below; credentials stay redacted there too)");
+    }
+}
