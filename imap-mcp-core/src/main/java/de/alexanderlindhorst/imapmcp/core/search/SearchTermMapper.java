@@ -17,11 +17,13 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import org.eclipse.angus.mail.gimap.GmailRawSearchTerm;
 
 /**
  * Maps {@link SearchCriteria} to a Jakarta Mail {@link SearchTerm}, all criteria ANDed. Returns {@code null}
  * when no criterion maps to a term: the caller then searches ALL. {@code since} yields only the coarse
- * day bound; {@code gmail_raw} is not handled here (separate ticket). Terms are client data and never logged.
+ * day bound; {@code gmail_raw} becomes a
+ * {@link GmailRawSearchTerm} (the capability gate is the tool's job). Terms are client data and never logged.
  *
  * <p>text maps to BODY (not TEXT) so header matches do not leak into body search. Date bounds are INTERNALDATE
  * based: date_from is SINCE (inclusive), date_to is BEFORE date_to+1. Angus formats the date in the JVM
@@ -70,6 +72,10 @@ public final class SearchTermMapper {
         }
         if (c.dateTo() != null) {
             terms.add(new ReceivedDateTerm(ComparisonTerm.LT, noon(c.dateTo().plusDays(1))));
+        }
+        if (c.gmailRaw() != null) {
+            // Only the gimaps protocol can serialize it; SearchMessagesTool gates on X-GM-EXT-1 beforehand.
+            terms.add(new GmailRawSearchTerm(c.gmailRaw()));
         }
         if (c.since() != null) {
             // IMAP SINCE compares the stored calendar date (any zone offset of the INTERNALDATE), so the UTC date

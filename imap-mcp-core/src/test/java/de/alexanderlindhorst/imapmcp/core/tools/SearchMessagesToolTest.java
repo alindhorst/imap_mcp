@@ -225,14 +225,6 @@ class SearchMessagesToolTest {
         assertThat(name.codePointCount(0, name.length())).isEqualTo(UntrustedText.DISPLAY_NAME_MAX);
     }
 
-    // AC9 (#27); since is implemented by #28
-    @Test
-    void gmailRawIsRejectedAsNotImplemented() {
-        ToolError raw = env.error(SearchEnv.T1, args("gmail_raw", "has:attachment"));
-        assertThat(raw.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
-        assertThat(raw.details()).containsEntry("field", "gmail_raw").containsEntry("reason", "not_implemented");
-    }
-
     // AC5
     @Test
     void cursorWithOtherCriteriaTamperedOrStaleIsRejected() throws Exception {
@@ -516,4 +508,57 @@ class SearchMessagesToolTest {
     static final String AS_OF_TEXT = "Set only on the first page (no cursor), otherwise null. Pass it as since in "
             + "your next search with the same criteria to get messages received since this search; results may "
             + "repeat messages already seen, so deduplicate by handle.";
+
+    // ---- #29 gmail_raw ----
+
+    private void assertUnsupported(ToolError e) {
+        assertThat(e.code()).isEqualTo(ErrorCode.UNSUPPORTED);
+        assertThat(e.details()).containsEntry("capability", "X-GM-EXT-1");
+    }
+
+    // #29 AC1
+    @Test
+    void gmailRawOnAServerWithoutXGmExt1IsUnsupportedAndNoSearchIsSent() throws Exception {
+        env.deliver(2);
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        List<String> cmds = commands(() -> assertUnsupported(env.error(SearchEnv.T1,
+                args("gmail_raw", "has:attachment", "subject", "Subject"))));
+        assertThat(cmds).noneMatch(c -> c.contains("SEARCH")).noneMatch(c -> c.contains("FETCH"))
+                .noneMatch(c -> c.contains("EXAMINE")).noneMatch(c -> c.contains("SELECT"));
+    }
+
+    // the capability alone is not enough: the account must also be a Gmail-flavored (gimaps) one
+    @Test
+    void gmailRawOnAGenericAccountIsUnsupportedEvenIfTheCacheSaysGmail() throws Exception {
+        env.ok(SearchEnv.T1, args()); // creates the store, which records the capabilities
+        env.advertiseGmail(true);
+        List<String> cmds = commands(() -> assertUnsupported(env.error(SearchEnv.T1, args("gmail_raw", "x"))));
+        assertThat(cmds).noneMatch(c -> c.contains("SEARCH"));
+    }
+
+    @Test
+    void gmailRawOnAGmailAccountWithoutTheCapabilityIsUnsupported() throws Exception {
+        env.close();
+        env = new SearchEnv(SearchMessagesTool.DEFAULT_SINCE_MAX_CANDIDATES,
+                de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor.GMAIL);
+        List<String> cmds = commands(() -> assertUnsupported(env.error(SearchEnv.T1, args("gmail_raw", "x"))));
+        assertThat(cmds).noneMatch(c -> c.contains("SEARCH"));
+    }
+
+    // #29 AC3: Gmail account (gimaps) + advertised capability: the query is sent as X-GM-RAW; GreenMail does not
+    // know the key and answers NO/BAD, which must surface as UPSTREAM_ERROR, not as a crash or empty result.
+    @Test
+    void aNoOrBadAnswerToTheGmailQueryIsUpstreamError() throws Exception {
+        env.close();
+        env = new SearchEnv(SearchMessagesTool.DEFAULT_SINCE_MAX_CANDIDATES,
+                de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor.GMAIL);
+        env.deliver(2);
+        env.ok(SearchEnv.T1, args()); // creates the store, which records the capabilities
+        env.advertiseGmail(true);
+        List<String> cmds = new ArrayList<>();
+        ToolError e = env.error(SearchEnv.T1, args("gmail_raw", "has:attachment"));
+        assertThat(e.code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+        cmds.addAll(commands(() -> env.error(SearchEnv.T1, args("gmail_raw", "has:attachment"))));
+        assertThat(cmds).anyMatch(c -> c.contains("SEARCH") && c.contains("X-GM-RAW has:attachment"));
+    }
 }

@@ -1,5 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tools;
 
+import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
+import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
@@ -7,6 +9,8 @@ import de.alexanderlindhorst.imapmcp.core.folder.FolderResolver;
 import de.alexanderlindhorst.imapmcp.core.folder.FolderRole;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
+import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
+import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentClassifier;
@@ -49,7 +53,7 @@ import org.eclipse.angus.mail.imap.protocol.ENVELOPE;
  * EXAMINE via lease -> UIDVALIDITY check -> {@link PageFetcher} (SEARCH, then FETCH for UIDs, then one FETCH of the
  * summary items for the page; command count independent of page size) -> summaries -> {@code close(false)}.
  * Everything that comes from a message sits under {@code untrusted} and passes the {@link UntrustedText} caps.
- * {@code gmail_raw} is rejected as not implemented until its ticket replaces {@link #rejectUnsupported}; it is
+ * {@code gmail_raw} is answered with UNSUPPORTED unless the account is Gmail-flavored and advertises X-GM-EXT-1; it is
  * never ignored silently. {@code since} is an exact INTERNALDATE filter done inside {@link PageFetcher}.
  */
 public final class SearchMessagesTool implements ToolHandler {
@@ -124,6 +128,7 @@ public final class SearchMessagesTool implements ToolHandler {
     private final Clock clock;
     private final Duration overlap;
     private final int sinceMaxCandidates;
+    private final CapabilityCache capabilities;
 
     public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
             SearchCursorCodec cursors, MessageHandles handles, Clock clock) {
@@ -139,6 +144,14 @@ public final class SearchMessagesTool implements ToolHandler {
     public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
             SearchCursorCodec cursors, MessageHandles handles, Clock clock, Duration overlap,
             int sinceMaxCandidates) {
+        this(accounts, leases, mapper, cursors, handles, clock, overlap, sinceMaxCandidates, new CapabilityCache());
+    }
+
+    /** @param capabilities source of the X-GM-EXT-1 gate for {@code gmail_raw}; refreshed from the leased Store */
+    public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
+            SearchCursorCodec cursors, MessageHandles handles, Clock clock, Duration overlap,
+            int sinceMaxCandidates, CapabilityCache capabilities) {
+        this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         if (sinceMaxCandidates < 1) {
             throw new IllegalArgumentException("sinceMaxCandidates must be positive");
         }
@@ -164,16 +177,12 @@ public final class SearchMessagesTool implements ToolHandler {
         if (!in.valid()) {
             return new ToolOutcome.Failure(in.error());
         }
-        ToolError unsupported = rejectUnsupported(in.criteria(), rid);
-        if (unsupported != null) {
-            return new ToolOutcome.Failure(unsupported);
-        }
         FolderRole role = in.folderRole() == null ? null : FolderRole.fromWire(in.folderRole()).orElseThrow();
         TenantId tenant = ctx.accountContext().tenantId();
         AccountId accountId = ok.account().account().id();
         try (ImapLease lease = leases.lease(ok.key(), ctx)) {
             try {
-                return search(lease, ctx, tenant, accountId, (String) args.get("account"), in, role);
+                return search(lease, ctx, tenant, accountId, (String) args.get("account"), in, role, ok);
             } catch (MessagingException e) {
                 ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, rid);
                 if (mapped.discardConnection()) {
@@ -184,17 +193,32 @@ public final class SearchMessagesTool implements ToolHandler {
         }
     }
 
-    /** gmail_raw (#29) is not implemented yet; that ticket deletes this check. */
-    private static ToolError rejectUnsupported(SearchCriteria c, String rid) {
-        if (c.gmailRaw() != null) {
-            return ToolError.invalidArgument("gmail_raw", "not_implemented", null, rid);
+    /**
+     * X-GM-RAW needs a Gmail-flavored account (gimaps store) and the advertised X-GM-EXT-1 capability. The cache
+     * is trusted while fresh; otherwise the leased Store's own capability set is read (local, no I/O) and cached.
+     */
+    private boolean gmailRawSupported(ImapLease lease, PoolKey key, MailAccount.Flavor flavor)
+            throws MessagingException {
+        if (flavor != MailAccount.Flavor.GMAIL) {
+            return false;
         }
-        return null;
+        if (capabilities.get(key) instanceof CapabilityCache.Lookup.Fresh f) {
+            return f.capabilities().gmail();
+        }
+        ImapCapabilities fresh = ImapCapabilities.from(lease.store());
+        capabilities.put(key, fresh);
+        return fresh.gmail();
     }
 
     private ToolOutcome search(ImapLease lease, ToolCallContext ctx, TenantId tenant, AccountId account,
-            String accountHandle, SearchArguments.Parsed in, FolderRole role) throws MessagingException {
+            String accountHandle, SearchArguments.Parsed in, FolderRole role, AccountArgument.Result.Ok ok)
+            throws MessagingException {
         String rid = ctx.requestId();
+        // Before the folder is resolved or opened: a refused gmail_raw must not cost any IMAP command.
+        if (in.criteria().gmailRaw() != null
+                && !gmailRawSupported(lease, ok.key(), ok.account().account().flavor())) {
+            return new ToolOutcome.Failure(ToolError.unsupported("X-GM-EXT-1", rid));
+        }
         FolderResolver.Resolution folderName = FolderResolver.resolve(lease, in.folder(), role, rid);
         if (folderName.error() != null) {
             return new ToolOutcome.Failure(folderName.error());

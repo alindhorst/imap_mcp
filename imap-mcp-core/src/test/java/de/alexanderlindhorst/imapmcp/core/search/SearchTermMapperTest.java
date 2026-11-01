@@ -27,7 +27,18 @@ class SearchTermMapperTest {
     @Test
     void noCriteriaMapsToNullMeaningMatchAll() {
         assertThat(mapper.map(E)).isNull();
-        // gmail_raw is not mapped here (#29)
+    }
+
+    // #29
+    @Test
+    void gmailRawMapsToGmailRawSearchTermAndIsAndedWithTheOtherCriteria() {
+        assertThat(mapper.map(E.withGmailRaw("has:attachment")))
+                .isInstanceOfSatisfying(org.eclipse.angus.mail.gimap.GmailRawSearchTerm.class,
+                        t -> assertThat(t.getPattern()).isEqualTo("has:attachment"));
+        SearchTerm both = mapper.map(E.withGmailRaw("has:attachment").withSubject("x"));
+        assertThat(both).isInstanceOfSatisfying(jakarta.mail.search.AndTerm.class, t -> assertThat(t.getTerms())
+                .anyMatch(x -> x instanceof org.eclipse.angus.mail.gimap.GmailRawSearchTerm)
+                .anyMatch(x -> x instanceof SubjectTerm));
     }
 
     // #28: coarse pre-filter only; the exact instant filter happens after INTERNALDATE is fetched

@@ -80,6 +80,7 @@ public final class SearchEnv implements AutoCloseable {
     public final GreenMail greenMail;
     public final GreenMailUser user;
     public final TestClock clock = new TestClock();
+    public final CapabilityCache capabilities = new CapabilityCache();
     public final KeyRing keys = new KeyRing(1, Map.of(1, new byte[32]));
     public final MessageHandles handles = new MessageHandles(keys);
     public final SearchCursorCodec cursors = new SearchCursorCodec(keys);
@@ -96,24 +97,39 @@ public final class SearchEnv implements AutoCloseable {
     }
 
     public SearchEnv(int sinceMaxCandidates) {
+        this(sinceMaxCandidates, Flavor.GENERIC);
+    }
+
+    public SearchEnv(int sinceMaxCandidates, Flavor flavor) {
         greenMail = new GreenMail(ServerSetupTest.IMAPS.dynamicPort());
         greenMail.start();
         user = greenMail.setUser(USER + "@localhost", USER, "pw");
         account = new MailAccount(new AccountId("a1"), "Label", null, "127.0.0.1", greenMail.getImaps().getPort(),
-                Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
+                Security.IMPLICIT_TLS, flavor, USER, new SecretRef("env:X"));
         InMemoryAccountRepository repo = new InMemoryAccountRepository(Map.of(T1, List.of(account), T2, List.of(account)));
         handleT1 = InMemoryAccountRepository.handle(T1, account.id());
         handleT2 = InMemoryAccountRepository.handle(T2, account.id());
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");
+            p.put("mail.gimaps.ssl.trust", "*"); // Gmail-flavored accounts use the gimaps prefix
+            p.put("mail.gimaps.ssl.checkserveridentity", "false");
             return p;
         }, true);
-        pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), new CapabilityCache(),
+        pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), capabilities,
                 k -> account, PoolSettings.DEFAULTS);
         tool = new SearchMessagesTool(new AccountArgument(repo), new StoreLeases(pool, Duration.ofSeconds(10)),
                 new SearchTermMapper(), cursors, handles, clock, SearchMessagesTool.SINCE_OVERLAP,
-                sinceMaxCandidates);
+                sinceMaxCandidates, capabilities);
+    }
+
+    /** Overwrites the cached capabilities of tenant 1's account (GreenMail itself never advertises X-GM-EXT-1). */
+    public void advertiseGmail(boolean gmail) {
+        de.alexanderlindhorst.imapmcp.core.account.PoolKey key = de.alexanderlindhorst.imapmcp.core.account.PoolKey
+                .of(new AccountContext(T1), new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(T1, account,
+                        handleT1));
+        capabilities.put(key, de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities
+                .fromNames(gmail ? List.of("X-GM-EXT-1") : List.of()));
     }
 
     public ToolOutcome call(TenantId tenant, Map<String, Object> args) {

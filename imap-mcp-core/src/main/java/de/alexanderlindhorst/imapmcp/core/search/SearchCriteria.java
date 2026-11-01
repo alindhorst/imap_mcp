@@ -33,6 +33,10 @@ public record SearchCriteria(String from, String to, String subject, String text
         return new SearchCriteria(from, to, subject, text, dateFrom, dateTo, v, seen, flagged, answered, draft, keywords, gmailRaw);
     }
 
+    public SearchCriteria withGmailRaw(String v) {
+        return new SearchCriteria(from, to, subject, text, dateFrom, dateTo, since, seen, flagged, answered, draft, keywords, v);
+    }
+
     public SearchCriteria withSeen(Boolean v) {
         return new SearchCriteria(from, to, subject, text, dateFrom, dateTo, since, v, flagged, answered, draft, keywords, gmailRaw);
     }
