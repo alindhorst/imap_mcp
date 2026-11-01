@@ -116,7 +116,7 @@ public final class GetMessageTool implements ToolHandler {
                 "Read one message: envelope (from, to, cc, reply-to, subject, dates), the text body as a window of "
                         + "max_chars characters starting at offset (HTML is converted to text; use next_offset to "
                         + "continue), the attachment list and optionally all headers. Read-only; does not change "
-                        + "flags or mark the message as read.",
+                        + "flags or mark messages as read.",
                 inputSchema(maxCharsCap), OUTPUT_SCHEMA, ToolHints.READ_ONLY_OPEN_WORLD);
     }
 

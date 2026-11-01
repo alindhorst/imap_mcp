@@ -30,13 +30,13 @@ class HeaderFieldsTest {
     @Test
     void decodesRfc2047AndKeepsMalformedEncodedWordsRaw() {
         HeaderFields.Result r = parse("Subject: =?UTF-8?Q?Gr=C3=BC=C3=9Fe?=\r\nX-Bad: =?nope?Q?abc?=\r\n\r\n");
-        assertThat(r.fields().get(0).value()).isEqualTo("Grüße");
+        assertThat(r.fields().get(0).value()).isEqualTo("Gr\u00fc\u00dfe");
         assertThat(r.fields().get(1).value()).isEqualTo("=?nope?Q?abc?=");
     }
 
     @Test
     void sanitizesControlCharactersAndBidiInNamesAndValues() {
-        HeaderFields.Result r = parse("X-A: a\u0001b‮c\r\n\r\n");
+        HeaderFields.Result r = parse("X-A: a\u0001b\u202Ec\r\n\r\n");
         assertThat(r.fields().get(0).value()).isEqualTo("a bc");
     }
 
