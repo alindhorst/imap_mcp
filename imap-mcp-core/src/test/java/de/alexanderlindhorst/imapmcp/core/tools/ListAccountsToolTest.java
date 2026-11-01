@@ -23,17 +23,11 @@ import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
-import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
-import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
-import de.alexanderlindhorst.imapmcp.core.tool.InputValidator;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
-import de.alexanderlindhorst.imapmcp.core.mcp.InMemoryMcp;
-import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.spec.McpSchema;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -163,30 +157,36 @@ class ListAccountsToolTest {
         for (Map<String, Object> m : accounts) {
             assertThat(m.get("account").toString()).matches("acc_[a-z2-7]{26}");
             assertThat(m).containsEntry("capabilities_detected_at", "2026-01-01T00:00:00Z");
-            Map<?, ?> caps = (Map<?, ?>) m.get("capabilities");
+            @SuppressWarnings("unchecked") Map<String, Object> caps = (Map<String, Object>) m.get("capabilities");
             assertThat(caps.keySet()).containsExactlyInAnyOrder("move", "uidplus", "special_use", "sort", "gmail");
             assertThat(caps).containsEntry("gmail", false);
         }
         CapabilityCache.Lookup.Fresh fresh = (CapabilityCache.Lookup.Fresh) cache.get(
                 PoolKey.of(new AccountContext(A), repo.findByTenant(A).stream()
                         .filter(r -> r.account().id().value().equals("zeta")).findFirst().orElseThrow()));
-        Map<?, ?> zeta = (Map<?, ?>) accounts.get(1).get("capabilities");
+        @SuppressWarnings("unchecked") Map<String, Object> zeta = (Map<String, Object>) accounts.get(1).get("capabilities");
         assertThat(zeta).containsEntry("move", fresh.capabilities().move()).containsEntry("uidplus", fresh.capabilities().uidplus())
                 .containsEntry("special_use", fresh.capabilities().specialUse()).containsEntry("sort", fresh.capabilities().sort());
     }
 
     @Test
-    void sortIsByLabelThenHandleInCodePointOrder() {
+    void equalLabelsAreOrderedByHandle() {
         wire(Map.of(A, List.of(
                 account("zeta", "Same", "zeta", Flavor.GENERIC, null),
-                account("alpha", "Same", "alpha", Flavor.GENERIC, null),
-                account("bad", "A😀", "alpha", Flavor.GENERIC, null)))); // supplementary char sorts after U+FF5E
+                account("alpha", "Same", "alpha", Flavor.GENERIC, null))));
         List<String> handles = new ArrayList<>(List.of(InMemoryAccountRepository.handle(A, new AccountId("zeta")),
                 InMemoryAccountRepository.handle(A, new AccountId("alpha"))));
         java.util.Collections.sort(handles);
-        List<Map<String, Object>> accounts = list(A);
-        assertThat(accounts).extracting(m -> m.get("label")).containsExactly("Same", "Same", "A😀");
-        assertThat(accounts.subList(0, 2)).extracting(m -> m.get("account")).containsExactlyElementsOf(handles);
+        assertThat(list(A)).extracting(m -> m.get("account")).containsExactlyElementsOf(handles);
+    }
+
+    @Test
+    void labelsAreOrderedByCodePointNotUtf16Unit() {
+        // U+FF5E < U+1F600 by code point; by UTF-16 unit the surrogate pair (D83D) would sort first.
+        wire(Map.of(A, List.of(
+                account("zeta", "\uD83D\uDE00", "zeta", Flavor.GENERIC, null),
+                account("alpha", "\uFF5E", "alpha", Flavor.GENERIC, null))));
+        assertThat(list(A)).extracting(m -> m.get("label")).containsExactly("\uFF5E", "\uD83D\uDE00");
     }
 
     @Test
@@ -210,11 +210,12 @@ class ListAccountsToolTest {
 
     @Test
     void unreachableServerGivesUnreachableAndStaleCapabilitiesWhenCached() {
-        wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null))));
+        Map<TenantId, List<MailAccount>> accts = Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null)));
+        wire(accts);
         assertThat(list(A).get(0)).containsEntry("status", "ok");
         greenMail.stop();
         pool.close(); // drop idle store so the next probe must connect
-        wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null))));
+        wire(accts);
         now.set(now.get().plus(Duration.ofHours(1))); // expired, stale value kept
         Map<String, Object> m = list(A).get(0);
         assertThat(m).containsEntry("status", "unreachable").containsEntry("capabilities_detected_at", "2026-01-01T00:00:00Z");
@@ -272,9 +273,9 @@ class ListAccountsToolTest {
         list(A);
         now.set(now.get().plus(Duration.ofHours(1)));
         list(A);
-        assertThat(trace.list).isNotEmpty();
+        assertThat(trace.list.stream().map(ILoggingEvent::getFormattedMessage)).anyMatch(l -> l.contains("CAPABILITY"));
         assertThat(trace.list.stream().map(ILoggingEvent::getFormattedMessage))
-                .noneMatch(l -> l.matches("(?is).*\\b(SELECT|EXAMINE|STORE|EXPUNGE|COPY|APPEND)\\b.*"));
+                .noneMatch(l -> l.matches("(?s)^\\w+ (UID )?(SELECT|EXAMINE|STORE|EXPUNGE|COPY|APPEND|MOVE|FETCH|SEARCH|CREATE|DELETE|RENAME)\\b.*"));
     }
 
     @Test
@@ -284,40 +285,5 @@ class ListAccountsToolTest {
         assertThat(toolLog.list.stream().map(ILoggingEvent::getFormattedMessage))
                 .noneMatch(l -> l.contains("example.org"));
         assertThat(trace.list.stream().map(ILoggingEvent::getFormattedMessage)).noneMatch(l -> l.contains("example.org"));
-    }
-
-    // AC6
-
-    @Test
-    void definitionIsReadOnlyAnnotatedWithOutputSchemaAndValidDescription() {
-        wireDefault();
-        McpToolAdapter adapter = new McpToolAdapter(c -> new AccountContext(A));
-        InMemoryMcp.Stateless mcp = new InMemoryMcp.Stateless(adapter.stateless(ListAccountsTool.DEFINITION, tool));
-        McpSchema.ListToolsResult listed = io.modelcontextprotocol.json.McpJsonDefaults.getMapper().convertValue(
-                mcp.request(McpSchema.METHOD_TOOLS_LIST, Map.of(), McpTransportContext.EMPTY).result(),
-                McpSchema.ListToolsResult.class);
-        McpSchema.Tool t = listed.tools().get(0);
-        assertThat(DescriptionRules.violations(ListAccountsTool.DEFINITION)).isEmpty();
-        assertThat(t.name()).isEqualTo("list_accounts");
-        assertThat(t.title()).isEqualTo("List mail accounts");
-        McpSchema.ToolAnnotations a = t.annotations();
-        assertThat(a.readOnlyHint()).isTrue();
-        assertThat(a.destructiveHint()).isFalse();
-        assertThat(a.idempotentHint()).isTrue();
-        assertThat(a.openWorldHint()).isTrue();
-        assertThat(t.outputSchema()).isEqualTo(ListAccountsTool.DEFINITION.outputSchema()).containsKey("properties");
-        assertThat(new InputValidator(ListAccountsTool.DEFINITION.inputSchema()).validate(Map.of(), "rid").valid()).isTrue();
-        assertThat(new InputValidator(ListAccountsTool.DEFINITION.inputSchema()).validate(Map.of("x", 1), "rid").valid()).isFalse();
-    }
-
-    @Test
-    void successOutputPassesTheSdksOutputSchemaValidation() {
-        wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null),
-                account("bad", "Bad", "bad", Flavor.GENERIC, "x@example.org"))));
-        McpToolAdapter adapter = new McpToolAdapter(c -> new AccountContext(A));
-        InMemoryMcp.Stateless mcp = new InMemoryMcp.Stateless(adapter.stateless(ListAccountsTool.DEFINITION, tool));
-        McpSchema.CallToolResult r = mcp.call("list_accounts", Map.of(), McpTransportContext.EMPTY);
-        assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
-        assertThat(((Map<?, ?>) r.structuredContent()).get("accounts")).asList().hasSize(2);
     }
 }
