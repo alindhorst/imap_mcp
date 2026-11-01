@@ -92,6 +92,10 @@ public final class SearchEnv implements AutoCloseable {
     private int counter;
 
     public SearchEnv() {
+        this(SearchMessagesTool.DEFAULT_SINCE_MAX_CANDIDATES);
+    }
+
+    public SearchEnv(int sinceMaxCandidates) {
         greenMail = new GreenMail(ServerSetupTest.IMAPS.dynamicPort());
         greenMail.start();
         user = greenMail.setUser(USER + "@localhost", USER, "pw");
@@ -108,7 +112,8 @@ public final class SearchEnv implements AutoCloseable {
         pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), new CapabilityCache(),
                 k -> account, PoolSettings.DEFAULTS);
         tool = new SearchMessagesTool(new AccountArgument(repo), new StoreLeases(pool, Duration.ofSeconds(10)),
-                new SearchTermMapper(), cursors, handles, clock);
+                new SearchTermMapper(), cursors, handles, clock, SearchMessagesTool.SINCE_OVERLAP,
+                sinceMaxCandidates);
     }
 
     public ToolOutcome call(TenantId tenant, Map<String, Object> args) {
@@ -148,6 +153,12 @@ public final class SearchEnv implements AutoCloseable {
         for (int i = 0; i < n; i++) {
             user.deliver(message("Sender " + i, "s" + i + "@example.org", "Subject " + i));
         }
+    }
+
+    /** Appends one message to INBOX with an explicit INTERNALDATE (like IMAP APPEND with a date-time). */
+    public void deliverAt(Instant received, String subject) throws Exception {
+        MailFolder inbox = greenMail.getManagers().getImapHostManager().getInbox(user);
+        inbox.appendMessage(message("Sender", "s@example.org", subject), new Flags(), java.util.Date.from(received));
     }
 
     public MimeMessage withAttachment(MimeMessage base) throws Exception {
