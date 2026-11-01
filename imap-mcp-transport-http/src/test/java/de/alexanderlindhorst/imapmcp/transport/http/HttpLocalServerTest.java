@@ -130,6 +130,25 @@ class HttpLocalServerTest {
     }
 
     @Test
+    void configuredMaxRequestBytesRejectsLargerBodies() throws Exception {
+        server = builder().maxRequestBytes(2048).build();
+        server.start();
+        String big = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"pad\":\""
+                + "x".repeat(4096) + "\"}}";
+        assertThat(post(big).statusCode()).isBetween(400, 499);
+        assertThat(post(rpc("tools/list", "{}")).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void serverInfoCarriesConfiguredNameAndVersion() throws Exception {
+        server = builder().serverInfo("imap-mcp", "9.8.7").build();
+        server.start();
+        HttpResponse<String> init = post(rpc("initialize",
+                "{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}"));
+        assertThat(init.body()).contains("\"version\":\"9.8.7\"");
+    }
+
+    @Test
     void oversizedBodyRejectedAndServerStaysHealthy() throws Exception {
         started();
         String big = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"pad\":\""
