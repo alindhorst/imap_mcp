@@ -6,6 +6,7 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,17 @@ public final class RefCredentialStore implements CredentialStore {
     public static RefCredentialStore withEnv(TenantId owner, List<MailAccount> accounts, Map<String, String> env) {
         return new RefCredentialStore(owner, accounts,
                 Map.of("env", new EnvSecretResolver(env), "file", new FileSecretResolver()));
+    }
+
+    /** As {@link #withEnv}, plus {@code keyring:} refs, resolved eagerly once during validation. */
+    public static RefCredentialStore withEnvAndKeyring(TenantId owner, List<MailAccount> accounts,
+            Map<String, String> env, Platform platform, CommandRunner runner, BinaryProbe probe, Duration timeout) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** Validates every account's reference; failures are reported as {@code account '<id>': <message>}. */
+    public void validateAll() {
+        throw new UnsupportedOperationException();
     }
 
     /** Startup validation; throws {@link SecretResolutionException} without revealing any value. */
