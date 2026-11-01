@@ -1,0 +1,4 @@
+<configuration>
+  <!-- No console appender: tests assert that nothing reaches System.out; tests attach their own appenders. -->
+  <root level="OFF"/>
+</configuration>
