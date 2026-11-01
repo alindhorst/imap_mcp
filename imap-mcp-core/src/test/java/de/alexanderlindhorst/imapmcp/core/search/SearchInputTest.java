@@ -67,7 +67,7 @@ class SearchInputTest {
     void keywordAtomRules() {
         assertField(args("keywords", List.of("\\Seen")), "keywords[0]", "format");
         for (String bad : new String[] {"a b", "a(b", "a)b", "a{b", "a%b", "a*b", "a\"b", "a]b", "a\\b", "a\u0001b",
-                "ä", "a\u007fb"}) {
+                "\u00e4", "a\u007fb"}) {
             assertField(args("keywords", List.of(bad)), "keywords[0]", "format");
         }
         assertField(args("keywords", List.of("")), "keywords[0]", "out_of_range");
@@ -153,15 +153,15 @@ class SearchInputTest {
 
     @Test
     void folderByteLimit() {
-        assertThat(ok(args("folder", "€".repeat(333))).folder()).hasSize(333);
-        assertField(args("folder", "€".repeat(334)), "folder", "out_of_range");
+        assertThat(ok(args("folder", "\u20ac".repeat(333))).folder()).hasSize(333);
+        assertField(args("folder", "\u20ac".repeat(334)), "folder", "out_of_range");
         assertField(args("folder", "a".repeat(1001)), "folder", "out_of_range");
         assertThat(ok(args("folder", "a".repeat(1000))).folder()).hasSize(1000);
-        Map<String, Object> err = error(args("folder", "€".repeat(334)));
+        Map<String, Object> err = error(args("folder", "\u20ac".repeat(334)));
         @SuppressWarnings("unchecked")
         Map<String, Object> d = (Map<String, Object>) err.get("details");
         assertThat(d).containsEntry("max", 1000);
-        assertThat(err.toString()).doesNotContain("€");
+        assertThat(err.toString()).doesNotContain("\u20ac");
         // same payload for both over-limit variants
         assertThat(error(args("folder", "a".repeat(1001)))).isEqualTo(err);
     }
@@ -171,6 +171,6 @@ class SearchInputTest {
         assertField(args("folder", "QZ\ud800cd"), "folder", "format");
         assertField(args("folder", "ab\udc00"), "folder", "format");
         assertThat(error(args("folder", "QZ\ud800cd")).toString()).doesNotContain("QZ");
-        assertThat(ok(args("folder", "a😀")).folder()).hasSize(3);
+        assertThat(ok(args("folder", "a\ud83d\ude00")).folder()).hasSize(3);
     }
 }
