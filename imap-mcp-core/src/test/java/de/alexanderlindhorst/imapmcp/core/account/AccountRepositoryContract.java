@@ -55,10 +55,28 @@ public abstract class AccountRepositoryContract {
 
     @Test
     void findByTenantNeverContainsOtherTenantsAccounts() {
-        assertThat(repository.findByTenant(TENANT_B)).extracting(a -> a.id().value())
+        assertThat(repository.findByTenant(TENANT_B)).extracting(r -> r.account().id().value())
                 .containsExactlyInAnyOrder("shared", "only-b");
-        assertThat(repository.findByTenant(TENANT_A)).extracting(a -> a.id().value())
+        assertThat(repository.findByTenant(TENANT_A)).extracting(r -> r.account().id().value())
                 .containsExactlyInAnyOrder("shared", "only-a");
+    }
+
+    @Test
+    void everyListedAccountResolvesByItsOwnHandleInItsTenant() {
+        for (TenantId t : List.of(TENANT_A, TENANT_B)) {
+            for (ResolvedAccount listed : repository.findByTenant(t)) {
+                assertThat(listed.tenantId()).isEqualTo(t);
+                assertThat(listed.handle()).isEqualTo(handleFor(repository, t, listed.account().id()));
+                assertThat(repository.findByTenantAndHandle(t, listed.handle())).contains(listed);
+            }
+        }
+    }
+
+    @Test
+    void listedHandlesDoNotResolveInTheOtherTenant() {
+        for (ResolvedAccount listed : repository.findByTenant(TENANT_A)) {
+            assertThat(repository.findByTenantAndHandle(TENANT_B, listed.handle())).isEmpty();
+        }
     }
 
     @Test
