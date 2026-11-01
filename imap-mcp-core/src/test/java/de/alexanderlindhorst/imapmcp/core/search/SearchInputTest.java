@@ -94,7 +94,7 @@ class SearchInputTest {
 
     @Test
     void folderAndFolderRoleAreMutuallyExclusive() {
-        assertField(args("folder", "INBOX", "folder_role", "inbox"), "folder_role", "conflict");
+        assertField(args("folder", "INBOX", "folder_role", "inbox"), "folder_role", "mutually_exclusive");
         assertThat(ok(args("folder_role", "sent")).folderRole()).isEqualTo("sent");
         assertThat(ok(args("folder", "Foo")).folder()).isEqualTo("Foo");
         assertField(args("folder_role", "bogus"), "folder_role", "out_of_range");
