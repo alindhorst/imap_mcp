@@ -203,7 +203,7 @@ class ImapLeaseTest {
     void secondFolderClosesFirstAndLeaseUsesOneSocket() throws Exception {
         leases(Duration.ofSeconds(10));
         greenMail.getManagers().getImapHostManager().createMailbox(
-                greenMail.getManagers().getUserManager().getUser(USER + "@localhost"), "Other");
+                greenMail.getManagers().getUserManager().getUserByEmail(USER + "@localhost"), "Other");
         try (ImapLease lease = leases.lease(key, ctx())) {
             IMAPFolder first = lease.openReadOnly("INBOX");
             assertThatThrownBy(lease::store).isInstanceOf(IllegalStateException.class);
@@ -316,7 +316,7 @@ class ImapLeaseTest {
             int r;
             try {
                 r = in.read();
-                while (r > 0) {
+                while (r != -1) {
                     r = in.read(); // the TLS ClientHello may arrive first
                 }
             } catch (IOException e) {
