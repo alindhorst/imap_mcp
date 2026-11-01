@@ -118,11 +118,19 @@ class HostOriginFilterTest {
     @Test
     void foreignOrMalformedHostIs403() throws Exception {
         startDefaults();
-        for (String h : List.of("evil.example:8080", "evil.example", "localhost.evil.example:80", "localhost:abc",
+        for (String h : List.of("evil.example:8080", "evil.example", "localhost.evil.example:80",
                 "localhost:", "127.0.0.1.evil:80", "")) {
             Raw r = post11("Host: " + h);
             assertThat(r.status()).as(h).isEqualTo(403);
         }
+        assertThat(reached).isEmpty();
+    }
+
+    @Test
+    void nonNumericPortIsRejectedByJettyBeforeTheFilter() throws Exception {
+        startDefaults();
+        // Jetty 12 answers 400 for an unparseable authority; the filter never sees it. Still never reaches the MCP.
+        assertThat(post11("Host: localhost:abc").status()).isEqualTo(400);
         assertThat(reached).isEmpty();
     }
 
