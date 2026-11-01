@@ -489,15 +489,31 @@ class SearchMessagesToolTest {
         assertThat(env.unseenCount()).isEqualTo(before).isEqualTo(3);
     }
 
+    // #28 AC10
     @Test
-    void descriptionCarriesTheAsOfGuidance() {
-        assertThat(SearchMessagesTool.DEFINITION.description()).contains(AS_OF_TEXT);
+    @SuppressWarnings("unchecked")
+    void asOfGuidanceIsSplitAcrossDescriptionAndSchemaProperties() {
+        String d = SearchMessagesTool.DEFINITION.description();
+        assertThat(d).contains("For new mail, pass the first page's as_of as since in a later search with the same "
+                + "criteria (see as_of).").hasSizeLessThanOrEqualTo(600);
+        Map<String, Object> inProps = (Map<String, Object>) SearchMessagesTool.DEFINITION.inputSchema()
+                .get("properties");
+        assertThat(((Map<String, Object>) inProps.get("since")).get("description")).isEqualTo(SINCE_TEXT);
+        Map<String, Object> outProps = (Map<String, Object>) SearchMessagesTool.DEFINITION.outputSchema()
+                .get("properties");
+        assertThat(((Map<String, Object>) outProps.get("as_of")).get("description")).isEqualTo(AS_OF_TEXT);
+        assertThat(SINCE_TEXT.length()).isLessThanOrEqualTo(400);
+        assertThat(AS_OF_TEXT.length()).isLessThanOrEqualTo(400);
+        assertThat(DescriptionRules.violations(SearchMessagesTool.DEFINITION)).isEmpty();
     }
 
-    static final String AS_OF_TEXT = "`as_of` (only on the first page, i.e. calls without `cursor`): pass it as "
-            + "`since` in your next search with the same criteria to get messages received since this search. "
-            + "Consecutive windows deliberately overlap by about 5 minutes, so results may include messages you "
-            + "have already seen; deduplicate by `handle`. `since` and `as_of` refer to the time the mail server "
-            + "received the message (`received_at`); messages moved or copied into the folder keep their original "
-            + "received time and are not reported as new.";
+    static final String SINCE_TEXT = "Only messages received (received_at, mail server time) at or after this "
+            + "instant. For new mail, pass the first-page as_of of an earlier search with the same criteria. "
+            + "Windows overlap by about 5 minutes, so already-seen messages may reappear; deduplicate by handle. "
+            + "Messages moved or copied into the folder keep their original received time and are not reported "
+            + "as new.";
+
+    static final String AS_OF_TEXT = "Set only on the first page (no cursor), otherwise null. Pass it as since in "
+            + "your next search with the same criteria to get messages received since this search; results may "
+            + "repeat messages already seen, so deduplicate by handle.";
 }
