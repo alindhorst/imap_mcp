@@ -22,13 +22,13 @@ import org.slf4j.LoggerFactory;
  * The default list is empty, so any Origin, including the literal {@code null}, is rejected unless configured.
  * Rejection: 403 with a fixed body, reason only at DEBUG and only the host name. No CORS headers are ever set.
  */
-final class OriginFilter implements Filter {
+public final class OriginFilter implements Filter {
 
     private static final Logger LOG = LoggerFactory.getLogger(OriginFilter.class);
 
     private final Set<String> allowed;
 
-    OriginFilter(List<String> allowedOrigins) {
+    public OriginFilter(List<String> allowedOrigins) {
         this.allowed = allowedOrigins.stream().map(o -> o.trim().toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
     }
 

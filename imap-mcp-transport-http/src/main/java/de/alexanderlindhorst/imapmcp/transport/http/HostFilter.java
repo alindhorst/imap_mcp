@@ -22,15 +22,15 @@ import org.slf4j.LoggerFactory;
  * a Host-less HTTP/1.0 request reaches this filter). Rejection: 403 with a fixed body, reason only at DEBUG
  * and only the host name.
  */
-final class HostFilter implements Filter {
+public final class HostFilter implements Filter {
 
-    static final List<String> DEFAULT_ALLOWED_HOSTS = List.of("localhost:*", "127.0.0.1:*", "[::1]:*");
+    public static final List<String> DEFAULT_ALLOWED_HOSTS = List.of("localhost:*", "127.0.0.1:*", "[::1]:*");
 
     private static final Logger LOG = LoggerFactory.getLogger(HostFilter.class);
 
     private final List<HostPort> allowed;
 
-    HostFilter(List<String> allowedHosts) {
+    public HostFilter(List<String> allowedHosts) {
         this.allowed = allowedHosts.stream().map(HostPort::parse).map(hp -> {
             if (hp == null) {
                 throw new IllegalArgumentException("invalid http.allowedHosts entry");
