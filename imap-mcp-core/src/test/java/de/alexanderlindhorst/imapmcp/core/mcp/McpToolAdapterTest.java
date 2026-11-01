@@ -160,6 +160,7 @@ class McpToolAdapterTest {
                 .call("count_things", Map.of(), TCTX);
         assertThat(r.isError()).isTrue();
         assertThat(r.structuredContent()).isNull();
+        assertThat(textOf(r)).containsIgnoringCase("valid");
         McpSchema.CallToolResult r2 = new InMemoryMcp.Stateful(adapter.stateful(SAMPLE, (c, a) -> wrong)).call("count_things", Map.of());
         assertThat(r2.isError()).isTrue();
     }
