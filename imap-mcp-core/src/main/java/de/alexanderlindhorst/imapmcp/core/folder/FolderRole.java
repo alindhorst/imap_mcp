@@ -34,6 +34,16 @@ public enum FolderRole {
         return attribute;
     }
 
+    /** The role a LIST attribute stands for (case-insensitive); never {@link #INBOX}, which has no attribute. */
+    public static Optional<FolderRole> fromAttribute(String attr) {
+        for (FolderRole r : values()) {
+            if (r.attribute != null && r.attribute.equalsIgnoreCase(attr)) {
+                return Optional.of(r);
+            }
+        }
+        return Optional.empty();
+    }
+
     public static Optional<FolderRole> fromWire(String s) {
         for (FolderRole r : values()) {
             if (r.wire.equals(s)) {

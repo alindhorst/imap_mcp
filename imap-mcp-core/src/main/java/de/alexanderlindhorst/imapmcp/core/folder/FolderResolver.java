@@ -25,11 +25,14 @@ import org.eclipse.angus.mail.imap.IMAPStore;
 public final class FolderResolver {
 
     /** Same limit as the message handle (#7). */
-    static final int MAX_FOLDER_NAME_BYTES = 1000;
+    public static final int MAX_FOLDER_NAME_BYTES = 1000;
 
     private static final String INBOX = "INBOX";
 
-    private static final Comparator<String> CODE_POINT_ORDER = (a, b) -> {
+    private static final Comparator<String> CODE_POINT_ORDER = FolderResolver::compareCodePoints;
+
+    /** Unicode code point order (String.compareTo compares UTF-16 units, which differs for supplementary characters). */
+    public static int compareCodePoints(String a, String b) {
         int i = 0;
         int j = 0;
         while (i < a.length() && j < b.length()) {
@@ -42,7 +45,7 @@ public final class FolderResolver {
             j += Character.charCount(cb);
         }
         return Integer.compare(a.length() - i, b.length() - j);
-    };
+    }
 
     /** Either the resolved full name or the error to return; exactly one is non-null. */
     public record Resolution(String fullName, ToolError error) {
