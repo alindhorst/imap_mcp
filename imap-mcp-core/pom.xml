@@ -21,6 +21,14 @@
       <artifactId>angus-mail</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.modelcontextprotocol.sdk</groupId>
+      <artifactId>mcp-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.modelcontextprotocol.sdk</groupId>
+      <artifactId>mcp-json-jackson3</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.eclipse.angus</groupId>
       <artifactId>gimap</artifactId>
     </dependency>
@@ -35,7 +43,6 @@
     <dependency>
       <groupId>tools.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.icegreen</groupId>
