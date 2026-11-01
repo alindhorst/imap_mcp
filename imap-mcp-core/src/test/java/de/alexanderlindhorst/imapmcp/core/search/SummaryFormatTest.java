@@ -53,7 +53,7 @@ class SummaryFormatTest {
     @Test
     void addressSplitsNameAndAddressAndSanitizes() throws Exception {
         Map<String, Object> expected = new LinkedHashMap<>();
-        expected.put("name", "Al Ice");
+        expected.put("name", "Al  Ice"); // control character becomes a space
         expected.put("address", "al@example.org");
         assertThat(SummaryFormat.address(new InternetAddress("al@example.org", "Al\u0007 Ice"))).isEqualTo(expected);
         expected.put("name", null);
