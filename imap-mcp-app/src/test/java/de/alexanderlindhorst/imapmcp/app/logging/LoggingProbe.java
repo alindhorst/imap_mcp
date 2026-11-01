@@ -17,7 +17,7 @@ public final class LoggingProbe {
         switch (scenario) {
             case "full" -> full();
             case "levels" -> levels();
-            case "rotate" -> rotate();
+            case "rotate" -> rotate(Path.of(args[1]));
             case "broken" -> {
                 full();
                 System.err.println("status-errors=" + statusErrors());
@@ -60,10 +60,24 @@ public final class LoggingProbe {
         LoggerFactory.getLogger("imapmcp.other").debug("OTHER-DEBUG");
     }
 
-    private static void rotate() {
+    /**
+     * Logback checks the file size only every few invocations or at most once per interval (internal
+     * invocation gate, not configurable), so log in batches until three files exist, bounded by a timeout.
+     */
+    private static void rotate(Path dir) throws Exception {
         var log = LoggerFactory.getLogger("imapmcp.probe");
-        for (int i = 0; i < 300; i++) {
-            log.info("ROTATE-LINE-{} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", i);
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        int n = 0;
+        while (System.nanoTime() < deadline) {
+            for (int i = 0; i < 300; i++) {
+                log.info("ROTATE-LINE-{} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", n++);
+            }
+            try (var files = java.nio.file.Files.list(dir)) {
+                if (files.count() > 2) {
+                    return;
+                }
+            }
+            Thread.sleep(100);
         }
     }
 
