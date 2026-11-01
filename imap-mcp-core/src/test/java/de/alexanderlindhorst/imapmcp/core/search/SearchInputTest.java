@@ -168,9 +168,9 @@ class SearchInputTest {
 
     @Test
     void unpairedSurrogateIsFormatError() {
-        assertField(args("folder", "ab\ud800cd"), "folder", "format");
+        assertField(args("folder", "QZ\ud800cd"), "folder", "format");
         assertField(args("folder", "ab\udc00"), "folder", "format");
-        assertThat(error(args("folder", "ab\ud800cd")).toString()).doesNotContain("ab");
+        assertThat(error(args("folder", "QZ\ud800cd")).toString()).doesNotContain("QZ");
         assertThat(ok(args("folder", "a😀")).folder()).hasSize(3);
     }
 }
