@@ -10,7 +10,10 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * One Jakarta Mail {@link Session} per pool key (SPEC 5.5). Property keys always use the prefix of the protocol
@@ -19,17 +22,31 @@ import java.util.function.UnaryOperator;
  */
 public final class ImapSessionFactory implements AutoCloseable {
 
+    private static final Logger LOG = LoggerFactory.getLogger(ImapSessionFactory.class);
+
     private final ImapTimeouts timeouts;
+    private final boolean trace;
+    private final AtomicBoolean traceWarned = new AtomicBoolean();
     private final UnaryOperator<Properties> propertiesHook;
     private final Map<PoolKey, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledThreadPoolExecutor writeTimeoutExecutor;
 
     public ImapSessionFactory(ImapTimeouts timeouts) {
-        this(timeouts, UnaryOperator.identity());
+        this(timeouts, UnaryOperator.identity(), false);
+    }
+
+    /** {@code trace} enables the opt-in IMAP protocol trace (config {@code imap.trace}, SPEC 5.6). */
+    public ImapSessionFactory(ImapTimeouts timeouts, boolean trace) {
+        this(timeouts, UnaryOperator.identity(), trace);
+    }
+
+    public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook) {
+        this(timeouts, propertiesHook, false);
     }
 
     /** {@code propertiesHook} is a test seam (for example to trust test certificates); never fed from config. */
-    public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook) {
+    public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace) {
+        this.trace = trace;
         this.timeouts = Objects.requireNonNull(timeouts, "timeouts");
         this.propertiesHook = Objects.requireNonNull(propertiesHook, "propertiesHook");
         this.writeTimeoutExecutor = new ScheduledThreadPoolExecutor(1, r -> {
@@ -54,7 +71,19 @@ public final class ImapSessionFactory implements AutoCloseable {
     public Session sessionFor(PoolKey key, MailAccount account) {
         Objects.requireNonNull(key, "key");
         String protocol = protocolFor(account);
-        return sessions.computeIfAbsent(key, k -> Session.getInstance(properties(protocol), null));
+        return sessions.computeIfAbsent(key, k -> newSession(protocol));
+    }
+
+    private Session newSession(String protocol) {
+        Session session = Session.getInstance(properties(protocol), null);
+        // Always replace the debug sink so debug output can never reach System.out (stdio protocol channel).
+        session.setDebugOut(new RedactingDebugStream());
+        session.setDebug(trace);
+        if (trace && traceWarned.compareAndSet(false, true)) {
+            LOG.warn("IMAP protocol trace enabled: the log may contain message content "
+                    + "(subjects, addresses, bodies). Disable after diagnosis.");
+        }
+        return session;
     }
 
     private Properties properties(String protocol) {
