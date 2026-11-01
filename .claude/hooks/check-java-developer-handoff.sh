@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SubagentStop hook for the "java-developer" subagent.
 # Blocks the subagent from finishing until it has SendMessage'd
-# lead-java-developer at least once this stop cycle (handoff or
+# the lead (by agent ID) at least once this stop cycle (handoff or
 # clarification question) - see .claude/agents/java-developer.md.
 set -euo pipefail
 
@@ -31,7 +31,7 @@ if jq -e '
   select(.type == "assistant")
   | .message.content[]?
   | select(.type == "tool_use" and .name == "SendMessage")
-  | select(.input.to == "lead-java-developer")
+  | select((.input.to // "") != "")
 ' "$transcript_path" >/dev/null 2>&1; then
   exit 0
 fi

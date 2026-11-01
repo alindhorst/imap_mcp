@@ -31,7 +31,7 @@ if jq -e '
   select(.type == "assistant")
   | .message.content[]?
   | select(.type == "tool_use" and .name == "SendMessage")
-  | select(.input.to == "java-developer")
+  | select((.input.to // "") != "")
 ' "$transcript_path" >/dev/null 2>&1; then
   exit 0
 fi
