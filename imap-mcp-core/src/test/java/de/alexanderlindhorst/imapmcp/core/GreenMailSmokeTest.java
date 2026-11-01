@@ -29,6 +29,7 @@ class GreenMailSmokeTest {
         Properties props = new Properties();
         // imaps protocol => mail.imaps.* keys; test-only trust of GreenMail's self-signed cert
         props.put("mail.imaps.ssl.trust", "*");
+        props.put("mail.imaps.ssl.checkserveridentity", "false");
         Session session = Session.getInstance(props);
         try (Store store = session.getStore("imaps")) {
             store.connect("127.0.0.1", GREEN_MAIL.getImaps().getPort(), "user", "secret");
