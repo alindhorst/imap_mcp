@@ -119,8 +119,9 @@ class KeyringSecretResolverTest {
         assertThat(lookup(Platform.LINUX, "s", "a")).isEqualTo("pw\n");
         runner.reply(0, "pw");
         assertThat(lookup(Platform.LINUX, "s", "a")).isEqualTo("pw");
-        runner.reply(0, "päss\n");
-        assertThat(lookup(Platform.LINUX, "s", "a")).isEqualTo("päss");
+        String umlaut = String.valueOf((char) 0xE4);
+        runner.reply(0, "p" + umlaut + "ss\n");
+        assertThat(lookup(Platform.LINUX, "s", "a")).isEqualTo("p" + umlaut + "ss");
     }
 
     @Test
