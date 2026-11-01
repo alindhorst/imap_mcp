@@ -100,19 +100,19 @@ class FolderResolverTest {
 
     @Test
     void severalFoldersWithSameAttributePickFirstInCodePointOrder() throws Exception {
-        listed("😀", "\\Archive"); // U+1F600: after U+FF5E in code point order, before it in UTF-16 order
-        listed("～", "\\Archive");
+        listed("\ud83d\ude00", "\\Archive"); // U+1F600: after U+FF5E in code point order, before it in UTF-16 order
+        listed("\uff5e", "\\Archive");
         listed("z", "\\Archive");
         assertThat(role(FolderRole.ARCHIVE).fullName()).isEqualTo("z");
         listed.clear();
-        listed("😀", "\\Archive");
-        listed("～", "\\Archive");
-        assertThat(role(FolderRole.ARCHIVE).fullName()).isEqualTo("～");
+        listed("\ud83d\ude00", "\\Archive");
+        listed("\uff5e", "\\Archive");
+        assertThat(role(FolderRole.ARCHIVE).fullName()).isEqualTo("\uff5e");
     }
 
     @Test
     void roleFolderOverThousandBytesIsUnsupportedWithoutFolderDetail() throws Exception {
-        String longName = "ä".repeat(501); // 1002 UTF-8 bytes
+        String longName = "\u00e4".repeat(501); // 1002 UTF-8 bytes
         listed(longName, "\\Sent");
         FolderResolver.Resolution res = role(FolderRole.SENT);
         assertThat(res.fullName()).isNull();
@@ -126,7 +126,7 @@ class FolderResolverTest {
 
     @Test
     void roleFolderOfExactlyThousandBytesResolves() throws Exception {
-        String name = "ä".repeat(500); // 1000 UTF-8 bytes
+        String name = "\u00e4".repeat(500); // 1000 UTF-8 bytes
         listed(name, "\\Sent");
         assertThat(role(FolderRole.SENT).fullName()).isEqualTo(name);
     }
