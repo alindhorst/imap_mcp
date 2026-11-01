@@ -180,16 +180,20 @@ public final class SearchMessagesTool implements ToolHandler {
         FolderRole role = in.folderRole() == null ? null : FolderRole.fromWire(in.folderRole()).orElseThrow();
         TenantId tenant = ctx.accountContext().tenantId();
         AccountId accountId = ok.account().account().id();
-        try (ImapLease lease = leases.lease(ok.key(), ctx)) {
-            try {
-                return search(lease, ctx, tenant, accountId, (String) args.get("account"), in, role, ok);
-            } catch (MessagingException e) {
-                ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, rid);
-                if (mapped.discardConnection()) {
-                    lease.markBroken();
+        try {
+            return leases.withLease(ok.key(), ctx, lease -> {
+                try {
+                    return search(lease, ctx, tenant, accountId, (String) args.get("account"), in, role, ok);
+                } catch (MessagingException e) {
+                    ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, rid);
+                    if (mapped.discardConnection()) {
+                        lease.markBroken();
+                    }
+                    return new ToolOutcome.Failure(mapped.error());
                 }
-                return new ToolOutcome.Failure(mapped.error());
-            }
+            });
+        } catch (MessagingException e) {
+            throw new IllegalStateException("unreachable: handled inside the lease", e);
         }
     }
 

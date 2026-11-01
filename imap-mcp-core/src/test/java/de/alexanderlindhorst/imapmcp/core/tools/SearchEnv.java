@@ -89,7 +89,9 @@ public final class SearchEnv implements AutoCloseable {
     public final String handleT2;
     public final MailAccount account;
     private final ImapSessionFactory sessions;
-    private final StorePool pool;
+    public final StorePool pool;
+    public final StoreLeases leases;
+    public final InMemoryAccountRepository repo;
     private int counter;
 
     public SearchEnv() {
@@ -106,7 +108,7 @@ public final class SearchEnv implements AutoCloseable {
         user = greenMail.setUser(USER + "@localhost", USER, "pw");
         account = new MailAccount(new AccountId("a1"), "Label", null, "127.0.0.1", greenMail.getImaps().getPort(),
                 Security.IMPLICIT_TLS, flavor, USER, new SecretRef("env:X"));
-        InMemoryAccountRepository repo = new InMemoryAccountRepository(Map.of(T1, List.of(account), T2, List.of(account)));
+        repo = new InMemoryAccountRepository(Map.of(T1, List.of(account), T2, List.of(account)));
         handleT1 = InMemoryAccountRepository.handle(T1, account.id());
         handleT2 = InMemoryAccountRepository.handle(T2, account.id());
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
@@ -118,7 +120,8 @@ public final class SearchEnv implements AutoCloseable {
         }, true);
         pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), capabilities,
                 k -> account, PoolSettings.DEFAULTS);
-        tool = new SearchMessagesTool(new AccountArgument(repo), new StoreLeases(pool, Duration.ofSeconds(10)),
+        leases = new StoreLeases(pool, Duration.ofSeconds(10));
+        tool = new SearchMessagesTool(new AccountArgument(repo), leases,
                 new SearchTermMapper(), cursors, handles, clock, SearchMessagesTool.SINCE_OVERLAP,
                 sinceMaxCandidates, capabilities);
     }

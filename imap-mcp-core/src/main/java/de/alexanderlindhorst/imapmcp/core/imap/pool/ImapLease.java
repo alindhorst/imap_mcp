@@ -39,6 +39,9 @@ public final class ImapLease implements AutoCloseable {
         this.ctx = ctx;
         this.permit = permit;
         // Runs on the cancelling thread (deadline path): the Store is invalidated without waiting for the worker.
+        // Deliberate: this releases the admission permit and invalidates the Store BEFORE the interrupted worker has
+        // unwound, so the socket and semaphore caps can be exceeded briefly (until the interrupt closes the socket).
+        // Deferring the permit to the worker's unwind could leak it forever if the worker never unwinds.
         // Note: store.close() alone does NOT unblock a worker stuck in a socket read (LOGOUT blocks as well);
         // what unblocks it is the executor's interrupt of the virtual worker thread, which closes the socket.
         ctx.onCancel(() -> {
