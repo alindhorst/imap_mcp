@@ -228,6 +228,21 @@ public final class SearchEnv implements AutoCloseable {
         }
     }
 
+    /** Test seeding only: expunges the given UIDs over an independent connection (a concurrent expunge). */
+    public void expungeUids(long... uids) throws Exception {
+        withInbox(Folder.READ_WRITE, f -> {
+            try {
+                for (long uid : uids) {
+                    ((jakarta.mail.UIDFolder) f).getMessageByUID(uid).setFlag(Flags.Flag.DELETED, true);
+                }
+                f.expunge();
+                return null;
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
     public long unseenCount() throws Exception {
         return withInbox(Folder.READ_ONLY, f -> {
             try {
