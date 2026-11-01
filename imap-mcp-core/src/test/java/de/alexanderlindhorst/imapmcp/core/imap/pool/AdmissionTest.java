@@ -10,6 +10,7 @@ import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.error.ServerBusyException;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -89,7 +90,7 @@ class AdmissionTest {
     void globalCapRejectsAnyTenantAndReportsScope() {
         PoolSettings s = settings(3, 8, 2);
         List<Admission.Scope> rejected = new CopyOnWriteArrayList<>();
-        Admission a = new Admission(s, rejected::add);
+        Admission a = new Admission(s, (k, scope) -> rejected.add(scope));
         Admission.Permit p1 = a.tryAcquire(key("A", "x"));
         Admission.Permit p2 = a.tryAcquire(key("B", "x"));
         assertThatThrownBy(() -> a.tryAcquire(key("C", "x"))).isInstanceOf(ServerBusyException.class);
@@ -97,7 +98,7 @@ class AdmissionTest {
         p1.close();
         p2.close();
         assertThatThrownBy(() -> {
-            Admission b = new Admission(settings(1, 8, 64), rejected::add);
+            Admission b = new Admission(settings(1, 8, 64), (k, scope) -> rejected.add(scope));
             b.tryAcquire(key("A", "x"));
             b.tryAcquire(key("A", "x"));
         }).isInstanceOf(ServerBusyException.class);
@@ -107,7 +108,7 @@ class AdmissionTest {
     @Test
     void tenantRejectionReportsTenantScope() {
         List<Admission.Scope> rejected = new ArrayList<>();
-        Admission a = new Admission(settings(3, 1, 64), rejected::add);
+        Admission a = new Admission(settings(3, 1, 64), (k, scope) -> rejected.add(scope));
         a.tryAcquire(key("A", "x"));
         assertThatThrownBy(() -> a.tryAcquire(key("A", "y"))).isInstanceOf(ServerBusyException.class);
         assertThat(rejected).containsExactly(Admission.Scope.TENANT);
@@ -158,5 +159,20 @@ class AdmissionTest {
         for (var f : Admission.class.getDeclaredFields()) {
             assertThat(java.util.concurrent.Executor.class.isAssignableFrom(f.getType())).isFalse();
         }
+    }
+
+    @Test
+    void recordingListenerReportsKeyAndScopeToMetrics() {
+        List<String> seen = new ArrayList<>();
+        MetricsRecorder recorder = new MetricsRecorder() {
+            @Override
+            public void busyRejection(PoolKey key, String scope) {
+                seen.add(key.tenantId().value() + "/" + key.accountId().value() + "/" + scope);
+            }
+        };
+        Admission a = new Admission(settings(3, 1, 64), Admission.recording(recorder));
+        a.tryAcquire(key("A", "x"));
+        assertThatThrownBy(() -> a.tryAcquire(key("A", "y"))).isInstanceOf(ServerBusyException.class);
+        assertThat(seen).containsExactly("A/y/tenant");
     }
 }
