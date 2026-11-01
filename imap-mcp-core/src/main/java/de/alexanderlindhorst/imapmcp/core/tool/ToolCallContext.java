@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
+import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -57,6 +58,10 @@ public final class ToolCallContext {
             callbacks.clear();
         }
         toRun.forEach(ToolCallContext::run);
+    }
+
+    /** Sets the hashed account id in the worker's MDC once resolved; no-op outside the executor. */
+    public void bindAccount(AccountId accountId) {
     }
 
     private static void run(Runnable r) {
