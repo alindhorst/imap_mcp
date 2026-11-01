@@ -11,14 +11,11 @@ import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
-import de.alexanderlindhorst.imapmcp.core.search.SearchCriteria;
-import de.alexanderlindhorst.imapmcp.core.search.SearchCursorCodec;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
 import jakarta.mail.internet.MimeMessage;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -297,7 +294,7 @@ class SearchMessagesToolTest {
         long unseenBefore = env.unseenCount();
         List<String> one = commands(() -> env.ok(SearchEnv.T1, args("page_size", 1, "subject", "Subject")));
         List<String> hundred = commands(() -> env.ok(SearchEnv.T1, args("page_size", 100, "subject", "Subject")));
-        assertThat(one).hasSameSizeAs(hundred);
+        assertThat(one).hasSize(5).hasSameSizeAs(hundred); // EXAMINE, SEARCH, FETCH UID, FETCH page, CLOSE
         assertThat(hundred.stream().filter(c -> c.contains("FETCH")).count()).isEqualTo(2);
         assertThat(hundred).anyMatch(c -> c.contains("EXAMINE")).noneMatch(c -> c.contains("SELECT"))
                 .noneMatch(c -> c.contains("STORE")).noneMatch(c -> c.contains("EXPUNGE"));
@@ -310,7 +307,7 @@ class SearchMessagesToolTest {
         assertThat(env.unseenCount()).isEqualTo(unseenBefore).isEqualTo(120);
     }
 
-    private static final Pattern TAGGED = Pattern.compile("^(?:C: )?A\\d+ (.*)$");
+    private static final Pattern TAGGED = Pattern.compile("^(?:C: )?[A-Z]+\\d+ (?!OK |NO |BAD ).*$");
 
     private List<String> commands(Runnable call) {
         Logger trace = (Logger) LoggerFactory.getLogger("imapmcp.imap.trace");
