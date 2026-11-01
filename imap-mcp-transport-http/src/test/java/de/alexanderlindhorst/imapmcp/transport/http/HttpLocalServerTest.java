@@ -186,6 +186,28 @@ class HttpLocalServerTest {
         assertThat(order).containsExactly("host", "origin", "bearer");
     }
 
+    @Test
+    void methodCheckRunsBeforeBearerAndHostOriginSkipHealth() throws Exception {
+        java.util.List<String> order = new java.util.concurrent.CopyOnWriteArrayList<>();
+        jakarta.servlet.Filter reject = (req, res, chain) -> ((jakarta.servlet.http.HttpServletResponse) res).setStatus(401);
+        server = builder().hostFilter(recording("host", order)).originFilter(recording("origin", order))
+                .bearerFilter(reject).healthServlet(new jakarta.servlet.http.HttpServlet() {
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest rq,
+                            jakarta.servlet.http.HttpServletResponse rs) {
+                        rs.setStatus(200);
+                    }
+                }).build();
+        server.start();
+        HttpResponse<String> get = send("GET", null);
+        assertThat(get.statusCode()).isEqualTo(405);
+        assertThat(get.headers().firstValue("Allow")).hasValue("POST");
+        assertThat(post(rpc("tools/list", "{}")).statusCode()).isEqualTo(401);
+        order.clear();
+        assertThat(sendTo("/health", "GET", null).statusCode()).isEqualTo(200);
+        assertThat(order).isEmpty();
+    }
+
     static jakarta.servlet.Filter recording(String name, List<String> order) {
         return (req, res, chain) -> {
             order.add(name);
