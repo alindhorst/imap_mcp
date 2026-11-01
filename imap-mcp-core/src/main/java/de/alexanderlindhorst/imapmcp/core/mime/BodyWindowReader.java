@@ -37,6 +37,9 @@ public final class BodyWindowReader {
     private static final Pattern META_CHARSET = Pattern.compile(
             "(?i)<meta\\b[^>]*?charset\\s*=\\s*[\"']?\\s*([A-Za-z0-9._:\\-]+)");
 
+    /** Hard upper bound for the configurable part cap; also keeps the fetch length safely inside an int. */
+    public static final long MAX_BODY_PART_BYTES = 64L * 1024 * 1024;
+
     private final long maxBodyPartBytes;
 
     public BodyWindowReader() {
@@ -44,8 +47,8 @@ public final class BodyWindowReader {
     }
 
     public BodyWindowReader(long maxBodyPartBytes) {
-        if (maxBodyPartBytes <= 0) {
-            throw new IllegalArgumentException("maxBodyPartBytes must be positive");
+        if (maxBodyPartBytes <= 0 || maxBodyPartBytes > MAX_BODY_PART_BYTES) {
+            throw new IllegalArgumentException("maxBodyPartBytes must be between 1 and " + MAX_BODY_PART_BYTES);
         }
         this.maxBodyPartBytes = maxBodyPartBytes;
     }

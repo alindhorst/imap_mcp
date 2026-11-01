@@ -363,4 +363,14 @@ class BodyWindowReaderTest {
         assertThatThrownBy(() -> read(r, -1, 10)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> read(r, 0, 0)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void constructorRejectsValuesAboveTheCoreMaximum() {
+        assertThat(BodyWindowReader.MAX_BODY_PART_BYTES).isEqualTo(64L * 1024 * 1024);
+        assertThat(new BodyWindowReader(BodyWindowReader.MAX_BODY_PART_BYTES)).isNotNull();
+        assertThatThrownBy(() -> new BodyWindowReader(BodyWindowReader.MAX_BODY_PART_BYTES + 1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new BodyWindowReader(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new BodyWindowReader(-1)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

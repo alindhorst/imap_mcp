@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +98,14 @@ class AppComponentsTest {
     }
 
     // AC1
+
+    @Test
+    void abandonedTimeoutIsDerivedFromTheToolDeadline() {
+        assertThat(AppComponents.abandonedTimeout(Duration.ofSeconds(90)))
+                .isEqualTo(Duration.ofSeconds(120));
+        assertThat(AppComponents.abandonedTimeout(Duration.ofMinutes(5)))
+                .isEqualTo(Duration.ofMinutes(5).plusSeconds(30));
+    }
 
     @Test
     void statefulSpecsAreExactlyTheFiveReadOnlyTools() throws IOException {
