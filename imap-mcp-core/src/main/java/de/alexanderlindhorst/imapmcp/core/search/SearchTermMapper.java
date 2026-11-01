@@ -25,7 +25,9 @@ import java.util.List;
  * <p>text maps to BODY (not TEXT) so header matches do not leak into body search. Date bounds are INTERNALDATE
  * based: date_from is SINCE (inclusive), date_to is BEFORE date_to+1. Angus formats the date in the JVM
  * default zone, so the Date is built at local noon of the day in {@code zone} (default: the JVM zone) which
- * always yields the intended calendar date. The mail server interprets it in its own timezone.
+ * always yields the intended calendar date. Caveat: this only holds when {@code zone} equals the JVM default
+ * zone (the default constructor guarantees it); a different injected zone is for tests that also set the
+ * JVM default. The mail server interprets it in its own timezone.
  */
 public final class SearchTermMapper {
 

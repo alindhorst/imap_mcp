@@ -41,7 +41,7 @@ public final class SearchArguments {
         }
         String folderRole = (String) args.get("folder_role");
         if (folder != null && folderRole != null) {
-            return fail("folder_role", "conflict", null, requestId);
+            return fail("folder_role", "mutually_exclusive", null, requestId);
         }
         for (String f : List.of("from", "to", "subject", "text")) {
             if (args.get(f) instanceof String s && s.isBlank()) {
