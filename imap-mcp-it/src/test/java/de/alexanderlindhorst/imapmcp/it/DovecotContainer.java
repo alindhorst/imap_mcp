@@ -21,9 +21,17 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
     /** Host name of the container on a shared Network (for Toxiproxy upstreams). */
     public static final String NETWORK_ALIAS = "dovecot";
 
+    private final String password;
+
     public DovecotContainer() {
+        this(PASSWORD);
+    }
+
+    /** With a non-default password (e.g. a marker string a test asserts never shows up in logs). */
+    public DovecotContainer(String password) {
         super(DockerImageName.parse(ItImages.DOVECOT));
-        withEnv("USER_PASSWORD", "{PLAIN}" + PASSWORD);
+        this.password = password;
+        withEnv("USER_PASSWORD", "{PLAIN}" + password);
         withExposedPorts(IMAPS_PORT, STARTTLS_PORT);
         withNetworkAliases(NETWORK_ALIAS);
         withCopyFileToContainer(MountableFile.forClasspathResource("dovecot/tls.crt", 0644), "/etc/dovecot/ssl/tls.crt");
@@ -44,6 +52,6 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
 
     /** A seeder logged in as {@code user} over implicit TLS. */
     public MailSeeder seeder(String user) throws MessagingException {
-        return new MailSeeder(getHost(), imapsPort(), user, PASSWORD);
+        return new MailSeeder(getHost(), imapsPort(), user, password);
     }
 }
