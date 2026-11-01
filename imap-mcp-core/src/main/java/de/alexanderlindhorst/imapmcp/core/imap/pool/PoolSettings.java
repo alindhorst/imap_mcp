@@ -4,15 +4,15 @@ import java.time.Duration;
 import java.util.Objects;
 
 /** Pool sizes and durations with the SPEC 5.5 defaults. Config mapping ({@code pool.*}) is wired elsewhere. */
-public record PoolSettings(int maxPerMailbox, int maxTotal, Duration idleEviction, Duration validateAfterIdle,
+public record PoolSettings(int maxPerMailbox, int maxPerTenant, int maxTotal, Duration idleEviction, Duration validateAfterIdle,
         Duration maxLifetime, Duration acquireTimeout, Duration evictionInterval, Duration abandonedTimeout) {
 
-    public static final PoolSettings DEFAULTS = new PoolSettings(3, 64, Duration.ofMinutes(5),
+    public static final PoolSettings DEFAULTS = new PoolSettings(3, 8, 64, Duration.ofMinutes(5),
             Duration.ofSeconds(60), Duration.ofMinutes(30), Duration.ofSeconds(10), Duration.ofSeconds(30),
             Duration.ofSeconds(120));
 
     public PoolSettings {
-        if (maxPerMailbox < 1 || maxTotal < 1) {
+        if (maxPerMailbox < 1 || maxPerTenant < 1 || maxTotal < 1) {
             throw new IllegalArgumentException("pool sizes must be positive");
         }
         Objects.requireNonNull(idleEviction, "idleEviction");
@@ -24,22 +24,22 @@ public record PoolSettings(int maxPerMailbox, int maxTotal, Duration idleEvictio
     }
 
     public PoolSettings withValidateAfterIdle(Duration d) {
-        return new PoolSettings(maxPerMailbox, maxTotal, idleEviction, d, maxLifetime, acquireTimeout,
+        return new PoolSettings(maxPerMailbox, maxPerTenant, maxTotal, idleEviction, d, maxLifetime, acquireTimeout,
                 evictionInterval, abandonedTimeout);
     }
 
     public PoolSettings withMaxLifetime(Duration d) {
-        return new PoolSettings(maxPerMailbox, maxTotal, idleEviction, validateAfterIdle, d, acquireTimeout,
+        return new PoolSettings(maxPerMailbox, maxPerTenant, maxTotal, idleEviction, validateAfterIdle, d, acquireTimeout,
                 evictionInterval, abandonedTimeout);
     }
 
     public PoolSettings withIdleEviction(Duration d) {
-        return new PoolSettings(maxPerMailbox, maxTotal, d, validateAfterIdle, maxLifetime, acquireTimeout,
+        return new PoolSettings(maxPerMailbox, maxPerTenant, maxTotal, d, validateAfterIdle, maxLifetime, acquireTimeout,
                 evictionInterval, abandonedTimeout);
     }
 
     public PoolSettings withEvictionInterval(Duration d) {
-        return new PoolSettings(maxPerMailbox, maxTotal, idleEviction, validateAfterIdle, maxLifetime,
+        return new PoolSettings(maxPerMailbox, maxPerTenant, maxTotal, idleEviction, validateAfterIdle, maxLifetime,
                 acquireTimeout, d, abandonedTimeout);
     }
 }

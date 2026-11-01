@@ -65,6 +65,9 @@ public final class ImapErrorMapper {
     }
 
     private static MappedError classify(Throwable t, String rid) {
+        if (t instanceof ServerBusyException) {
+            return new MappedError(ToolError.serverBusy(rid), false);
+        }
         if (t instanceof AuthenticationFailedException) {
             return new MappedError(ToolError.authFailed(rid), true);
         }

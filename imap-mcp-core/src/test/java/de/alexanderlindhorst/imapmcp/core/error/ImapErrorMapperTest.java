@@ -69,6 +69,15 @@ class ImapErrorMapperTest {
     }
 
     @Test
+    void serverBusyMapsWithoutDiscardAndKeepsCanonicalError() {
+        for (Throwable t : List.of(new ServerBusyException(), new IllegalStateException("w", new ServerBusyException()))) {
+            ImapErrorMapper.MappedError m = ImapErrorMapper.map(t, RID);
+            assertThat(m.error()).isEqualTo(ToolError.serverBusy(RID));
+            assertThat(m.discardConnection()).isFalse();
+        }
+    }
+
+    @Test
     void nextExceptionChainIsUnwrapped() {
         MessagingException outer = new MessagingException("outer");
         outer.setNextException(new SocketTimeoutException("x"));
