@@ -57,6 +57,14 @@ public final class RunningServer implements AutoCloseable {
 
     @Override
     public void close() {
-        process.destroyForcibly();
+        process.destroy();
+        try {
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+        }
     }
 }
