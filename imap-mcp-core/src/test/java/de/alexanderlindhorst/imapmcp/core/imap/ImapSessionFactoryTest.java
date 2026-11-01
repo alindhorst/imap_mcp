@@ -63,7 +63,7 @@ class ImapSessionFactoryTest {
         Properties p = props(a);
         String prefix = "mail." + protocol + ".";
         assertThat(p.stringPropertyNames().stream().filter(k -> k.startsWith("mail.imap")
-                || k.startsWith("mail.gimap"))).allMatch(k -> k.startsWith(prefix), k -> k);
+                || k.startsWith("mail.gimap"))).allMatch(k -> k.startsWith(prefix));
         assertThat(p.keySet().stream().map(Object::toString).filter(k -> k.startsWith(prefix))).isNotEmpty();
     }
 
