@@ -1,21 +1,240 @@
 package de.alexanderlindhorst.imapmcp.core.metrics;
 
+import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsSnapshot.OperationMetrics;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsSnapshot.PoolMetrics;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsSnapshot.TenantMetrics;
+import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+/**
+ * Internal in-memory metrics (SPEC 5.6, v1: no Micrometer, no endpoint). State is held per raw id internally and
+ * exposed, in {@link #snapshot()} and in the periodic INFO summary, only as {@link LogIds} hashes. Pool gauges are
+ * read from the attached pool at snapshot time. Counters are cumulative since construction; the summary repeats the
+ * cumulative values and is emitted only when something was recorded since the previous one.
+ */
 public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoCloseable {
 
-    public InMemoryMetricsRecorder(LogIds logIds, Clock clock) { }
+    public static final Duration DEFAULT_SUMMARY_PERIOD = Duration.ofMinutes(5);
 
-    public void attachPool(PoolGauges gauges) { }
+    private static final Logger LOG = LoggerFactory.getLogger(InMemoryMetricsRecorder.class);
 
-    public MetricsSnapshot snapshot() {
-        return new MetricsSnapshot(0, 0, List.of(), List.of(), List.of());
+    private record OpKey(TenantId tenant, String tool, String op) { }
+
+    /** Count, sum and max of durations; tiny critical sections. */
+    private static final class Timing {
+        private long count;
+        private long sumNanos;
+        private long maxNanos;
+
+        synchronized void add(Duration d) {
+            long n = Math.max(0, d.toNanos());
+            count++;
+            sumNanos += n;
+            maxNanos = Math.max(maxNanos, n);
+        }
+
+        synchronized long count() {
+            return count;
+        }
+
+        synchronized Duration avg() {
+            return count == 0 ? Duration.ZERO : Duration.ofNanos(sumNanos / count);
+        }
+
+        synchronized Duration max() {
+            return Duration.ofNanos(maxNanos);
+        }
+    }
+
+    private static final class PoolStats {
+        final Timing wait = new Timing();
+        final Map<String, AtomicLong> busy = new ConcurrentHashMap<>();
+    }
+
+    private static final class TenantStats {
+        final AtomicLong authFailures = new AtomicLong();
+        final AtomicLong timeouts = new AtomicLong();
+    }
+
+    private final LogIds logIds;
+    private final Clock clock;
+    private final Map<PoolKey, PoolStats> pools = new ConcurrentHashMap<>();
+    private final Map<TenantId, TenantStats> tenants = new ConcurrentHashMap<>();
+    private final Map<OpKey, Timing> operations = new ConcurrentHashMap<>();
+    private final AtomicLong events = new AtomicLong();
+    private final Object summaryLock = new Object();
+    private long eventsAtLastSummary; // guarded by summaryLock
+    private volatile PoolGauges gauges;
+    private ScheduledExecutorService scheduler; // guarded by this
+    private ScheduledFuture<?> task; // guarded by this
+    private boolean ownsScheduler; // guarded by this
+
+    public InMemoryMetricsRecorder(LogIds logIds, Clock clock) {
+        this.logIds = Objects.requireNonNull(logIds, "logIds");
+        this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /** Source of the pool gauges (active, idle, created, destroyed); read at snapshot time. */
+    public void attachPool(PoolGauges gauges) {
+        this.gauges = Objects.requireNonNull(gauges, "gauges");
     }
 
     @Override
-    public void close() { }
+    public Instant now() {
+        return clock.instant();
+    }
+
+    @Override
+    public void leaseAcquired(PoolKey key, Duration wait) {
+        pools.computeIfAbsent(key, k -> new PoolStats()).wait.add(wait);
+        events.incrementAndGet();
+    }
+
+    @Override
+    public void operation(TenantId tenant, String tool, String op, Duration latency) {
+        operations.computeIfAbsent(new OpKey(tenant, tool, op), k -> new Timing()).add(latency);
+        events.incrementAndGet();
+    }
+
+    @Override
+    public void authFailure(TenantId tenant) {
+        tenants.computeIfAbsent(tenant, k -> new TenantStats()).authFailures.incrementAndGet();
+        events.incrementAndGet();
+    }
+
+    @Override
+    public void busyRejection(PoolKey key, String scope) {
+        pools.computeIfAbsent(key, k -> new PoolStats()).busy
+                .computeIfAbsent(scope, s -> new AtomicLong()).incrementAndGet();
+        events.incrementAndGet();
+    }
+
+    @Override
+    public void timeout(TenantId tenant) {
+        tenants.computeIfAbsent(tenant, k -> new TenantStats()).timeouts.incrementAndGet();
+        events.incrementAndGet();
+    }
+
+    public MetricsSnapshot snapshot() {
+        PoolGauges g = gauges;
+        List<PoolMetrics> poolList = new ArrayList<>();
+        pools.forEach((key, s) -> {
+            Map<String, Long> busy = new TreeMap<>();
+            s.busy.forEach((scope, n) -> busy.put(scope, n.get()));
+            poolList.add(new PoolMetrics(logIds.tenant(key.tenantId().value()),
+                    logIds.account(key.accountId().value()),
+                    g == null ? 0 : g.numActive(key), g == null ? 0 : g.numIdle(key),
+                    s.wait.count(), s.wait.avg(), s.wait.max(), busy));
+        });
+        List<TenantMetrics> tenantList = new ArrayList<>();
+        tenants.forEach((t, s) -> tenantList.add(
+                new TenantMetrics(logIds.tenant(t.value()), s.authFailures.get(), s.timeouts.get())));
+        List<OperationMetrics> opList = new ArrayList<>();
+        operations.forEach((k, t) -> opList.add(new OperationMetrics(logIds.tenant(k.tenant().value()),
+                k.tool(), k.op(), t.count(), t.avg(), t.max())));
+        poolList.sort(Comparator.comparing(PoolMetrics::tenant).thenComparing(PoolMetrics::account));
+        tenantList.sort(Comparator.comparing(TenantMetrics::tenant));
+        opList.sort(Comparator.comparing(OperationMetrics::tenant).thenComparing(OperationMetrics::tool)
+                .thenComparing(OperationMetrics::op));
+        return new MetricsSnapshot(g == null ? 0 : g.createdCount(), g == null ? 0 : g.destroyedCount(),
+                poolList, tenantList, opList);
+    }
+
+    /**
+     * Logs one INFO line with the cumulative values if anything was recorded since the previous call; otherwise
+     * nothing. Only hashed ids appear. Public so tests (and shutdown) can trigger it without waiting.
+     */
+    public void logSummary() {
+        synchronized (summaryLock) {
+            long current = events.get();
+            if (current == eventsAtLastSummary) {
+                return;
+            }
+            eventsAtLastSummary = current;
+        }
+        MetricsSnapshot s = snapshot();
+        StringBuilder sb = new StringBuilder("metrics summary created_total=").append(s.createdTotal())
+                .append(" destroyed_total=").append(s.destroyedTotal());
+        for (TenantMetrics t : s.tenants()) {
+            sb.append(" | tenant=").append(t.tenant()).append(" auth_failures=").append(t.authFailures())
+                    .append(" timeouts=").append(t.timeouts());
+        }
+        for (PoolMetrics p : s.pools()) {
+            sb.append(" | pool tenant=").append(p.tenant()).append(" account=").append(p.account())
+                    .append(" active=").append(p.active()).append(" idle=").append(p.idle())
+                    .append(" leases=").append(p.leases()).append(" wait_avg_ms=").append(p.avgWait().toMillis())
+                    .append(" wait_max_ms=").append(p.maxWait().toMillis())
+                    .append(" busy=").append(p.busyRejections());
+        }
+        for (OperationMetrics o : s.operations()) {
+            sb.append(" | op tenant=").append(o.tenant()).append(" tool=").append(o.tool())
+                    .append(" op=").append(o.op()).append(" count=").append(o.count())
+                    .append(" avg_ms=").append(o.avg().toMillis()).append(" max_ms=").append(o.max().toMillis());
+        }
+        LOG.info("{}", sb);
+    }
+
+    /** Starts the periodic summary on a private single virtual-thread scheduler, every 5 minutes. */
+    public synchronized void start() {
+        start(null, DEFAULT_SUMMARY_PERIOD);
+    }
+
+    /** Starts the periodic summary; {@code scheduler} null creates a private virtual-thread scheduler. */
+    public synchronized void start(ScheduledExecutorService scheduler, Duration period) {
+        Objects.requireNonNull(period, "period");
+        if (task != null) {
+            throw new IllegalStateException("already started");
+        }
+        if (scheduler == null) {
+            ScheduledThreadPoolExecutor own = new ScheduledThreadPoolExecutor(1,
+                    Thread.ofVirtual().name("metrics-summary").factory());
+            own.setRemoveOnCancelPolicy(true);
+            this.scheduler = own;
+            this.ownsScheduler = true;
+        } else {
+            this.scheduler = scheduler;
+            this.ownsScheduler = false;
+        }
+        long nanos = period.toNanos();
+        task = this.scheduler.scheduleAtFixedRate(this::safeSummary, nanos, nanos, TimeUnit.NANOSECONDS);
+    }
+
+    private void safeSummary() {
+        try {
+            logSummary();
+        } catch (RuntimeException e) {
+            LOG.warn("metrics summary failed, cause={}", e.getClass().getName()); // never kill the schedule
+        }
+    }
+
+    /** Stops the periodic summary (and a private scheduler); idempotent. */
+    @Override
+    public synchronized void close() {
+        if (task != null) {
+            task.cancel(false);
+            task = null;
+        }
+        if (scheduler != null && ownsScheduler) {
+            scheduler.shutdownNow();
+        }
+        scheduler = null;
+    }
 }
