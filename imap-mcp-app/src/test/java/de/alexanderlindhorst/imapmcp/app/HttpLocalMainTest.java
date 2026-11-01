@@ -48,6 +48,10 @@ class HttpLocalMainTest {
     }
 
     private Path config() throws IOException {
+        return config("");
+    }
+
+    private Path config(String extra) throws IOException {
         GREEN_MAIL.setUser("user@localhost", "user", "pw");
         Path f = dir.resolve("config.yaml");
         Files.writeString(f, """
@@ -57,17 +61,21 @@ class HttpLocalMainTest {
                     port: %d
                     username: user
                     password: "env:MAIL_PW"
-                """.formatted(GREEN_MAIL.getImaps().getPort()));
+                """.formatted(GREEN_MAIL.getImaps().getPort()) + extra);
         return f;
     }
 
     private AppProcess start(int port, Map<String, String> extraEnv) throws Exception {
+        return start(port, extraEnv, config());
+    }
+
+    private AppProcess start(int port, Map<String, String> extraEnv, Path config) throws Exception {
         Map<String, String> env = new HashMap<>();
         env.put("MAIL_PW", "pw");
         env.put("IMAP_MCP_STATE_DIR", dir.resolve("state").toString());
         env.put("IMAP_MCP_HTTP_PORT", Integer.toString(port));
         env.putAll(extraEnv);
-        return AppProcess.start(List.of(), List.of("--mode", "http-local", "--config", config().toString()), env)
+        return AppProcess.start(List.of(), List.of("--mode", "http-local", "--config", config.toString()), env)
                 .pumpStdout();
     }
 
@@ -233,6 +241,35 @@ class HttpLocalMainTest {
             assertThat(p.exitCode()).isEqualTo(1);
             assertThat(p.stderr()).contains("startup failed");
             assertThat(p.collectedStdout()).isEmpty();
+        }
+    }
+
+    // http.maxRequestBytes and server version are wired from config / manifest
+
+    @Test
+    void configuredMaxRequestBytesAndServerVersionAreApplied() throws Exception {
+        int port = freePort();
+        try (AppProcess p = start(port, Map.of(), config("http:\n  maxRequestBytes: 2KiB\n"))) {
+            awaitHealthy(p, port);
+            String token = token();
+            HttpRequest init = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/mcp"))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .header("Authorization", "Bearer " + token)
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+                            + "\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
+                            + "\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}")).build();
+            assertThat(http.send(init, HttpResponse.BodyHandlers.ofString()).body())
+                    .contains("\"name\":\"imap-mcp\"").contains("\"version\":\"dev\"");
+            HttpRequest big = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/mcp"))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .header("Authorization", "Bearer " + token)
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\","
+                            + "\"params\":{\"pad\":\"" + "x".repeat(4096) + "\"}}")).build();
+            assertThat(http.send(big, HttpResponse.BodyHandlers.ofString()).statusCode()).isBetween(400, 499);
+            assertThat(mcp(port, token).statusCode()).isEqualTo(200);
+            stop(p);
         }
     }
 
