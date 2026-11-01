@@ -187,7 +187,7 @@ class ConfigLoaderTest {
     }
 
     @Test
-    void invalidEnvOverrideNamesVariable() {
+    void invalidEnvOverrideNamesVariable() throws IOException {
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_HTTP_PORT", "abc")))
                 .hasMessageContaining("IMAP_MCP_HTTP_PORT");
         for (String bad : List.of("grpc", "http", "http-public")) {
