@@ -39,7 +39,7 @@ class FolderResolverTest {
         when(root.list("*")).thenAnswer(i -> listed.toArray(new Folder[0]));
     }
 
-    private IMAPFolder listed(String fullName, String... attrs) {
+    private IMAPFolder listed(String fullName, String... attrs) throws Exception {
         IMAPFolder f = mock(IMAPFolder.class);
         when(f.getFullName()).thenReturn(fullName);
         when(f.getAttributes()).thenReturn(attrs);
