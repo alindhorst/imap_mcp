@@ -148,7 +148,8 @@ class ListFoldersToolTest {
         mailbox("alpha", "Sent");
         Map<String, Object> out = ok(call(tool(100), A, Map.of("account", handleA())));
         for (Map<String, Object> m : folders(out)) {
-            assertThat(m).containsEntry("role", null).containsEntry("total", null).containsEntry("unread", null)
+            assertThat(m).containsEntry("role", "INBOX".equals(m.get("folder")) ? "inbox" : null) // "Sent" is no role
+                    .containsEntry("total", null).containsEntry("unread", null)
                     .containsEntry("selectable", true);
             assertThat(m.get("attributes")).isInstanceOf(List.class);
         }
@@ -213,10 +214,10 @@ class ListFoldersToolTest {
         try {
             when(f.getFullName()).thenReturn(full);
             when(f.getSeparator()).thenReturn(sep);
+            when(f.getAttributes()).thenReturn(attrs);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
-        when(f.getAttributes()).thenReturn(attrs);
         return f;
     }
 
