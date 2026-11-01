@@ -29,9 +29,24 @@
       <artifactId>greenmail-junit5</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>ban-web-and-db-dependencies</id>
+            <phase>validate</phase>
+          </execution>
+        </executions>
+      </plugin>
       <!-- Publishes AccountRepositoryContract etc. for imap-mcp-store (type test-jar, scope test). -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

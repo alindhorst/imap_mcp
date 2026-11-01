@@ -258,6 +258,49 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
           <version>3.7.0</version>
+          <executions>
+            <!-- Shared by modules that must stay free of Jetty/servlet/DB artifacts (SPEC 5.2).
+                 Disabled here; core and transport-stdio switch it on by re-declaring the id with a phase.
+                 Test-only exceptions, where explicitly needed, go in an <includes> entry. -->
+            <execution>
+              <id>ban-web-and-db-dependencies</id>
+              <phase>none</phase>
+              <goals>
+                <goal>enforce</goal>
+              </goals>
+              <configuration>
+                <rules>
+                  <bannedDependencies>
+                    <searchTransitive>true</searchTransitive>
+                    <message>Jetty, servlet and database artifacts must not be on this module's classpath (SPEC 5.2).</message>
+                    <excludes>
+                      <exclude>org.eclipse.jetty:*</exclude>
+                      <exclude>org.eclipse.jetty.*:*</exclude>
+                      <exclude>jakarta.servlet:*</exclude>
+                      <exclude>jakarta.servlet.*:*</exclude>
+                      <exclude>javax.servlet:*</exclude>
+                      <exclude>org.flywaydb:*</exclude>
+                      <exclude>org.hibernate:*</exclude>
+                      <exclude>org.hibernate.*:*</exclude>
+                      <exclude>jakarta.persistence:*</exclude>
+                      <exclude>javax.persistence:*</exclude>
+                      <exclude>org.springframework:spring-jdbc</exclude>
+                      <exclude>com.zaxxer:HikariCP</exclude>
+                      <exclude>org.postgresql:*</exclude>
+                      <exclude>org.mariadb.jdbc:*</exclude>
+                      <exclude>com.mysql:*</exclude>
+                      <exclude>mysql:*</exclude>
+                      <exclude>com.h2database:*</exclude>
+                      <exclude>org.hsqldb:*</exclude>
+                      <exclude>org.xerial:sqlite-jdbc</exclude>
+                      <exclude>org.apache.derby:*</exclude>
+                    </excludes>
+                  </bannedDependencies>
+                </rules>
+                <fail>true</fail>
+              </configuration>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
