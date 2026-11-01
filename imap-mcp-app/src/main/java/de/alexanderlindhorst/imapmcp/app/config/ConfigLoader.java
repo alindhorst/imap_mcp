@@ -145,17 +145,10 @@ public final class ConfigLoader {
 
     private static AppConfig.Tools tools(Section s) {
         var r = new AppConfig.Tools(s.duration("deadline", Duration.ofSeconds(90)),
-                s.integer("pageSizeDefault", 25, 1, 100), s.integer("pageSizeMax", 100, 1, 100),
-                s.integer("maxCharsDefault", 20000, 1, 100000), s.integer("maxCharsCap", 100000, 1, 100000),
+                s.integer("maxCharsCap", 100000, 1, 100000),
                 s.size("maxBodyPartBytes", 4L * 1024 * 1024), s.integer("maxFolders", 100, 1, 100000),
                 s.integer("sinceMaxCandidates", 10000, 1, 10_000_000));
         s.finish();
-        if (r.pageSizeDefault() > r.pageSizeMax()) {
-            throw new ConfigException(s.path("pageSizeDefault") + ": must not exceed pageSizeMax");
-        }
-        if (r.maxCharsDefault() > r.maxCharsCap()) {
-            throw new ConfigException(s.path("maxCharsDefault") + ": must not exceed maxCharsCap");
-        }
         return r;
     }
 
