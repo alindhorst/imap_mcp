@@ -36,8 +36,7 @@ public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tool
             Duration validateAfterIdle, Duration maxLifetime, Duration acquireTimeout, Duration capabilityTtl) {
     }
 
-    public record Tools(Duration deadline, int pageSizeDefault, int pageSizeMax, int maxCharsDefault,
-            int maxCharsCap, long maxBodyPartBytes, int maxFolders, int sinceMaxCandidates) {
+    public record Tools(Duration deadline, int maxCharsCap, long maxBodyPartBytes, int maxFolders, int sinceMaxCandidates) {
     }
 
     public record Secrets(Duration keyringTimeout) {

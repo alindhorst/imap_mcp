@@ -59,7 +59,7 @@ class ConfigLoaderTest {
                 Duration.ofSeconds(60), false));
         assertThat(c.pool()).isEqualTo(new AppConfig.Pool(3, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
                 Duration.ofMinutes(30), Duration.ofSeconds(10), Duration.ofMinutes(10)));
-        assertThat(c.tools()).isEqualTo(new AppConfig.Tools(Duration.ofSeconds(90), 25, 100, 20000, 100000,
+        assertThat(c.tools()).isEqualTo(new AppConfig.Tools(Duration.ofSeconds(90), 100000,
                 4L * 1024 * 1024, 100, 10000));
         assertThat(c.secrets()).isEqualTo(new AppConfig.Secrets(Duration.ofSeconds(5)));
         assertThat(c.http()).isEqualTo(new AppConfig.Http("127.0.0.1", 8080, false, null,
@@ -75,7 +75,7 @@ class ConfigLoaderTest {
                 + "    label: Work\n    address: me@example.org") + """
                 imap: {connectTimeout: 500ms, readTimeout: 2m, trace: true}
                 pool: {maxTotal: 10, idleEviction: 1h}
-                tools: {maxBodyPartBytes: 64KiB, pageSizeMax: 50}
+                tools: {maxBodyPartBytes: 64KiB, maxFolders: 7}
                 http: {port: 9000, token: "env:T", allowedOrigins: ["http://x"]}
                 security: {handleKey: "file:/run/k"}
                 secrets: {keyringTimeout: 2s}
@@ -91,7 +91,7 @@ class ConfigLoaderTest {
         assertThat(c.pool().maxTotal()).isEqualTo(10);
         assertThat(c.pool().idleEviction()).isEqualTo(Duration.ofHours(1));
         assertThat(c.tools().maxBodyPartBytes()).isEqualTo(65536);
-        assertThat(c.tools().pageSizeMax()).isEqualTo(50);
+        assertThat(c.tools().maxFolders()).isEqualTo(7);
         assertThat(c.http().port()).isEqualTo(9000);
         assertThat(c.http().token().value()).isEqualTo("env:T");
         assertThat(c.http().allowedOrigins()).containsExactly("http://x");
@@ -124,11 +124,13 @@ class ConfigLoaderTest {
                 Arguments.of("bad security", acct + "    security: ssl\n", "accounts[0].security"),
                 Arguments.of("bad flavor", acct + "    flavor: yahoo\n", "accounts[0].flavor"),
                 Arguments.of("maxCharsCap", acct + "tools:\n  maxCharsCap: 100001\n", "tools.maxCharsCap"),
-                Arguments.of("pageSizeMax", acct + "tools:\n  pageSizeMax: 101\n", "tools.pageSizeMax"),
+                Arguments.of("pageSizeMax fixed by spec", acct + "tools:\n  pageSizeMax: 50\n", "tools.pageSizeMax"),
+                Arguments.of("pageSizeDefault fixed by spec", acct + "tools:\n  pageSizeDefault: 10\n",
+                        "tools.pageSizeDefault"),
+                Arguments.of("maxCharsDefault fixed by spec", acct + "tools:\n  maxCharsDefault: 100\n",
+                        "tools.maxCharsDefault"),
                 Arguments.of("maxFolders", acct + "tools:\n  maxFolders: 0\n", "tools.maxFolders"),
                 Arguments.of("pool maxTotal", acct + "pool:\n  maxTotal: 0\n", "pool.maxTotal"),
-                Arguments.of("default above max", acct + "tools:\n  pageSizeDefault: 30\n  pageSizeMax: 20\n",
-                        "tools.pageSizeDefault"),
                 Arguments.of("missing host", acct.replace("    host: h\n", ""), "accounts[0].host"),
                 Arguments.of("missing password", acct.replace("    password: env:P\n", ""), "accounts[0].password"),
                 Arguments.of("no accounts", "pool: {}\n", "accounts"),
