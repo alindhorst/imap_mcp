@@ -94,7 +94,7 @@ class StorePoolTest {
     }
 
     private long noops() {
-        return trace.list.stream().filter(e -> e.getFormattedMessage().contains(" NOOP")).count();
+        return trace.list.stream().filter(e -> e.getFormattedMessage().matches("[A-Z]+\\d+ NOOP")).count();
     }
 
     private static void await(BooleanSupplier condition) throws InterruptedException {
@@ -124,7 +124,7 @@ class StorePoolTest {
         assertThat(p.pool().getMaxWaitDuration()).isEqualTo(Duration.ofSeconds(10));
         assertThat(p.pool().getTestOnBorrow()).isTrue();
         assertThat(p.pool().getTestWhileIdle()).isFalse();
-        assertThat(p.pool().getJmxEnabled()).isFalse();
+        assertThat(p.pool().getJmxName()).isNull();
         assertThat(p.pool().getDurationBetweenEvictionRuns()).isEqualTo(Duration.ofSeconds(30));
         assertThat(p.pool().getNumTestsPerEvictionRun()).isEqualTo(-1);
     }
@@ -161,11 +161,12 @@ class StorePoolTest {
         StorePool p = pool(PoolSettings.DEFAULTS.withValidateAfterIdle(Duration.ofMillis(50)));
         IMAPStore first = p.borrow(key);
         p.release(key, first);
-        int port = greenMail.getImaps().getPort();
         greenMail.stop();
         greenMail.start();
         greenMail.setUser(USER + "@localhost", USER, PASSWORD);
-        assertThat(greenMail.getImaps().getPort()).isEqualTo(port);
+        // the restarted server may listen on another port; the account lookup is consulted on each connect
+        account = new MailAccount(account.id(), "label", null, "127.0.0.1", greenMail.getImaps().getPort(),
+                Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"));
         Thread.sleep(120);
         IMAPStore second = p.borrow(key);
         assertThat(second).isNotSameAs(first);
