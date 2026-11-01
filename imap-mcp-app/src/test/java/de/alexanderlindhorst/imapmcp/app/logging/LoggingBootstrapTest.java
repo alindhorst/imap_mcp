@@ -90,7 +90,7 @@ class LoggingBootstrapTest {
     @Test
     void logFileRotatesBySize() throws Exception {
         Path dir = tmp.resolve("logs");
-        Run r = fork("rotate", dir, Map.of(), List.of("-DIMAP_MCP_LOG_MAX_FILE_SIZE=2KB"));
+        Run r = fork("rotate", dir, Map.of(), List.of("-Dimapmcp.log.maxFileSize=2KB"));
         assertThat(r.exit()).as(r.stderr()).isZero();
         assertThat(r.stdout()).isEmpty();
         try (Stream<Path> files = Files.list(dir)) {
