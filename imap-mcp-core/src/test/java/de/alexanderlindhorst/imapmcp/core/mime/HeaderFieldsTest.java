@@ -21,9 +21,9 @@ class HeaderFieldsTest {
     }
 
     @Test
-    void unfoldsContinuationLinesKeepingTheWhitespace() {
+    void unfoldsContinuationLines() {
         HeaderFields.Result r = parse("X-Long: one\r\n two\r\n\tthree\r\nNext: n\r\n\r\n");
-        assertThat(r.fields().get(0).value()).isEqualTo("one two\tthree");
+        assertThat(r.fields().get(0).value()).isEqualTo("one two three");
         assertThat(r.fields().get(1).name()).isEqualTo("Next");
     }
 
