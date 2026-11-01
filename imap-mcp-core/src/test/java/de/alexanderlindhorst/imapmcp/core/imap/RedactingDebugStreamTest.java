@@ -76,4 +76,24 @@ class RedactingDebugStreamTest {
         ps.println("A2 OK");
         assertThat(lines).containsExactly("<redacted>", "A2 OK");
     }
+
+    @Test
+    void overlongLoginLineIsRedactedInEveryChunk() {
+        write("A1 LOGIN user " + "p".repeat(70_000) + "\r\n");
+        write("A2 OK\r\n");
+        assertThat(lines).hasSizeGreaterThanOrEqualTo(3);
+        assertThat(lines.subList(0, lines.size() - 1)).allMatch("<redacted>"::equals);
+        assertThat(lines).noneMatch(l -> l.contains("ppp"));
+        assertThat(lines.getLast()).isEqualTo("A2 OK");
+    }
+
+    @Test
+    void overlongClientResponseAfterContinuationIsRedactedInEveryChunk() {
+        write("+ \r\n");
+        write("p".repeat(70_000) + "\r\n");
+        write("A2 OK\r\n");
+        assertThat(lines).noneMatch(l -> l.contains("ppp"));
+        assertThat(lines.subList(0, lines.size() - 1)).allMatch("<redacted>"::equals);
+        assertThat(lines.getLast()).isEqualTo("A2 OK");
+    }
 }
