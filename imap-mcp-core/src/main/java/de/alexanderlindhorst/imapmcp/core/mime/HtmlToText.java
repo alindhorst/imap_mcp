@@ -74,7 +74,7 @@ public final class HtmlToText {
     }
 
     private static boolean isSpace(char ch) {
-        return Character.isWhitespace(ch) || ch == ' ';
+        return Character.isWhitespace(ch) || ch == '\u00A0';
     }
 
     private static String showableUrl(String href) {
