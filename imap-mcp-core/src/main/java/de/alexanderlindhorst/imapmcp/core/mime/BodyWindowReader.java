@@ -111,7 +111,7 @@ public final class BodyWindowReader {
     private static byte[] fetch(IMAPFolder folder, int seq, String section, int length) throws MessagingException {
         Object result = folder.doCommand(p -> {
             BODY body = p.peekBody(seq, section, 0, length);
-            return body == null || body.getByteArray() == null ? new byte[0] : body.getByteArray().toByteArray();
+            return body == null || body.getByteArray() == null ? new byte[0] : body.getByteArray().getNewBytes();
         });
         return (byte[]) result;
     }

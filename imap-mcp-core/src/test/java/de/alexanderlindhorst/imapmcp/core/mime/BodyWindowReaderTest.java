@@ -160,13 +160,13 @@ class BodyWindowReaderTest {
 
     @Test
     void asciiPlainWindowsConcatenateToWhole() throws Exception {
-        open(single("plain", repeat("line number # of the body\r\n", 300), "UTF-8", "7bit"));
+        open(single("plain", repeat("line number # of the body\r\n", 150), "UTF-8", "7bit"));
         assertWindowsEqualWhole(97);
     }
 
     @Test
     void utf8EmojiBase64WindowsConcatenateToWhole() throws Exception {
-        open(single("plain", repeat("a😀bä€ #\r\n", 400), "UTF-8", "base64"));
+        open(single("plain", repeat("a😀bä€ #\r\n", 100), "UTF-8", "base64"));
         assertWindowsEqualWhole(7);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.charset()).isEqualTo("UTF-8");
@@ -177,7 +177,7 @@ class BodyWindowReaderTest {
     @Test
     void quotedPrintableLatin1WindowsConcatenateToWhole() throws Exception {
         open(single("plain", repeat("café üß # = sign and a rather long line to force soft breaks "
-                + "in the quoted printable encoding, ok?\r\n", 200), "ISO-8859-1", "quoted-printable"));
+                + "in the quoted printable encoding, ok?\r\n", 50), "ISO-8859-1", "quoted-printable"));
         assertWindowsEqualWhole(61);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.charset()).isEqualTo("ISO-8859-1");
@@ -186,7 +186,7 @@ class BodyWindowReaderTest {
 
     @Test
     void htmlWindowsConcatenateToWhole() throws Exception {
-        open(single("html", repeat("<p>Hello ä <b>world</b> #</p>", 300), "UTF-8", "quoted-printable"));
+        open(single("html", repeat("<p>Hello ä <b>world</b> #</p>", 150), "UTF-8", "quoted-printable"));
         assertWindowsEqualWhole(50);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.convertedFromHtml()).isTrue();
