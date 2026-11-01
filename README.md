@@ -18,6 +18,7 @@ imap-mcp-transport-stdio  stdio transport
 imap-mcp-transport-http   Streamable HTTP via embedded Jetty
 imap-mcp-app              entry points, config, wiring, shaded jar, Docker image
 imap-mcp-it               end-to-end / container-based tests
+imap-mcp-coverage         build only: aggregated JaCoCo report (no sources)
 doc/                      specification
 ```
 
@@ -237,3 +238,13 @@ Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Post
 ## Scope by phase
 
 v1 read-only tools, v2 reversible changes (flags, move), v3 gated deletion and public multi-tenant mode. Details in SPEC sections 3 and 4.
+
+## Coverage
+
+Unit tests (surefire) and integration tests (failsafe), including the shaded-jar subprocesses started by the ITs, are measured with JaCoCo and aggregated over all code modules:
+
+```
+mvn clean verify site
+```
+
+Report: `imap-mcp-coverage/target/site/jacoco-aggregate/index.html`. There are no coverage thresholds. The Docker image IT is not measured (the same server code is covered by the http-local subprocess ITs). `-Djacoco.skip=true` switches the agent off.
