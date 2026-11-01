@@ -57,7 +57,7 @@ class FolderResolverGreenMailTest {
             p.put("mail.imaps.ssl.checkserveridentity", "false");
             return p;
         }, true);
-        PoolSettings s = new PoolSettings(3, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
+        PoolSettings s = new PoolSettings(3, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
                 Duration.ofMinutes(30), Duration.ofSeconds(10), Duration.ofSeconds(30), Duration.ofSeconds(120));
         pool = new StorePool(sessions, (t, a) -> credentials.resolve(t, a), new CapabilityCache(),
                 k -> k.equals(key) ? account : null, s);
