@@ -15,7 +15,7 @@ class IdsTest {
 
     @Test
     void accountIdRejectsInvalid() {
-        for (String bad : new String[] {"", "A", "a b", "a_b", "a".repeat(33), "ä"}) {
+        for (String bad : new String[] {"", "A", "a b", "a_b", "a".repeat(33), "\u00e4"}) {
             assertThatThrownBy(() -> new AccountId(bad)).isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(() -> new AccountId(null)).isInstanceOf(NullPointerException.class);
