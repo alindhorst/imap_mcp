@@ -129,15 +129,15 @@ class ListFoldersToolTest {
         mailbox("alpha", "Zeta");
         mailbox("alpha", "Archive");
         mailbox("alpha", "Archive.2025");
-        mailbox("alpha", "Entwürfe");
+        mailbox("alpha", "Entw\u00fcrfe");
         Map<String, Object> out = ok(call(tool(100), A, Map.of("account", handleA())));
         List<Map<String, Object>> f = folders(out);
         assertThat(f).extracting(m -> m.get("folder")).containsExactly("INBOX", "Archive", "Archive.2025",
-                "Entwürfe", "Zeta");
+                "Entw\u00fcrfe", "Zeta");
         Map<String, Object> child = f.get(2);
         assertThat(child).containsEntry("name", "2025").containsEntry("parent", "Archive").containsEntry("delimiter", ".");
         assertThat(f.get(1)).containsEntry("name", "Archive").containsEntry("parent", null);
-        assertThat(f.get(3)).containsEntry("name", "Entwürfe");
+        assertThat(f.get(3)).containsEntry("name", "Entw\u00fcrfe");
         assertThat(out).containsEntry("account", handleA());
     }
 
@@ -228,7 +228,7 @@ class ListFoldersToolTest {
 
     @Test
     void displayNameIsSanitisedButFolderIdentifierIsVerbatim() {
-        String full = "Inbox/ev‮il\tname";
+        String full = "Inbox/ev\u202eil\tname";
         Map<String, Object> m = entries(mocked(full, '/'), mocked("INBOX", '/')).get(1);
         assertThat(m.get("folder")).isEqualTo(full);
         assertThat(m.get("name")).isEqualTo("evil name");
@@ -245,8 +245,8 @@ class ListFoldersToolTest {
 
     @Test
     void folderOverThousandBytesIsListedButNotSelectable() {
-        String over = "ä".repeat(501);
-        String exact = "ä".repeat(500);
+        String over = "\u00e4".repeat(501);
+        String exact = "\u00e4".repeat(500);
         List<Map<String, Object>> f = entries(mocked(over, '/', "\\HasNoChildren"), mocked(exact, '/'));
         Map<String, Object> o = f.stream().filter(m -> over.equals(m.get("folder"))).findFirst().orElseThrow();
         Map<String, Object> e = f.stream().filter(m -> exact.equals(m.get("folder"))).findFirst().orElseThrow();
@@ -257,8 +257,8 @@ class ListFoldersToolTest {
 
     @Test
     void noselectNonExistentRolesAndNilDelimiter() {
-        List<Map<String, Object>> f = entries(mocked("A", '￿', "\\Noselect"), mocked("B", '￿', "\\NonExistent"),
-                mocked("S", '￿', "\\Sent"), mocked("INBOX", '￿'));
+        List<Map<String, Object>> f = entries(mocked("A", '\uffff', "\\Noselect"), mocked("B", '\uffff', "\\NonExistent"),
+                mocked("S", '\uffff', "\\Sent"), mocked("INBOX", '\uffff'));
         assertThat(f).extracting(m -> m.get("folder")).containsExactly("INBOX", "A", "B", "S");
         assertThat(f.get(0)).containsEntry("role", "inbox").containsEntry("delimiter", null).containsEntry("parent", null);
         assertThat(f.get(1)).containsEntry("selectable", false);
@@ -268,7 +268,7 @@ class ListFoldersToolTest {
 
     @Test
     void sortIsCodePointOrder() {
-        List<Map<String, Object>> f = entries(mocked("😀", '/'), mocked("～", '/'), mocked("INBOX", '/'));
-        assertThat(f).extracting(m -> m.get("folder")).containsExactly("INBOX", "～", "😀");
+        List<Map<String, Object>> f = entries(mocked("\ud83d\ude00", '/'), mocked("\uff5e", '/'), mocked("INBOX", '/'));
+        assertThat(f).extracting(m -> m.get("folder")).containsExactly("INBOX", "\uff5e", "\ud83d\ude00");
     }
 }

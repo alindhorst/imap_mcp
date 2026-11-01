@@ -187,7 +187,7 @@ public final class ListFoldersTool implements ToolHandler {
     private static Character delimiter(IMAPFolder f) {
         try {
             char c = f.getSeparator();
-            return c == '￿' || c == '\0' ? null : c;
+            return c == '\uffff' || c == '\0' ? null : c;
         } catch (MessagingException e) {
             throw new IllegalStateException("LIST delimiter unavailable", e);
         }
