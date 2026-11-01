@@ -118,6 +118,37 @@ class McpToolAdapterTest {
     }
 
     @Test
+    void everyToolRunsThroughExecutorOnVirtualThreadWithMdc() {
+        java.util.concurrent.atomic.AtomicReference<Boolean> virtual = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> req = new java.util.concurrent.atomic.AtomicReference<>();
+        adapter.stateless(SAMPLE, (c, a) -> {
+            virtual.set(Thread.currentThread().isVirtual());
+            req.set(org.slf4j.MDC.get("req"));
+            return new ToolOutcome.Success(Map.of("count", 1));
+        }).callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(virtual.get()).isTrue();
+        assertThat(req.get()).isEqualTo("req-1");
+    }
+
+    @Test
+    void deadlineThroughAdapterYieldsTimeoutResult() {
+        McpToolAdapter fast = new McpToolAdapter(ctx -> new AccountContext(new TenantId("t")), MAPPER, () -> "req-t",
+                new de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor(java.time.Duration.ofMillis(100),
+                        new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(new de.alexanderlindhorst.imapmcp.core.crypto.KeyRing(1,
+                                Map.of(1, new byte[32])))));
+        McpSchema.CallToolResult r = fast.stateless(SAMPLE, (c, a) -> {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new ToolOutcome.Success(Map.of("count", 1));
+        }).callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isEqualTo(ToolError.timeout("req-t").toMap());
+    }
+
+    @Test
     void statefulAndStatelessSpecsExposeIdenticalToolJson() throws Exception {
         String a = MAPPER.writeValueAsString(adapter.stateful(SAMPLE, this::ok).tool());
         String b = MAPPER.writeValueAsString(adapter.stateless(SAMPLE, this::ok).tool());
