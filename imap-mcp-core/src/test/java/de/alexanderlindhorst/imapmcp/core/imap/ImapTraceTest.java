@@ -102,8 +102,12 @@ class ImapTraceTest {
             Session s = session(f);
             assertThat(s.getDebugOut()).isInstanceOf(RedactingDebugStream.class);
             assertThat(s.getDebug()).isFalse();
+            traceEvents.list.clear();
             login(s);
-            assertThat(traceEvents.list).isEmpty();
+            // The trace logger is global: filter by thread so a late cleanup event of another test's store
+            // (other thread) cannot make this test flaky.
+            String me = Thread.currentThread().getName();
+            assertThat(traceEvents.list).noneMatch(e -> e.getThreadName().equals(me));
             assertThat(factoryEvents.list).noneMatch(e -> e.getFormattedMessage().contains("trace enabled"));
             assertThat(capturedOut.size()).isZero();
         }
