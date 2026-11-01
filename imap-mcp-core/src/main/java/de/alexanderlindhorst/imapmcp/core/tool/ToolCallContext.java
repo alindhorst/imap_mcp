@@ -1,10 +1,12 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.MDC;
 
 /**
  * Per-call context: identity, request id and a cancellation seam. The executor (deadline, virtual thread)
@@ -16,6 +18,7 @@ public final class ToolCallContext {
     private final String requestId;
     private final List<Runnable> callbacks = new ArrayList<>();
     private boolean cancelled;
+    private volatile LogIds logIds;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -62,6 +65,16 @@ public final class ToolCallContext {
 
     /** Sets the hashed account id in the worker's MDC once resolved; no-op outside the executor. */
     public void bindAccount(AccountId accountId) {
+        Objects.requireNonNull(accountId, "accountId");
+        LogIds ids = logIds;
+        if (ids != null) {
+            MDC.put("acct", ids.account(accountId.value()));
+        }
+    }
+
+    /** Called by the executor on the worker thread. */
+    void attach(LogIds logIds) {
+        this.logIds = logIds;
     }
 
     private static void run(Runnable r) {
