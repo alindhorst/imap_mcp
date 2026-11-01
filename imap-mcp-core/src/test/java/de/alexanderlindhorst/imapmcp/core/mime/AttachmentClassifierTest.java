@@ -183,7 +183,7 @@ class AttachmentClassifierTest {
 
     @Test
     void hostileEncodedFilenameIsSanitized() throws Exception {
-        String hostile = "..\\..\\evil‮fdp.exe";
+        String hostile = "..\\..\\evil\u202Efdp.exe";
         MimeMultipart mp = new MimeMultipart("mixed");
         mp.addBodyPart(text("plain", "x"));
         mp.addBodyPart(binary("application/octet-stream", new byte[5],
