@@ -16,6 +16,9 @@ class StdioArchitectureRulesTest {
     static final ArchRule stdioHasNoHttpStack = StdioArchitectureRules.STDIO_HAS_NO_HTTP_STACK
             .allowEmptyShould(true);
 
+    @ArchTest
+    static final ArchRule stdioStreamsHasNoSlf4j = StdioArchitectureRules.STDIO_STREAMS_HAS_NO_SLF4J;
+
     @Test
     void guardDetectsJettyReferenceInFixture() {
         JavaClasses fixture = new ClassFileImporter()

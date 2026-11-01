@@ -18,6 +18,13 @@ final class StdioArchitectureRules {
                     "de.alexanderlindhorst.imapmcp.transport.http..")
             .as("stdio transport must not depend on Jetty, the servlet API or the HTTP transport");
 
+
+    /** StdioStreams runs before logging is initialised (#38): it must not touch SLF4J. */
+    static final ArchRule STDIO_STREAMS_HAS_NO_SLF4J = noClasses()
+            .that().haveSimpleName("StdioStreams")
+            .should().dependOnClassesThat().resideInAnyPackage("org.slf4j..")
+            .as("StdioStreams must not depend on SLF4J");
+
     private StdioArchitectureRules() {
     }
 }
