@@ -18,6 +18,12 @@ public final class SearchSchema {
 
     private SearchSchema() {}
 
+    private static final String SINCE_DESCRIPTION = "Only messages received (received_at, mail server time) at or "
+            + "after this instant. For new mail, pass the first-page as_of of an earlier search with the same "
+            + "criteria. Windows overlap by about 5 minutes, so already-seen messages may reappear; deduplicate by "
+            + "handle. Messages moved or copied into the folder keep their original received time and are not "
+            + "reported as new.";
+
     public static Map<String, Object> inputSchema() {
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("account", Map.of("type", "string", "minLength", 1, "maxLength", 132));
@@ -28,7 +34,7 @@ public final class SearchSchema {
         }
         p.put("date_from", Map.of("type", "string", "format", "date"));
         p.put("date_to", Map.of("type", "string", "format", "date"));
-        p.put("since", Map.of("type", "string", "format", "date-time"));
+        p.put("since", Map.of("type", "string", "format", "date-time", "description", SINCE_DESCRIPTION));
         for (String f : List.of("seen", "flagged", "answered", "draft")) {
             p.put(f, Map.of("type", "boolean"));
         }
