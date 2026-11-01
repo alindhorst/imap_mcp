@@ -147,6 +147,50 @@ class ImapLeaseTest {
     }
 
     @Test
+    void withLeaseDiscardsOnRuntimeExceptionAndRethrowsUnchanged() throws Exception {
+        leases(Duration.ofSeconds(10));
+        IllegalStateException boom = new IllegalStateException("boom");
+        assertThatThrownBy(() -> leases.withLease(key, ctx(), lease -> {
+            lease.store();
+            throw boom;
+        })).isSameAs(boom);
+        assertThat(pool.destroyedCount()).isEqualTo(1);
+        assertThat(pool.numIdle(key)).isZero();
+        assertThat(pool.numActive(key)).isZero();
+    }
+
+    @Test
+    void withLeaseDiscardsOnErrorAndRethrowsUnchanged() throws Exception {
+        leases(Duration.ofSeconds(10));
+        AssertionError boom = new AssertionError("boom");
+        assertThatThrownBy(() -> leases.withLease(key, ctx(), lease -> {
+            throw boom;
+        })).isSameAs(boom);
+        assertThat(pool.destroyedCount()).isEqualTo(1);
+        assertThat(pool.numIdle(key)).isZero();
+    }
+
+    @Test
+    void withLeasePropagatesMessagingExceptionWithoutMarkingBroken() throws Exception {
+        leases(Duration.ofSeconds(10));
+        jakarta.mail.MessagingException ex = new jakarta.mail.MessagingException("tool decides");
+        assertThatThrownBy(() -> leases.withLease(key, ctx(), lease -> {
+            throw ex;
+        })).isSameAs(ex);
+        assertThat(pool.destroyedCount()).isZero();
+        assertThat(pool.numIdle(key)).isEqualTo(1);
+    }
+
+    @Test
+    void withLeaseReturnsResultAndStoreOnNormalReturn() throws Exception {
+        leases(Duration.ofSeconds(10));
+        String r = leases.withLease(key, ctx(), lease -> "done");
+        assertThat(r).isEqualTo("done");
+        assertThat(pool.destroyedCount()).isZero();
+        assertThat(pool.numIdle(key)).isEqualTo(1);
+    }
+
+    @Test
     void exceptionInScopeInvalidatesStore() throws Exception {
         leases(Duration.ofSeconds(10));
         assertThatThrownBy(() -> {
