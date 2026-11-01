@@ -46,7 +46,7 @@ class HtmlToTextTest {
     @Test
     void commentsAreDroppedAndEntitiesDecoded() {
         assertThat(HtmlToText.convert("a<!-- SECRET -->b &amp; c &lt;d&gt; caf&eacute;"))
-                .isEqualTo("ab & c <d> café");
+                .isEqualTo("ab & c <d> caf\u00e9");
     }
 
     @Test
@@ -63,7 +63,7 @@ class HtmlToTextTest {
 
     @Test
     void controlAndBidiCharactersAreStrippedViaBodyText() {
-        assertThat(HtmlToText.convert("a‮b\u0001c")).isEqualTo("abc");
+        assertThat(HtmlToText.convert("a\u202eb\u0001c")).isEqualTo("abc");
     }
 
     // AC2: links

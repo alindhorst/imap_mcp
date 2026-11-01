@@ -55,10 +55,10 @@ class RedactingDebugStreamTest {
 
     @Test
     void decodesUtf8PerLineEvenWhenSplitMidCharacter() {
-        byte[] b = "* ä\n".getBytes(StandardCharsets.UTF_8);
+        byte[] b = "* \u00e4\n".getBytes(StandardCharsets.UTF_8);
         stream.write(b, 0, 3);
         stream.write(b, 3, b.length - 3);
-        assertThat(lines).containsExactly("* ä");
+        assertThat(lines).containsExactly("* \u00e4");
     }
 
     @Test

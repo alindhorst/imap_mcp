@@ -166,39 +166,39 @@ class BodyWindowReaderTest {
 
     @Test
     void utf8EmojiBase64WindowsConcatenateToWhole() throws Exception {
-        open(single("plain", repeat("a😀bä€ #\r\n", 100), "UTF-8", "base64"));
+        open(single("plain", repeat("a\ud83d\ude00b\u00e4\u20ac #\r\n", 100), "UTF-8", "base64"));
         assertWindowsEqualWhole(7);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.charset()).isEqualTo("UTF-8");
-        assertThat(whole.text()).startsWith("a😀bä€ 0\n");
+        assertThat(whole.text()).startsWith("a\ud83d\ude00b\u00e4\u20ac 0\n");
         assertThat(whole.totalChars()).isEqualTo(whole.text().codePoints().count());
     }
 
     @Test
     void quotedPrintableLatin1WindowsConcatenateToWhole() throws Exception {
-        open(single("plain", repeat("café üß # = sign and a rather long line to force soft breaks "
+        open(single("plain", repeat("caf\u00e9 \u00fc\u00df # = sign and a rather long line to force soft breaks "
                 + "in the quoted printable encoding, ok?\r\n", 50), "ISO-8859-1", "quoted-printable"));
         assertWindowsEqualWhole(61);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.charset()).isEqualTo("ISO-8859-1");
-        assertThat(whole.text()).startsWith("café üß 0 = sign");
+        assertThat(whole.text()).startsWith("caf\u00e9 \u00fc\u00df 0 = sign");
     }
 
     @Test
     void htmlWindowsConcatenateToWhole() throws Exception {
-        open(single("html", repeat("<p>Hello ä <b>world</b> #</p>", 150), "UTF-8", "quoted-printable"));
+        open(single("html", repeat("<p>Hello \u00e4 <b>world</b> #</p>", 150), "UTF-8", "quoted-printable"));
         assertWindowsEqualWhole(50);
         BodyWindow whole = read(new BodyWindowReader(), 0, WHOLE);
         assertThat(whole.convertedFromHtml()).isTrue();
         assertThat(whole.contentType()).isEqualTo("text/html");
-        assertThat(whole.text()).startsWith("Hello ä world 0\n\nHello");
+        assertThat(whole.text()).startsWith("Hello \u00e4 world 0\n\nHello");
     }
 
     // ---- AC2 ----
 
     @Test
     void identicalCallsReturnIdenticalWindows() throws Exception {
-        open(single("plain", repeat("café line #\r\n", 500), "UTF-8", "base64"));
+        open(single("plain", repeat("caf\u00e9 line #\r\n", 500), "UTF-8", "base64"));
         BodyWindowReader r = new BodyWindowReader();
         assertThat(read(r, 123, 77)).isEqualTo(read(r, 123, 77));
         assertThat(read(r, 0, 1000)).isEqualTo(read(r, 0, 1000));
@@ -206,7 +206,7 @@ class BodyWindowReaderTest {
 
     @Test
     void windowContentDoesNotDependOnWindowSize() throws Exception {
-        open(single("plain", repeat("😀 line #\r\n", 800), "UTF-8", "base64"));
+        open(single("plain", repeat("\ud83d\ude00 line #\r\n", 800), "UTF-8", "base64"));
         BodyWindowReader r = new BodyWindowReader();
         String whole = read(r, 0, WHOLE).text();
         int[] cps = whole.codePoints().toArray();
@@ -333,26 +333,26 @@ class BodyWindowReaderTest {
 
     @Test
     void metaCharsetInHtmlWinsOverHeader() throws Exception {
-        byte[] html = "<html><head><meta charset=\"ISO-8859-1\"></head><body>café</body></html>"
+        byte[] html = "<html><head><meta charset=\"ISO-8859-1\"></head><body>caf\u00e9</body></html>"
                 .getBytes(StandardCharsets.ISO_8859_1);
         open(raw("text/html; charset=UTF-8", html, "8bit"));
         BodyWindow w = read(new BodyWindowReader(), 0, 100);
-        assertThat(w.text()).isEqualTo("café");
+        assertThat(w.text()).isEqualTo("caf\u00e9");
         assertThat(w.charset()).isEqualTo("ISO-8859-1");
     }
 
     @Test
     void invalidMetaCharsetIsIgnored() throws Exception {
-        open(raw("text/html; charset=UTF-8", "<meta charset=\"nonsense-9\"><p>café</p>"
+        open(raw("text/html; charset=UTF-8", "<meta charset=\"nonsense-9\"><p>caf\u00e9</p>"
                 .getBytes(StandardCharsets.UTF_8), "8bit"));
         BodyWindow w = read(new BodyWindowReader(), 0, 100);
-        assertThat(w.text()).isEqualTo("café");
+        assertThat(w.text()).isEqualTo("caf\u00e9");
         assertThat(w.charset()).isEqualTo("UTF-8");
     }
 
     @Test
     void controlCharactersAreNormalized() throws Exception {
-        open(single("plain", "a‮b\r\nc", "UTF-8", "base64"));
+        open(single("plain", "a\u202eb\r\nc", "UTF-8", "base64"));
         assertThat(read(new BodyWindowReader(), 0, 100).text()).isEqualTo("ab\nc");
     }
 
