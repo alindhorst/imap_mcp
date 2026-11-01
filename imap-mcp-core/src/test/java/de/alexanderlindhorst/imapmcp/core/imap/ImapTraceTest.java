@@ -53,6 +53,7 @@ class ImapTraceTest {
         traceLogger.addAppender(traceEvents);
         traceEvents.start();
         factoryLogger = (Logger) LoggerFactory.getLogger(ImapSessionFactory.class);
+        factoryLogger.setLevel(Level.INFO);
         factoryLogger.addAppender(factoryEvents);
         factoryEvents.start();
         originalOut = System.out;
