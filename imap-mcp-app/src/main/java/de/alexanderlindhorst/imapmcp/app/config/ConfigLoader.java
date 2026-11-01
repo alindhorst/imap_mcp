@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.app.config;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
+import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -144,9 +145,10 @@ public final class ConfigLoader {
     }
 
     private static AppConfig.Tools tools(Section s) {
-        var r = new AppConfig.Tools(s.duration("deadline", Duration.ofSeconds(90)),
+        var r = new AppConfig.Tools(s.duration("deadline", Duration.ofSeconds(90), Duration.ofMinutes(10)),
                 s.integer("maxCharsCap", 100000, 1, 100000),
-                s.size("maxBodyPartBytes", 4L * 1024 * 1024), s.integer("maxFolders", 100, 1, 100000),
+                s.size("maxBodyPartBytes", 4L * 1024 * 1024, BodyWindowReader.MAX_BODY_PART_BYTES),
+                s.integer("maxFolders", 100, 1, 100000),
                 s.integer("sinceMaxCandidates", 10000, 1, 10_000_000));
         s.finish();
         return r;
@@ -156,7 +158,7 @@ public final class ConfigLoader {
         var r = new AppConfig.Http(s.nonBlank("bind", "127.0.0.1"), s.integer("port", 8080, 1, 65535),
                 s.bool("allowNonLoopbackBind", false), s.optionalRef("token"),
                 s.stringList("allowedHosts", List.of("localhost:*", "127.0.0.1:*", "[::1]:*")),
-                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024));
+                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE));
         s.finish();
         return r;
     }
@@ -347,6 +349,10 @@ public final class ConfigLoader {
         }
 
         Duration duration(String key, Duration def) {
+            return duration(key, def, null);
+        }
+
+        Duration duration(String key, Duration def, Duration max) {
             JsonNode n = take(key);
             if (n == null) {
                 return def;
@@ -356,15 +362,19 @@ public final class ConfigLoader {
                 throw new ConfigException(path(key) + ": must be a positive duration like 500ms, 10s, 5m or 1h");
             }
             long v = Long.parseLong(m.group(1));
-            return switch (m.group(2)) {
+            Duration d = switch (m.group(2)) {
                 case "ms" -> Duration.ofMillis(v);
                 case "s" -> Duration.ofSeconds(v);
                 case "m" -> Duration.ofMinutes(v);
                 default -> Duration.ofHours(v);
             };
+            if (max != null && d.compareTo(max) > 0) {
+                throw new ConfigException(path(key) + ": must not exceed " + max.toMinutes() + "m");
+            }
+            return d;
         }
 
-        long size(String key, long def) {
+        long size(String key, long def, long max) {
             JsonNode n = take(key);
             if (n == null) {
                 return def;
@@ -374,12 +384,16 @@ public final class ConfigLoader {
                 throw new ConfigException(path(key) + ": must be a positive size like 512B, 64KiB, 1MiB or 1GiB");
             }
             long v = Long.parseLong(m.group(1));
-            return switch (m.group(2)) {
+            long bytes = switch (m.group(2)) {
                 case "B" -> v;
                 case "KiB" -> v * 1024;
                 case "MiB" -> v * 1024 * 1024;
                 default -> v * 1024 * 1024 * 1024;
             };
+            if (bytes > max || bytes < 0) {
+                throw new ConfigException(path(key) + ": must not exceed " + (max / (1024 * 1024)) + "MiB");
+            }
+            return bytes;
         }
 
         SecretRef requiredRef(String key) {
