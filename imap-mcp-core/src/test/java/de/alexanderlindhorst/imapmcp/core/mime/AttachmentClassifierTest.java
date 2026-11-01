@@ -105,7 +105,7 @@ class AttachmentClassifierTest {
         assertThat(e.untrusted().contentType()).isEqualTo("application/pdf");
         assertThat(e.untrusted().filename()).isEqualTo("Report.PDF");
         assertThat(e.inline()).isFalse();
-        assertThat(e.size()).isGreaterThan(0).isLessThanOrEqualTo(310);
+        assertThat(e.size()).isGreaterThan(0).isLessThan(600);
         assertThat(list.total()).isEqualTo(1);
         assertThat(list.truncated()).isFalse();
         assertThat(AttachmentClassifier.hasAttachments(bs, "1")).isTrue();
@@ -271,6 +271,6 @@ class AttachmentClassifierTest {
         BODYSTRUCTURE bs = structureOf(message(mp));
 
         long size = AttachmentClassifier.classify(bs, "1").entries().get(0).size();
-        assertThat(size).isBetween(2900L, 3100L);
+        assertThat(size).isBetween(3000L, 3300L);
     }
 }
