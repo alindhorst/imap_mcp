@@ -157,6 +157,13 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 requestId);
     }
 
+    /** A role-resolved folder whose full name exceeds the 1000 byte handle limit; the name is not echoed. */
+    public static ToolError folderNameTooLong(String requestId) {
+        return of(ErrorCode.UNSUPPORTED, "The folder's full name exceeds 1000 UTF-8 bytes; this server cannot address it.",
+                "Check details.capability and avoid features that need it.", detail("capability", "folder_name_length"),
+                requestId);
+    }
+
     public static ToolError internalError(String requestId) {
         return of(ErrorCode.INTERNAL_ERROR, "Internal error. Report the request_id to the operator.",
                 "Report the request_id to the operator.", null, requestId);
