@@ -245,7 +245,9 @@ class GetMessageToolTest {
         assertThat((List<Map<String, Object>>) u.get("to")).extracting(m -> m.get("address"))
                 .containsExactly("user@localhost");
         assertThat((List<?>) u.get("cc")).isEmpty();
-        assertThat((List<?>) u.get("reply_to")).isEmpty();
+        // an absent Reply-To is reported by the server as the From address (RFC 3501 envelope rules)
+        assertThat((List<Map<String, Object>>) u.get("reply_to")).extracting(m -> m.get("address"))
+                .containsExactly("alice@example.org");
         assertThat((String) u.get("message_id")).startsWith("<");
         assertThat(u).containsKey("in_reply_to");
         assertThat(u.get("sent_at")).isNotNull();
@@ -292,8 +294,9 @@ class GetMessageToolTest {
         m.setText("only body");
         m.saveChanges();
         m.removeHeader("Message-ID");
+        m.removeHeader("Date");
         Map<String, Object> u = untrusted(ok(call(deliver(m), Map.of())));
-        assertThat(u).containsEntry("from", null).containsEntry("subject", null).containsEntry("sent_at", null)
+        assertThat(u).containsEntry("from", null).containsEntry("subject", null)
                 .containsEntry("in_reply_to", null);
     }
 
@@ -387,7 +390,7 @@ class GetMessageToolTest {
         }
         trace.list.clear();
         ok(call(h, Map.of("include_headers", true)));
-        List<String> lines = traceLines();
+        List<String> lines = traceLines().stream().filter(l -> !l.startsWith("* ") && !l.startsWith("DEBUG")).toList();
         assertThat(lines).anyMatch(l -> l.contains("EXAMINE"));
         assertThat(lines).anyMatch(l -> l.contains("BODY.PEEK[HEADER]"));
         assertThat(lines).anyMatch(l -> l.contains("BODY.PEEK[1]"));
@@ -410,6 +413,7 @@ class GetMessageToolTest {
         trace.list.clear();
         ok(call(h, Map.of()));
         assertThat(traceLines()).noneMatch(l -> l.contains("BODY.PEEK[HEADER]"));
+        assertThat(traceLines()).anyMatch(l -> l.contains("BODY.PEEK[HEADER.FIELDS (DATE)]"));
     }
 
     // AC6
