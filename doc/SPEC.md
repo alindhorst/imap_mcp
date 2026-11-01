@@ -1,6 +1,6 @@
 # IMAP MCP Server: Specification
 
-Status: draft v0.2. Audience: implementation lead and team, who break this down into work items.
+Status: draft v0.3. Audience: implementation lead and team, who break this down into work items.
 
 ## 1. Purpose and scope
 
@@ -155,7 +155,7 @@ Jetty must stay off the classpath of the stdio entry point.
 
 - v1: no database. Config file (accounts, hosts, policies) and secrets from env / mounted file / OS keyring, behind the `CredentialStore` and `AccountRepository` interfaces.
 - Config: YAML bound to records, unknown keys rejected. Location precedence: `--config` > `IMAP_MCP_CONFIG` > `$XDG_CONFIG_HOME/imap-mcp/config.yaml` (default `~/.config/imap-mcp/config.yaml`).
-- State (bearer token, handle key, installation salt) in `~/.local/state/imap-mcp/` (`IMAP_MCP_STATE_DIR`); logs in `<state>/logs` (`IMAP_MCP_LOG_DIR`). Docker: `/config/config.yaml`, `/config/state`, `/logs`.
+- State (bearer token, handle key, installation salt): location precedence `IMAP_MCP_STATE_DIR` > `$XDG_STATE_HOME/imap-mcp` (only when set and absolute; relative values are ignored per the XDG spec) > `~/.local/state/imap-mcp`. Logs in `<state>/logs`; `IMAP_MCP_LOG_DIR` overrides. Docker: the image sets `IMAP_MCP_CONFIG=/config/config.yaml`, `IMAP_MCP_STATE_DIR=/config/state` and `IMAP_MCP_LOG_DIR=/logs` explicitly, so XDG variables are irrelevant inside the (headless) container.
 - v3: Postgres via plain JDBC or jOOQ with Flyway. Tables: `tenant` (IdP `iss` + `sub`), `mailbox_account`, `credential` (encrypted blob, key id, version).
 
 ### 5.8 Testing
