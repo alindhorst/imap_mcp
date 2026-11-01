@@ -69,6 +69,12 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 detail("field", field, "reason", reason, "max", max), requestId);
     }
 
+    /** Like {@link #invalidArgument} without max, but with a hint specific to the reason (a fixed literal). */
+    public static ToolError invalidArgumentHint(String field, String reason, String hint, String requestId) {
+        return of(ErrorCode.INVALID_ARGUMENT, "Invalid argument. " + hint, hint,
+                detail("field", field, "reason", reason), requestId);
+    }
+
     public static ToolError accountNotFound(String requestId) {
         return of(ErrorCode.ACCOUNT_NOT_FOUND, "Unknown account handle. Call list_accounts for valid handles.",
                 "Call list_accounts for valid handles.", null, requestId);
