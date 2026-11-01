@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>de.alexanderlindhorst.imapmcp</groupId>
+  <artifactId>imap-mcp-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>IMAP MCP</name>
+
+  <modules>
+    <module>imap-mcp-core</module>
+    <module>imap-mcp-store</module>
+    <module>imap-mcp-transport-stdio</module>
+    <module>imap-mcp-transport-http</module>
+    <module>imap-mcp-app</module>
+    <module>imap-mcp-it</module>
+  </modules>
+
+  <properties>
+    <maven.compiler.release>25</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <!-- Dependency versions (MCP SDK, Angus Mail, Jetty, Nimbus, ...) are pinned in
+       dependencyManagement here by the implementation team. See doc/SPEC.md. -->
+</project>

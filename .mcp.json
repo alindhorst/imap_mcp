@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gitea": {
+      "command": "/home/lindhrst/java-devel/imap_mcp/.claude/gitea-mcp-wrapper.sh",
+      "args": []
+    }
+  }
+}
