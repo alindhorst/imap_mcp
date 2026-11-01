@@ -178,7 +178,7 @@ class StdioMainTest {
         try (AppProcess p = start(bad, Map.of())) {
             assertThat(p.waitFor(20)).isTrue();
             assertThat(p.exitCode()).isEqualTo(1);
-            assertThat(p.stderr()).isNotBlank().contains("bogusKey").doesNotContain("\tat ");
+            assertThat(p.stderr()).isNotBlank().contains("startup failed").contains("accounts").doesNotContain("\tat ");
             assertThat(p.stdoutRest()).isEmpty();
         }
     }
