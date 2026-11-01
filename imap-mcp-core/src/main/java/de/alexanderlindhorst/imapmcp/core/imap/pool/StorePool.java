@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
+import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
 import java.time.Duration;
 import java.util.function.Function;
 import org.apache.commons.pool2.PooledObject;
@@ -20,7 +21,7 @@ import org.eclipse.angus.mail.imap.IMAPStore;
  * exactly one tool call and must never be shared across threads; on timeout, cancellation or a closed
  * folder/store the caller must {@link #invalidate} instead of {@link #release}.
  */
-public final class StorePool implements AutoCloseable {
+public final class StorePool implements AutoCloseable, PoolGauges {
 
     private final GenericKeyedObjectPool<PoolKey, IMAPStore> pool;
 
@@ -75,18 +76,22 @@ public final class StorePool implements AutoCloseable {
         pool.invalidateObject(key, store);
     }
 
+    @Override
     public int numActive(PoolKey key) {
         return pool.getNumActive(key);
     }
 
+    @Override
     public int numIdle(PoolKey key) {
         return pool.getNumIdle(key);
     }
 
+    @Override
     public long createdCount() {
         return pool.getCreatedCount();
     }
 
+    @Override
     public long destroyedCount() {
         return pool.getDestroyedCount();
     }

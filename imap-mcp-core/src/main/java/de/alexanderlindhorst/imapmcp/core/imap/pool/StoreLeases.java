@@ -3,7 +3,9 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import java.net.ConnectException;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -27,6 +29,7 @@ public final class StoreLeases {
     private final StorePool pool;
     private final Duration acquireTimeout;
     private final Admission admission;
+    private final MetricsRecorder metrics;
 
     public StoreLeases(StorePool pool, Duration acquireTimeout) {
         this(pool, acquireTimeout, null);
@@ -34,6 +37,12 @@ public final class StoreLeases {
 
     /** {@code admission} may be null (no limiting, tests only); production wiring always passes one. */
     public StoreLeases(StorePool pool, Duration acquireTimeout, Admission admission) {
+        this(pool, acquireTimeout, admission, MetricsRecorder.NOOP);
+    }
+
+    /** {@code metrics} receives the wait of every successful lease (borrow incl. connect). */
+    public StoreLeases(StorePool pool, Duration acquireTimeout, Admission admission, MetricsRecorder metrics) {
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.pool = Objects.requireNonNull(pool, "pool");
         this.acquireTimeout = Objects.requireNonNull(acquireTimeout, "acquireTimeout");
         this.admission = admission;
@@ -49,7 +58,10 @@ public final class StoreLeases {
         // Fail fast before any I/O; the permit is handed to the lease, which releases it exactly once.
         Admission.Permit permit = admission == null ? null : admission.tryAcquire(key);
         try {
-            return borrow(key, ctx, permit);
+            Instant start = metrics.now();
+            ImapLease lease = borrow(key, ctx, permit);
+            metrics.leaseAcquired(key, Duration.between(start, metrics.now()));
+            return lease;
         } catch (Throwable t) {
             if (permit != null) {
                 permit.close();
