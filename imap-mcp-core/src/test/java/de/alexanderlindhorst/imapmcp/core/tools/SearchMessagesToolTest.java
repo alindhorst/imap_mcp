@@ -16,6 +16,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
 import jakarta.mail.internet.MimeMessage;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -224,12 +225,9 @@ class SearchMessagesToolTest {
         assertThat(name.codePointCount(0, name.length())).isEqualTo(UntrustedText.DISPLAY_NAME_MAX);
     }
 
-    // AC9
+    // AC9 (#27); since is implemented by #28
     @Test
-    void sinceAndGmailRawAreRejectedAsNotImplemented() {
-        ToolError since = env.error(SearchEnv.T1, args("since", "2026-03-01T00:00:00Z"));
-        assertThat(since.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
-        assertThat(since.details()).containsEntry("field", "since").containsEntry("reason", "not_implemented");
+    void gmailRawIsRejectedAsNotImplemented() {
         ToolError raw = env.error(SearchEnv.T1, args("gmail_raw", "has:attachment"));
         assertThat(raw.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
         assertThat(raw.details()).containsEntry("field", "gmail_raw").containsEntry("reason", "not_implemented");
@@ -342,4 +340,180 @@ class SearchMessagesToolTest {
                 .isEqualTo(de.alexanderlindhorst.imapmcp.core.search.SearchSchema.inputSchema());
         assertThat(SearchMessagesTool.SINCE_OVERLAP).isEqualTo(java.time.Duration.ofSeconds(300));
     }
+
+    // ---- #28 since ----
+
+    private static final Instant D = Instant.parse("2026-03-05T00:00:00Z");
+
+    private List<String> subjects(Map<String, Object> out) {
+        return messages(out).stream().map(m -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> u = (Map<String, Object>) m.get("untrusted");
+            return (String) u.get("subject");
+        }).toList();
+    }
+
+    // #28 AC1
+    @Test
+    void sinceIsExactToTheSecondAndOffsetIndependent() throws Exception {
+        env.deliverAt(D.plusSeconds(10 * 3600), "a-10:00:00");
+        env.deliverAt(D.plusSeconds(10 * 3600 + 1), "b-10:00:01");
+        env.deliverAt(D.plusSeconds(11 * 3600), "c-11:00:00");
+        Map<String, Object> utc = env.ok(SearchEnv.T1, args("since", "2026-03-05T10:00:01Z"));
+        assertThat(subjects(utc)).containsExactly("c-11:00:00", "b-10:00:01");
+        assertThat(utc).containsEntry("total", 2);
+        assertThat(messages(utc).get(1)).containsEntry("received_at", "2026-03-05T10:00:01Z");
+        Map<String, Object> plus2 = env.ok(SearchEnv.T1, args("since", "2026-03-05T12:00:01+02:00"));
+        assertThat(subjects(plus2)).containsExactly("c-11:00:00", "b-10:00:01");
+        assertThat(plus2).containsEntry("total", 2);
+    }
+
+    // #28 AC2
+    @Test
+    void sinceDayBoundaryInPlus14StillFindsMessagesOfThePreviousUtcDay() throws Exception {
+        env.deliverAt(Instant.parse("2026-03-03T23:59:59Z"), "too-old");
+        env.deliverAt(Instant.parse("2026-03-04T10:29:59Z"), "just-before");
+        env.deliverAt(Instant.parse("2026-03-04T10:30:00Z"), "at-since");
+        env.deliverAt(Instant.parse("2026-03-04T23:30:00Z"), "later-same-utc-day");
+        // 2026-03-05T00:30+14:00 is 2026-03-04T10:30:00Z
+        Map<String, Object> out = env.ok(SearchEnv.T1, args("since", "2026-03-05T00:30:00+14:00"));
+        assertThat(subjects(out)).containsExactly("later-same-utc-day", "at-since");
+        assertThat(out).containsEntry("total", 2);
+    }
+
+    // #28 AC3: the candidates' FETCH carries INTERNALDATE together with UID, so since adds no command at all
+    // compared with #27 (EXAMINE, SEARCH, FETCH, FETCH, CLOSE); a search that is only a since is not special.
+    @Test
+    void sinceAddsNoCommandBecauseInternaldateRidesOnTheUidFetch() throws Exception {
+        for (int i = 0; i < 6; i++) {
+            env.deliverAt(D.plusSeconds(10 * 3600 + i), "m" + i);
+        }
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        List<String> without = commands(() -> env.ok(SearchEnv.T1, args("subject", "m")));
+        List<String> with = commands(() -> env.ok(SearchEnv.T1,
+                args("subject", "m", "since", "2026-03-05T10:00:02Z", "page_size", 1)));
+        assertThat(with).hasSameSizeAs(without).hasSize(5);
+        List<String> fetches = with.stream().filter(c -> c.contains("FETCH")).toList();
+        assertThat(fetches).hasSize(2);
+        assertThat(fetches.get(0)).contains("(UID INTERNALDATE)").doesNotContain("ENVELOPE");
+        assertThat(with).noneMatch(c -> c.contains("SELECT")).noneMatch(c -> c.contains("STORE"));
+        assertThat(with.stream().filter(c -> c.contains("SEARCH")).toList()).hasSize(1)
+                .allMatch(c -> c.contains("SINCE"));
+    }
+
+    // #28 AC4
+    @Test
+    void moreCandidatesThanTheCapIsInvalidArgumentTooManyCandidates() throws Exception {
+        env.close();
+        env = new SearchEnv(5);
+        for (int i = 0; i < 5; i++) {
+            env.deliverAt(D.plusSeconds(10 * 3600 + i), "m" + i);
+        }
+        assertThat(env.ok(SearchEnv.T1, args("since", "2026-03-05T10:00:00Z"))).containsEntry("total", 5);
+        env.deliverAt(D.plusSeconds(10 * 3600 + 5), "m5");
+        ToolError e = env.error(SearchEnv.T1, args("since", "2026-03-05T10:00:00Z"));
+        assertThat(e.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
+        assertThat(e.details()).containsEntry("field", "since").containsEntry("reason", "too_many_candidates");
+        assertThat(e.hint()).isEqualTo("Narrow `since` or add criteria.");
+        // adding a criterion brings the candidates under the cap again
+        assertThat(env.ok(SearchEnv.T1, args("since", "2026-03-05T10:00:00Z", "subject", "m5")))
+                .containsEntry("total", 1);
+    }
+
+    // #28 AC5 + AC7
+    @Test
+    void whatsNewFlowReturnsExactlyTheMessageAppendedAfterTheFirstSearch() throws Exception {
+        env.deliverAt(Instant.parse("2026-03-05T07:00:00Z"), "old1");
+        env.deliverAt(Instant.parse("2026-03-05T08:00:00Z"), "old2");
+        Map<String, Object> first = env.ok(SearchEnv.T1, args());
+        String asOf = (String) first.get("as_of");
+        assertThat(asOf).isEqualTo("2026-03-05T09:55:07Z");
+        env.deliverAt(env.clock.now, "M");
+        Map<String, Object> next = env.ok(SearchEnv.T1, args("since", asOf));
+        assertThat(subjects(next)).containsExactly("M");
+        assertThat(next).containsEntry("total", 1);
+    }
+
+    // #28 AC8
+    @Test
+    void windowsOverlap_aMessageReceivedASecondBeforeTheSearchIsStillFound() throws Exception {
+        env.deliverAt(Instant.parse("2026-03-05T07:00:00Z"), "old");
+        String asOf = (String) env.ok(SearchEnv.T1, args()).get("as_of");
+        env.deliverAt(env.clock.now.minusSeconds(60), "late-arrival");
+        assertThat(subjects(env.ok(SearchEnv.T1, args("since", asOf)))).containsExactly("late-arrival");
+    }
+
+    // #28 AC9
+    @Test
+    void messageArrivingBetweenPagesIsMissedByPageTwoButFoundBySinceAsOfOfPageOne() throws Exception {
+        for (int i = 0; i < 30; i++) {
+            env.deliverAt(Instant.parse("2026-03-05T08:00:00Z").plusSeconds(i), "old" + i);
+        }
+        Map<String, Object> p1 = env.ok(SearchEnv.T1, args("page_size", 10));
+        env.deliverAt(env.clock.now, "N");
+        Map<String, Object> p2 = env.ok(SearchEnv.T1, args("page_size", 10, "cursor", p1.get("next_cursor")));
+        assertThat(subjects(p2)).doesNotContain("N");
+        assertThat(subjects(env.ok(SearchEnv.T1, args("since", p1.get("as_of"))))).containsExactly("N");
+    }
+
+    @Test
+    void sinceCursorPagesKeepTheExactTotalAndAChangedSinceIsACriteriaMismatch() throws Exception {
+        for (int i = 0; i < 4; i++) {
+            env.deliverAt(Instant.parse("2026-03-05T05:00:00Z").plusSeconds(i), "before" + i);
+        }
+        for (int i = 0; i < 12; i++) {
+            env.deliverAt(Instant.parse("2026-03-05T10:00:00Z").plusSeconds(i), "after" + i);
+        }
+        Map<String, Object> p1 = env.ok(SearchEnv.T1, args("since", "2026-03-05T09:00:00Z", "page_size", 5));
+        Map<String, Object> p2 = env.ok(SearchEnv.T1,
+                args("since", "2026-03-05T09:00:00Z", "page_size", 5, "cursor", p1.get("next_cursor")));
+        Map<String, Object> p3 = env.ok(SearchEnv.T1,
+                args("since", "2026-03-05T09:00:00Z", "page_size", 5, "cursor", p2.get("next_cursor")));
+        assertThat(List.of(p1, p2, p3)).allSatisfy(p -> assertThat(p).containsEntry("total", 12));
+        assertThat(messages(p1)).hasSize(5);
+        assertThat(messages(p2)).hasSize(5);
+        assertThat(messages(p3)).hasSize(2);
+        assertThat(p3).containsEntry("has_more", false);
+        ToolError e = env.error(SearchEnv.T1,
+                args("since", "2026-03-05T09:00:01Z", "page_size", 5, "cursor", p1.get("next_cursor")));
+        assertThat(e.code()).isEqualTo(ErrorCode.INVALID_CURSOR);
+        assertThat(e.details()).containsEntry("reason", "criteria_mismatch");
+    }
+
+    // #28 AC6
+    @Test
+    void sinceSearchLeavesMessagesUnseen() throws Exception {
+        env.deliver(3);
+        long before = env.unseenCount();
+        assertThat(env.ok(SearchEnv.T1, args("since", "2000-01-01T00:00:00Z"))).containsEntry("returned", 3);
+        assertThat(env.unseenCount()).isEqualTo(before).isEqualTo(3);
+    }
+
+    // #28 AC10
+    @Test
+    @SuppressWarnings("unchecked")
+    void asOfGuidanceIsSplitAcrossDescriptionAndSchemaProperties() {
+        String d = SearchMessagesTool.DEFINITION.description();
+        assertThat(d).contains("For new mail, pass the first page's as_of as since in a later search with the same "
+                + "criteria (see as_of).").hasSizeLessThanOrEqualTo(600);
+        Map<String, Object> inProps = (Map<String, Object>) SearchMessagesTool.DEFINITION.inputSchema()
+                .get("properties");
+        assertThat(((Map<String, Object>) inProps.get("since")).get("description")).isEqualTo(SINCE_TEXT);
+        Map<String, Object> outProps = (Map<String, Object>) SearchMessagesTool.DEFINITION.outputSchema()
+                .get("properties");
+        assertThat(((Map<String, Object>) outProps.get("as_of")).get("description")).isEqualTo(AS_OF_TEXT);
+        assertThat(SINCE_TEXT.length()).isLessThanOrEqualTo(400);
+        assertThat(AS_OF_TEXT.length()).isLessThanOrEqualTo(400);
+        assertThat(DescriptionRules.violations(SearchMessagesTool.DEFINITION)).isEmpty();
+    }
+
+    static final String SINCE_TEXT = "Only messages received (received_at, mail server time) at or after this "
+            + "instant. For new mail, pass the first-page as_of of an earlier search with the same criteria. "
+            + "Windows overlap by about 5 minutes, so already-seen messages may reappear; deduplicate by handle. "
+            + "Messages moved or copied into the folder keep their original received time and are not reported "
+            + "as new.";
+
+    static final String AS_OF_TEXT = "Set only on the first page (no cursor), otherwise null. Pass it as since in "
+            + "your next search with the same criteria to get messages received since this search; results may "
+            + "repeat messages already seen, so deduplicate by handle.";
 }

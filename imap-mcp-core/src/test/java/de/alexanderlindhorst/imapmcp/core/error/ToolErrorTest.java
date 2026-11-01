@@ -105,6 +105,16 @@ class ToolErrorTest {
     }
 
     @Test
+    void goldenInvalidArgumentWithOwnHint() {
+        assertThat(json(ToolError.invalidArgumentHint("since", "too_many_candidates", "Narrow `since`.", RID)))
+                .isEqualTo("{\"error\":{\"code\":\"INVALID_ARGUMENT\","
+                        + "\"message\":\"Invalid argument. Narrow `since`.\","
+                        + "\"retryable\":false,\"hint\":\"Narrow `since`.\","
+                        + "\"details\":{\"field\":\"since\",\"reason\":\"too_many_candidates\"},"
+                        + "\"request_id\":\"req-1\"}}");
+    }
+
+    @Test
     void goldenUnsupported() {
         assertThat(json(ToolError.unsupported("SORT", RID))).isEqualTo(
                 "{\"error\":{\"code\":\"UNSUPPORTED\","
