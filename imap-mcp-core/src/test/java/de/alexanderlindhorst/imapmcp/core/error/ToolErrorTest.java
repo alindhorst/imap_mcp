@@ -129,7 +129,7 @@ class ToolErrorTest {
         Map<?, ?> err = (Map<?, ?>) ToolError.upstreamError(text, RID).toMap().get("error");
         String msg = (String) ((Map<?, ?>) err.get("details")).get("server_text");
         assertThat(msg).hasSizeLessThanOrEqualTo(200).doesNotContain("\n", "\r", "\t", "\u0000");
-        assertThat(msg).startsWith("NO [AUTHORIZATIONFAILED] bad thing");
+        assertThat(msg).startsWith("NO [AUTHORIZATIONFAILED]").contains("bad thing");
         assertThat(json(ToolError.upstreamError("NO nope", RID))).isEqualTo(
                 "{\"error\":{\"code\":\"UPSTREAM_ERROR\","
                         + "\"message\":\"The IMAP server rejected the request. Adjust the request or try later.\","

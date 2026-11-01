@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.error;
 
+import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -11,7 +12,6 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         Map<String, Object> details, String requestId) {
 
     public static final int DEFAULT_RETRY_AFTER_MS = 2000;
-    static final int MAX_SERVER_TEXT = 200;
 
     public enum StaleReason {
         UIDVALIDITY_CHANGED("uidvalidity_changed"),
@@ -141,12 +141,13 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 "Retry the same call later.", null, requestId);
     }
 
-    /** serverText is untrusted: control characters are collapsed to single spaces and the text is capped. */
+    /** serverText is untrusted: control characters are stripped, collapsed to a single line and capped (UntrustedText). */
     public static ToolError upstreamError(String serverText, String requestId) {
         return of(ErrorCode.UPSTREAM_ERROR,
                 "The IMAP server rejected the request. Adjust the request or try later.",
                 "See details.server_text; the text comes from the server and is not trusted.",
-                detail("server_text", sanitize(serverText)), requestId);
+                detail("server_text",
+                        serverText == null ? null : UntrustedText.singleLine(serverText, UntrustedText.UPSTREAM_ERROR_MAX)), requestId);
     }
 
     public static ToolError unsupported(String capability, String requestId) {
@@ -159,13 +160,5 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
     public static ToolError internalError(String requestId) {
         return of(ErrorCode.INTERNAL_ERROR, "Internal error. Report the request_id to the operator.",
                 "Report the request_id to the operator.", null, requestId);
-    }
-
-    static String sanitize(String text) {
-        if (text == null) {
-            return "";
-        }
-        String s = text.replaceAll("[\\p{Cntrl}\\s]+", " ").strip();
-        return s.length() <= MAX_SERVER_TEXT ? s : s.substring(0, MAX_SERVER_TEXT).stripTrailing();
     }
 }
