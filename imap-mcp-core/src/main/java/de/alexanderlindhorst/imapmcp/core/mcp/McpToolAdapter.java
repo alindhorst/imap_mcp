@@ -1,9 +1,12 @@
 package de.alexanderlindhorst.imapmcp.core.mcp;
 
+import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler;
@@ -14,6 +17,7 @@ import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.IOException;
+import java.security.SecureRandom;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -32,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * structured output still need the text. The SDK validates a success result's structuredContent against
  * the tool's outputSchema and turns a mismatch into an error result; error results are not validated.
  *
- * <p>Input validation is ours ({@link ValidatingToolHandler}, wrapped around every handler here) so that
+ * <p>Every handler is wrapped in the {@link ToolExecutor} and, inside it, the input validation ({@link ValidatingToolHandler}) so that
  * errors are INVALID_ARGUMENT tool results with exact field/reason. Servers built with these specs MUST call
  * {@code validateToolInputs(false)}: the SDK default validates first and answers with its own, differently
  * shaped error without structuredContent.
@@ -44,13 +48,21 @@ public final class McpToolAdapter {
     private final Function<McpTransportContext, AccountContext> accountResolver;
     private final McpJsonMapper mapper;
     private final Supplier<String> requestIds;
+    private final ToolExecutor executor;
 
     public McpToolAdapter(Function<McpTransportContext, AccountContext> accountResolver) {
         this(accountResolver, McpJsonDefaults.getMapper(), () -> UUID.randomUUID().toString());
     }
 
+    /** Default executor (90 s deadline) with a throwaway log-id key; production wiring passes its own. */
     public McpToolAdapter(Function<McpTransportContext, AccountContext> accountResolver, McpJsonMapper mapper,
             Supplier<String> requestIds) {
+        this(accountResolver, mapper, requestIds, new ToolExecutor(ToolExecutor.DEFAULT_DEADLINE, randomLogIds()));
+    }
+
+    public McpToolAdapter(Function<McpTransportContext, AccountContext> accountResolver, McpJsonMapper mapper,
+            Supplier<String> requestIds, ToolExecutor executor) {
+        this.executor = Objects.requireNonNull(executor, "executor");
         this.accountResolver = Objects.requireNonNull(accountResolver, "accountResolver");
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.requestIds = Objects.requireNonNull(requestIds, "requestIds");
@@ -75,9 +87,18 @@ public final class McpToolAdapter {
                 .callHandler((transportContext, request) -> call(validating(def, handler), transportContext, request)).build();
     }
 
-    /** Validation is applied here so no registered tool can run on unvalidated input (outermost wrapper). */
-    private static ToolHandler validating(ToolDefinition def, ToolHandler handler) {
-        return new ValidatingToolHandler(def, handler);
+    private static LogIds randomLogIds() {
+        byte[] key = new byte[32];
+        new SecureRandom().nextBytes(key);
+        return new LogIds(new KeyRing(1, Map.of(1, key)));
+    }
+
+    /**
+     * Executor (virtual thread, deadline, MDC) outermost, validation inside it, so no registered tool can run
+     * on unvalidated input or outside the deadline.
+     */
+    private ToolHandler validating(ToolDefinition def, ToolHandler handler) {
+        return executor.wrap(def.name(), new ValidatingToolHandler(def, handler));
     }
 
     private McpSchema.CallToolResult call(ToolHandler handler, McpTransportContext transportContext,
