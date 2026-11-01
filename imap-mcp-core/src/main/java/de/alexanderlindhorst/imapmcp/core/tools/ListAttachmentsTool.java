@@ -14,7 +14,6 @@ import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import jakarta.mail.MessagingException;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,21 +36,11 @@ public final class ListAttachmentsTool implements ToolHandler {
                             "description", "Message handle from search_messages or get_message.")),
             "required", List.of("account", "message"), "additionalProperties", false);
 
-    private static final Map<String, Object> ENTRY_SCHEMA = schema("type", "object",
-            "properties", schema("part", schema("type", "string"),
-                    "size", schema("type", "integer"),
-                    "inline", schema("type", "boolean"),
-                    "untrusted", schema("type", "object",
-                            "properties", schema("filename", schema("type", List.of("string", "null")),
-                                    "content_type", schema("type", "string")),
-                            "required", List.of("filename", "content_type"))),
-            "required", List.of("part", "size", "inline", "untrusted"));
-
     static final Map<String, Object> OUTPUT_SCHEMA = schema("type", "object",
             "properties", schema("account", schema("type", "string"),
                     "handle", schema("type", "string"),
                     "content_notice", schema("type", "string"),
-                    "attachments", schema("type", "array", "items", ENTRY_SCHEMA),
+                    "attachments", AttachmentEntries.ARRAY_SCHEMA,
                     "total", schema("type", "integer"),
                     "truncated", schema("type", "boolean")),
             "required", List.of("account", "handle", "content_notice", "attachments", "total", "truncated"));
@@ -108,33 +97,17 @@ public final class ListAttachmentsTool implements ToolHandler {
     }
 
     private static Map<String, Object> output(String account, String handle, AttachmentList list) {
-        List<Map<String, Object>> entries = new ArrayList<>();
-        for (AttachmentList.Entry e : list.entries()) {
-            Map<String, Object> untrusted = new LinkedHashMap<>();
-            untrusted.put("filename", e.untrusted().filename());
-            untrusted.put("content_type", e.untrusted().contentType());
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("part", e.part());
-            m.put("size", e.size());
-            m.put("inline", e.inline());
-            m.put("untrusted", untrusted);
-            entries.add(m);
-        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("account", account);
         out.put("handle", handle);
         out.put("content_notice", UntrustedText.CONTENT_NOTICE);
-        out.put("attachments", entries);
+        out.put("attachments", AttachmentEntries.toJson(list));
         out.put("total", list.total());
         out.put("truncated", list.truncated());
         return out;
     }
 
     private static Map<String, Object> schema(Object... kv) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) {
-            m.put((String) kv[i], kv[i + 1]);
-        }
-        return m;
+        return Schemas.of(kv);
     }
 }
