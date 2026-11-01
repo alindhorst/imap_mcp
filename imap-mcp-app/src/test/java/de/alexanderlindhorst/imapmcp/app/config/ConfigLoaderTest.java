@@ -191,8 +191,9 @@ class ConfigLoaderTest {
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_HTTP_PORT", "abc")))
                 .hasMessageContaining("IMAP_MCP_HTTP_PORT");
         for (String bad : List.of("grpc", "http", "http-public")) {
+            String echoed = "was " + bad;
             assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_MODE", bad)))
-                    .hasMessageContaining("IMAP_MCP_MODE").message().doesNotContain(bad);
+                    .hasMessageContaining("IMAP_MCP_MODE").message().doesNotContain(echoed).doesNotContain(bad + ",");
         }
         assertThat(load(ACCOUNT, Map.of("IMAP_MCP_MODE", "stdio")).mode()).isEqualTo("stdio");
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_LOG_LEVEL", "loud")))
