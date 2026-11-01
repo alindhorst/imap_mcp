@@ -29,9 +29,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Embedded Jetty 12 (ee10) serving the SDK's stateless Streamable HTTP servlet at {@code /mcp} (SPEC 2, 5.1,
- * 5.3). Requests run on virtual threads. Filter chain order on /mcp: Host -> Origin -> bearer -> POST-only
- * guard -> MCP servlet; Host and Origin filters cover every path, the bearer filter only /mcp. The optional
- * health servlet is mounted at /health. Everything else is 404.
+ * 5.3). Requests run on virtual threads. Filter chain order on /mcp: Host -> Origin -> POST-only guard ->
+ * bearer -> MCP servlet (the method check precedes authentication; a 405 leaks nothing). The filters cover
+ * /mcp only, not /health. The optional health servlet is mounted at /health. Everything else is 404.
  */
 public final class HttpLocalServer {
 
@@ -166,10 +166,10 @@ public final class HttpLocalServer {
 
         ServletContextHandler ctx = new ServletContextHandler();
         ctx.setContextPath("/");
-        addFilter(ctx, hostFilter, "/*");
-        addFilter(ctx, originFilter, "/*");
-        addFilter(ctx, bearerFilter, MCP_PATH);
+        addFilter(ctx, hostFilter, MCP_PATH);
+        addFilter(ctx, originFilter, MCP_PATH);
         addFilter(ctx, new PostOnlyFilter(), MCP_PATH);
+        addFilter(ctx, bearerFilter, MCP_PATH);
         ctx.addServlet(new ServletHolder(transport), MCP_PATH);
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
