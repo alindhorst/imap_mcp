@@ -55,7 +55,8 @@ public final class ToxiproxyFixture {
     private int nextPort = FIRST_PROXY_PORT;
 
     public ToxiproxyFixture(Network network) {
-        container = new ToxiproxyContainer(DockerImageName.parse(ItImages.TOXIPROXY)).withNetwork(network)
+        container = new ToxiproxyContainer(
+                DockerImageName.parse(ItImages.TOXIPROXY).asCompatibleSubstituteFor("shopify/toxiproxy")).withNetwork(network)
                 .withNetworkAliases("toxiproxy");
         for (int i = 0; i < PROXY_PORTS; i++) {
             container.addExposedPort(FIRST_PROXY_PORT + i);

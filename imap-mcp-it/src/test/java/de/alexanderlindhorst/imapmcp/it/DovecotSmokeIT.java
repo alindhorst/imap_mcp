@@ -29,9 +29,9 @@ class DovecotSmokeIT {
     }
 
     @Test
-    void preLoginGreetingOnTheStarttlsPortHidesLoginUntilTls() throws Exception {
+    void preLoginGreetingOnTheStarttlsPortOffersStarttlsButNotTheMailboxCapabilities() throws Exception {
         String greeting = ImapProbe.greeting(DOVECOT.getHost(), DOVECOT.startTlsPort());
-        assertThat(greeting).contains("STARTTLS").contains("LOGINDISABLED").doesNotContain("MOVE");
+        assertThat(greeting).contains("STARTTLS").doesNotContain("MOVE").doesNotContain("SPECIAL-USE");
     }
 
     @Test
