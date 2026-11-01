@@ -384,13 +384,18 @@ public final class ConfigLoader {
                 throw new ConfigException(path(key) + ": must be a positive size like 512B, 64KiB, 1MiB or 1GiB");
             }
             long v = Long.parseLong(m.group(1));
-            long bytes = switch (m.group(2)) {
-                case "B" -> v;
-                case "KiB" -> v * 1024;
-                case "MiB" -> v * 1024 * 1024;
-                default -> v * 1024 * 1024 * 1024;
-            };
-            if (bytes > max || bytes < 0) {
+            long bytes;
+            try {
+                bytes = Math.multiplyExact(v, switch (m.group(2)) {
+                    case "B" -> 1L;
+                    case "KiB" -> 1024L;
+                    case "MiB" -> 1024L * 1024;
+                    default -> 1024L * 1024 * 1024;
+                });
+            } catch (ArithmeticException e) {
+                throw new ConfigException(path(key) + ": size is too large");
+            }
+            if (bytes > max) {
                 throw new ConfigException(path(key) + ": must not exceed " + (max / (1024 * 1024)) + "MiB");
             }
             return bytes;
