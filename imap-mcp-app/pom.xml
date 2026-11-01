@@ -10,7 +10,7 @@
   </parent>
   <artifactId>imap-mcp-app</artifactId>
   <name>IMAP MCP :: App</name>
-  <!-- Wiring, config loading, entry points; produces the shaded jar. Shade plugin config added with first code. -->
+  <!-- Wiring, config loading, entry points; produces the shaded jar (classifier all). -->
   <dependencies>
     <dependency>
       <groupId>${project.groupId}</groupId>
@@ -54,4 +54,27 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+  <build>
+    <plugins>
+      <!-- Packaging check of the shaded jar (ShadedJarIT) runs after package; see SPEC 5.1 / #49. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <systemPropertyVariables>
+            <shaded.jar>${project.build.directory}/${project.build.finalName}-all.jar</shaded.jar>
+            <project.version>${project.version}</project.version>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>
