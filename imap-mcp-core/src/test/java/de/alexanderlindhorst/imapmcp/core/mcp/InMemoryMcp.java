@@ -27,7 +27,7 @@ import reactor.core.publisher.Mono;
  * messages straight into it. Everything behind the transport (tools/call routing, structured-output
  * validation, result wrapping) is the unmodified SDK code.
  */
-final class InMemoryMcp {
+public final class InMemoryMcp {
 
     private static final McpJsonMapper MAPPER = McpJsonDefaults.getMapper();
 
@@ -39,11 +39,11 @@ final class InMemoryMcp {
                 : MAPPER.convertValue(jsonRpcResult, McpSchema.CallToolResult.class);
     }
 
-    static final class Stateless implements McpStatelessServerTransport {
+    public static final class Stateless implements McpStatelessServerTransport {
         private McpStatelessServerHandler handler;
         final McpStatelessSyncServer server;
 
-        Stateless(McpStatelessServerFeatures.SyncToolSpecification... tools) {
+        public Stateless(McpStatelessServerFeatures.SyncToolSpecification... tools) {
             this.server = McpServer.sync(this).serverInfo("test", "0").validateToolInputs(false).tools(tools).build();
         }
 
@@ -57,11 +57,11 @@ final class InMemoryMcp {
             return Mono.empty();
         }
 
-        McpSchema.JSONRPCResponse request(String method, Object params, McpTransportContext ctx) {
+        public McpSchema.JSONRPCResponse request(String method, Object params, McpTransportContext ctx) {
             return handler.handleRequest(ctx, new McpSchema.JSONRPCRequest(McpSchema.JSONRPC_VERSION, method, "1", params)).block();
         }
 
-        McpSchema.CallToolResult call(String tool, Map<String, Object> args, McpTransportContext ctx) {
+        public McpSchema.CallToolResult call(String tool, Map<String, Object> args, McpTransportContext ctx) {
             McpSchema.JSONRPCResponse r = request(McpSchema.METHOD_TOOLS_CALL, new McpSchema.CallToolRequest(tool, args), ctx);
             if (r.error() != null) {
                 throw new IllegalStateException("JSON-RPC error: " + r.error().message());
