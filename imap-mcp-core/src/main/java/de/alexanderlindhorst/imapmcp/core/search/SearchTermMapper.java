@@ -13,14 +13,15 @@ import jakarta.mail.search.SearchTerm;
 import jakarta.mail.search.SubjectTerm;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
 /**
  * Maps {@link SearchCriteria} to a Jakarta Mail {@link SearchTerm}, all criteria ANDed. Returns {@code null}
- * when no criterion maps to a term: the caller then searches ALL. {@code since} and {@code gmail_raw} are not
- * handled here (separate tickets). Terms are client data and never logged.
+ * when no criterion maps to a term: the caller then searches ALL. {@code since} yields only the coarse
+ * day bound; {@code gmail_raw} is not handled here (separate ticket). Terms are client data and never logged.
  *
  * <p>text maps to BODY (not TEXT) so header matches do not leak into body search. Date bounds are INTERNALDATE
  * based: date_from is SINCE (inclusive), date_to is BEFORE date_to+1. Angus formats the date in the JVM
@@ -69,6 +70,13 @@ public final class SearchTermMapper {
         }
         if (c.dateTo() != null) {
             terms.add(new ReceivedDateTerm(ComparisonTerm.LT, noon(c.dateTo().plusDays(1))));
+        }
+        if (c.since() != null) {
+            // IMAP SINCE compares the stored calendar date (any zone offset of the INTERNALDATE), so the UTC date
+            // minus one day is a superset of every message at or after the instant; PageFetcher then filters
+            // exactly on INTERNALDATE.
+            LocalDate utcDay = c.since().atZone(ZoneOffset.UTC).toLocalDate();
+            terms.add(new ReceivedDateTerm(ComparisonTerm.GE, noon(utcDay.minusDays(1))));
         }
         return switch (terms.size()) {
             case 0 -> null;
