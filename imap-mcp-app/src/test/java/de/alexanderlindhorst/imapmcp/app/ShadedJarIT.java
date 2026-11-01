@@ -66,8 +66,12 @@ class ShadedJarIT {
 
     @Test
     void javamailProvidersAreMergedFromAngusAndGimap() throws IOException {
-        String providers = text("META-INF/javamail.providers");
-        assertThat(providers).contains("protocol=imaps").contains("protocol=gimaps");
+        // angus-mail 2.x keeps imap/imaps in javamail.default.providers and puts only pop3 into javamail.providers;
+        // gimap adds gimap/gimaps to the same file name. Both contributions must survive the merge.
+        for (String name : List.of("META-INF/javamail.providers", "META-INF/jakarta.providers")) {
+            assertThat(text(name)).as(name).contains("protocol=pop3;").contains("protocol=gimaps;");
+        }
+        assertThat(text("META-INF/javamail.default.providers")).contains("protocol=imaps;");
     }
 
     @Test
