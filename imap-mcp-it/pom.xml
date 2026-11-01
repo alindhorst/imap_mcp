@@ -52,6 +52,34 @@
   </dependencies>
   <build>
     <plugins>
+      <!-- Hands the shaded jar of imap-mcp-app to the ITs. Resolved from the reactor (attached artifact, classifier "all")
+           under a plain "mvn verify"; no prior "install" needed (verified in #51). -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-shaded-jar</id>
+            <phase>pre-integration-test</phase>
+            <goals>
+              <goal>copy</goal>
+            </goals>
+            <configuration>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>${project.groupId}</groupId>
+                  <artifactId>imap-mcp-app</artifactId>
+                  <version>${project.version}</version>
+                  <classifier>all</classifier>
+                  <type>jar</type>
+                  <outputDirectory>${project.build.directory}/it-jar</outputDirectory>
+                  <destFileName>imap-mcp.jar</destFileName>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
@@ -65,6 +93,7 @@
         </executions>
         <configuration>
           <systemPropertyVariables>
+            <imapmcp.jar>${project.build.directory}/it-jar/imap-mcp.jar</imapmcp.jar>
             <imapmcp.requireDocker>true</imapmcp.requireDocker>
           </systemPropertyVariables>
         </configuration>
