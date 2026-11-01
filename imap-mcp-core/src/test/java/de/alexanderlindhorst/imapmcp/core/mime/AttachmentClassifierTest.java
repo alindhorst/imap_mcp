@@ -27,7 +27,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 class AttachmentClassifierTest {
 
     @RegisterExtension
-    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS);
+    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());
 
     private GreenMailUser user;
 
