@@ -76,9 +76,9 @@ class QueryHashTest {
 
     @Test
     void canonicalJsonIsStableAndSorted() {
-        SearchCriteria c = EMPTY.withSubject("a\"b\\c\n").withSeen(true).withKeywords(List.of("k"));
+        SearchCriteria c = EMPTY.withSubject("a\"b\\c\nd").withSeen(true).withKeywords(List.of("k"));
         assertThat(QueryHash.canonicalJson(c, "INBOX")).isEqualTo(
-                "{\"folder\":\"INBOX\",\"keywords\":[\"k\"],\"seen\":true,\"subject\":\"a\\\"b\\\\c\\n\"}");
+                "{\"folder\":\"INBOX\",\"keywords\":[\"k\"],\"seen\":true,\"subject\":\"a\\\"b\\\\c\\nd\"}");
         assertThat(QueryHash.canonicalJson(EMPTY.withSubject("\u0001\u00e9"), "F")).isEqualTo(
                 "{\"folder\":\"F\",\"subject\":\"\\u0001\u00e9\"}");
     }
