@@ -65,7 +65,38 @@ accounts:
     password: env:WORK_IMAP_PASSWORD
 ```
 
-Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`). Other top-level sections (`imap`, `pool`, `tools`, `secrets`, `http`, `security`) have defaults and are described in SPEC section 5.7.
+Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`). Every other option is optional; keys not listed below are rejected as unknown.
+
+Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`; sizes: a number plus `B`, `KiB`, `MiB` or `GiB`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `imap.connectTimeout` | `10s` | IMAP connect timeout |
+| `imap.readTimeout` | `60s` | IMAP read timeout |
+| `imap.writeTimeout` | `60s` | IMAP write timeout |
+| `imap.trace` | `false` | protocol trace, see "IMAP protocol trace" |
+| `pool.maxPerMailbox` | `3` | connections per account (1 to 1000) |
+| `pool.maxPerTenant` | `8` | connections per tenant (1 to 10000) |
+| `pool.maxTotal` | `64` | connections overall (1 to 100000) |
+| `pool.idleEviction` | `5m` | close connections idle longer than this |
+| `pool.validateAfterIdle` | `60s` | NOOP check before reuse when idle longer |
+| `pool.maxLifetime` | `30m` | maximum connection age |
+| `pool.acquireTimeout` | `10s` | wait for a free connection |
+| `pool.capabilityTtl` | `10m` | cache time for server capabilities |
+| `tools.deadline` | `90s` | time limit per tool call |
+| `tools.maxCharsCap` | `100000` | upper bound for `max_chars` (configurable down only) |
+| `tools.maxBodyPartBytes` | `4MiB` | per-part source limit when reading bodies |
+| `tools.maxFolders` | `100` | folders listed at most |
+| `tools.sinceMaxCandidates` | `10000` | search hits examined for a `since` filter |
+| `secrets.keyringTimeout` | `5s` | timeout of the keyring CLI call |
+| `http.bind` | `127.0.0.1` | `http-local` bind address |
+| `http.port` | `8080` | `http-local` port |
+| `http.allowNonLoopbackBind` | `false` | required `true` for a non-loopback bind |
+| `http.token` | none | bearer token as a secret reference; generated into the state directory if unset (at least 32 characters) |
+| `http.allowedHosts` | `["localhost:*", "127.0.0.1:*", "[::1]:*"]` | accepted `Host` header values |
+| `http.allowedOrigins` | `[]` | accepted `Origin` header values |
+| `http.maxRequestBytes` | `1MiB` | request body limit |
+| `security.handleKey` | none | handle signing key as a secret reference (base64url, 32 bytes); generated into the state directory if unset |
 
 Locations (SPEC 5.7):
 
@@ -90,7 +121,7 @@ Environment variables (the only ones read; they override file values where appli
 
 Secrets referenced as `env:NAME` use whatever variable names you choose.
 
-Logs go to a rotating file only, never to the console. Message bodies, subjects, addresses and credentials are not logged.
+Logs go to a rotating file only, never to the console. Message bodies, subjects, addresses and credentials are not logged (except in the opt-in IMAP protocol trace below; credentials stay redacted there too).
 
 ### stdio
 
