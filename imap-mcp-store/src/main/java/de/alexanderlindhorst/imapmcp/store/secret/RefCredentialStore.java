@@ -6,7 +6,8 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
-import java.util.HashMap;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,7 +22,7 @@ public final class RefCredentialStore implements CredentialStore {
     private static final String KEYRING = "keyring";
 
     private final TenantId owner;
-    private final Map<AccountId, SecretRef> refs = new HashMap<>();
+    private final Map<AccountId, SecretRef> refs = new LinkedHashMap<>();
     private final Map<String, SecretResolver> resolvers;
 
     public RefCredentialStore(TenantId owner, List<MailAccount> accounts, Map<String, SecretResolver> resolvers) {
@@ -34,6 +35,24 @@ public final class RefCredentialStore implements CredentialStore {
     public static RefCredentialStore withEnv(TenantId owner, List<MailAccount> accounts, Map<String, String> env) {
         return new RefCredentialStore(owner, accounts,
                 Map.of("env", new EnvSecretResolver(env), "file", new FileSecretResolver()));
+    }
+
+    /** As {@link #withEnv}, plus {@code keyring:} refs, resolved eagerly once during validation. */
+    public static RefCredentialStore withEnvAndKeyring(TenantId owner, List<MailAccount> accounts,
+            Map<String, String> env, Platform platform, CommandRunner runner, BinaryProbe probe, Duration timeout) {
+        return new RefCredentialStore(owner, accounts, Map.of("env", new EnvSecretResolver(env),
+                "file", new FileSecretResolver(), KEYRING, new KeyringRefResolver(platform, runner, probe, timeout)));
+    }
+
+    /** Validates every account's reference; failures are reported as {@code account '<id>': <message>}. */
+    public void validateAll() {
+        refs.forEach((id, ref) -> {
+            try {
+                validate(ref);
+            } catch (SecretResolutionException e) {
+                throw new SecretResolutionException("account '" + id.value() + "': " + e.getMessage());
+            }
+        });
     }
 
     /** Startup validation; throws {@link SecretResolutionException} without revealing any value. */
