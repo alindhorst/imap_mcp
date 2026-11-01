@@ -1,6 +1,6 @@
 # IMAP MCP Server: Specification
 
-Status: draft v0.3. Audience: implementation lead and team, who break this down into work items.
+Status: draft v0.4 (v1 implemented; this version records the v1 contract as built). Audience: implementation lead and team, who break this down into work items.
 
 ## 1. Purpose and scope
 
@@ -21,6 +21,8 @@ One codebase and one shaded jar, with the same tool code in every mode. Tools ne
 
 `http-public` is what a Claude connector needs. It is not part of v1 (see section 3).
 
+The mode is selected with `--mode stdio|http-local` (fallback `IMAP_MCP_MODE`); `http-public` is refused in v1. The single-tenant modes use the fixed tenant id `local`.
+
 ## 3. Phasing
 
 | Phase | Content |
@@ -34,17 +36,19 @@ The multi-tenant design (section 5.2) is applied from v1; only its implementatio
 
 ## 4. Tools
 
-All tools require an account handle (from `list_accounts`) except `list_accounts` itself. All message references are signed handles (section 5.4). Every tool sets MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) and returns structured output.
+All tools require an account handle (from `list_accounts`) except `list_accounts` itself. All message references are signed handles (section 5.4). Every tool sets MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) and returns structured output (`structuredContent` plus one text block carrying the same JSON).
 
 ### v1: read-only
 
 | Tool | Notes |
 |---|---|
-| `list_accounts` | Linked mailboxes and capability summary. |
-| `list_folders` | Includes special-use role (`\Trash`, `\Sent`, ...), unread and total counts. Capped at 100 folders by default (configurable) with a truncation flag; folders beyond the cap stay addressable by full name. |
-| `search_messages` | Paged summaries (sender, subject, date, flags, size, has-attachment). Criteria: from, to, subject, text, date range, `since`, flags, folder. Gmail `X-GM-RAW` only for Gmail accounts (protocol `gimaps`) that advertise `X-GM-EXT-1`, otherwise `UNSUPPORTED`. Signed cursor. |
-| `get_message` | Text body by default (HTML converted to text), attachment list, optional headers. Character budget with `truncated` flag and continuation offset (limits in 5.4). |
-| `list_attachments` | Metadata only (name, type, size) in v1. |
+| `list_accounts` | Linked mailboxes with `status` (`ok`, `auth_failed`, `unreachable`, `unknown`) and capability summary with detection time. Missing or expired capabilities are refreshed by a probe connection; a failing account never fails the call. |
+| `list_folders` | Includes special-use role (`\Trash`, `\Sent`, ...), unread and total counts. Capped at 100 folders by default (configurable) with a truncation flag; folders beyond the cap stay addressable by full name. INBOX first, then code-point order of the full name. Counts: one `STATUS (MESSAGES UNSEEN)` per selectable listed folder, never SELECT/EXAMINE; a failed STATUS or counting stopped at 75 % of the remaining deadline leaves null counts and `counts_complete=false`. `folder` is the verbatim full name; `name` (last segment) is a sanitized display field. |
+| `search_messages` | Paged summaries (sender, subject, date, flags, size, has-attachment). Criteria: from, to, subject, text (IMAP BODY), `date_from`/`date_to` (INTERNALDATE, inclusive, interpreted in the server's timezone), `since`, `seen`/`flagged`/`answered`/`draft`, keywords, and `folder` or `folder_role` (mutually exclusive, default INBOX). `\Deleted` messages are not filtered out. Gmail `X-GM-RAW` (`gmail_raw`) only for Gmail accounts (protocol `gimaps`) that advertise `X-GM-EXT-1`, otherwise `UNSUPPORTED`, checked before any folder command. Signed cursor. |
+| `get_message` | Text body by default (HTML converted to text), attachment list, optional headers. Character budget with `truncated` flag and continuation offset (limits in 5.4). Caps: 100 addresses per recipient list; headers 100 fields, 2000 characters per value, 32 000 total (`headers_truncated`). |
+| `list_attachments` | Metadata only in v1: section `part`, name, type, size, `inline`; at most 100 entries with `truncated` and the true total. |
+
+`search_messages`, "what's new": `since` matches `received_at` (INTERNALDATE) `>= since`, exact to the second. The first page (call without `cursor`) returns `as_of` = MCP host time of the search, floored to the second, minus 300 s; cursor pages return `as_of: null`. Passing `as_of` as `since` with the same criteria yields mail received since that search; consecutive windows overlap on purpose, so clients deduplicate by handle. Messages moved or copied into the folder keep their received time and are not reported as new. A `since` search whose coarse day-bounded SEARCH exceeds `tools.sinceMaxCandidates` (default 10 000) hits is refused with `INVALID_ARGUMENT` (`too_many_candidates`). Operational assumption: host and IMAP server clocks agree within 5 minutes.
 
 ### v2: reversible changes
 
@@ -67,27 +71,29 @@ All tools require an account handle (from `list_accounts`) except `list_accounts
 
 - Mutating tools take explicit lists of handles, never "all matching".
 - Bulk size is capped.
+- Input validation is done by the server, not the SDK (SDK input validation is disabled because its error shape bypasses ours): JSON Schema with `additionalProperties: false`, snake_case fields, JSON `null` on an optional field treated as absent, values outside published bounds rejected (never clamped). Failures are tool errors `INVALID_ARGUMENT` with `details.field`, `details.reason` and, where applicable, `details.max`.
+- Folder full names are limited to 1000 UTF-8 bytes (the handle limit, 5.4): a longer `folder` argument is `INVALID_ARGUMENT` (`out_of_range`, max 1000) before any IMAP I/O; a role resolving to a longer name is `UNSUPPORTED` (`folder_name_length`); `list_folders` lists such folders with `selectable=false`.
 - Untrusted output: every email-derived string (subject, sender/recipient display names and addresses, envelope dates and IDs, header values, body text, attachment filenames and content types) is returned only inside `untrusted` objects, sanitized and length-capped (single-line except body text); every response that carries them includes a `content_notice`. Folder names from LIST are identifiers and stay outside `untrusted`. Upstream server NO/BAD text in errors is sanitized, single-line and capped at 200 characters.
-- Errors are actionable: stale reference ("re-run search"), account needs re-linking, server busy (retry).
-- No push or IDLE. "What's new" is a search with `since`.
+- Errors are actionable and structured: `{"error":{"code","message","retryable","hint","retry_after_ms"?,"details"?,"request_id"}}`. v1 codes: `INVALID_ARGUMENT`, `ACCOUNT_NOT_FOUND`, `INVALID_HANDLE`, `INVALID_CURSOR`, `STALE_REFERENCE` (`details.reason` `uidvalidity_changed` / `folder_missing`; "re-run search"), `MESSAGE_NOT_FOUND`, `FOLDER_NOT_FOUND`, `AUTH_FAILED`, `SERVER_BUSY`, `TIMEOUT`, `UPSTREAM_UNAVAILABLE`, `UPSTREAM_ERROR`, `UNSUPPORTED`, `INTERNAL_ERROR`. Only `SERVER_BUSY` (`retry_after_ms` 2000), `TIMEOUT` and `UPSTREAM_UNAVAILABLE` are retryable. Unknown, malformed, tampered and foreign-tenant account handles, message handles and cursors each yield one identical payload; `INVALID_CURSOR` with `criteria_mismatch` only after a valid MAC. A BADCHARSET answer is `UNSUPPORTED` (`utf8_search`). Payloads carry no stack traces, host names or exception text.
+- No push or IDLE. "What's new" is a search with `since` (see `search_messages` above).
 - Dropped from the original idea list: delete folder, quota, save draft.
 
 ## 5. Architecture
 
 ### 5.1 Stack
 
-- Java 25 (virtual threads without pinning on blocking I/O in `synchronized`).
-- Official MCP Java SDK, Jakarta Mail (Angus Mail, incl. `gimap` provider). Gmail accounts use protocol `gimaps` (required for `X-GM-RAW`).
+- Java 25 bytecode (virtual threads without pinning on blocking I/O in `synchronized`); builds on JDK 25 or newer.
+- Official MCP Java SDK, Jakarta Mail (Angus Mail, incl. `gimap` provider). Gmail accounts use protocol `gimaps` (required for `X-GM-RAW`) and implicit TLS.
 - No Jakarta EE app server. Embedded Jetty 12 (ee10 servlet) only in HTTP modes, using the SDK's servlet transport.
 - Manual wiring or a small DI library. No JPA.
-- Nimbus JOSE+JWT for token validation (`http-public`). Maven multi-module build, one shaded jar with two entry points.
+- Nimbus JOSE+JWT for token validation (`http-public`). Maven multi-module build, one shaded jar (classifier `all`) with two entry points, dispatched by `--mode`.
 
 ### 5.2 Modules
 
 | Module | Responsibility |
 |---|---|
-| `imap-mcp-core` | Tool definitions and logic, IMAP access, pooling, handles/cursors, `AccountContext`, `CredentialStore` and `AccountRepository` interfaces. No transport or Jetty dependency. |
-| `imap-mcp-store` | `CredentialStore` / `AccountRepository` implementations: file-based (v1), JDBC + Flyway (v3). |
+| `imap-mcp-core` | Tool definitions and logic, IMAP access, pooling, handles/cursors, `AccountContext`, `CredentialStore` and `AccountRepository` interfaces. No transport or Jetty dependency. MCP SDK types only in its `..core.mcp` adapter package. |
+| `imap-mcp-store` | `CredentialStore` / `AccountRepository` implementations: file-based (v1), JDBC + Flyway (v3). State directory (5.7) and keyring CLI resolver. |
 | `imap-mcp-transport-stdio` | stdio transport setup, stdout hygiene. |
 | `imap-mcp-transport-http` | Jetty, Streamable HTTP, bearer-token auth (local), Origin/Host validation; OAuth resource server (v3). |
 | `imap-mcp-app` | Entry points, config loading, wiring, shaded jar, Docker image. |
@@ -97,12 +103,16 @@ Jetty must stay off the classpath of the stdio entry point.
 
 ### 5.3 Tenancy and security
 
-- `AccountContext` is derived only from the validated principal (fixed in `stdio` / `http-local`). Tools receive opaque account handles resolved via a tenant-scoped repository (`findByTenantAndHandle`). Pool keys are internal `(tenantId, accountId)`, never client-supplied.
-- Prompt injection: email content is untrusted. Return it as structured, labeled data; destructive tools are off by default.
+- `AccountContext` is derived only from the validated principal (fixed in `stdio` / `http-local`). Tools receive opaque account handles resolved via a tenant-scoped repository (`findByTenantAndHandle`; `findByTenant` lists a tenant's accounts with their handles). The repository owns handles: v1 derives them (`acc_` + 26 base32 characters from SHA-256 over the installation salt, tenant and account id); v3 stores a random value of the same format. Pool keys are internal `(tenantId, accountId)`, never client-supplied.
+- Prompt injection: email content is untrusted. Return it as structured, labeled data; destructive tools are off by default. HTML-to-text conversion drops hidden content (`script`, `style`, `head`, `template`, `noscript`, `hidden` attribute, inline `display:none`, `visibility:hidden`, `font-size:0`) and shows only http, https and mailto link targets.
 - TLS always (v1): implicit TLS (`imaps` / `gimaps`) or STARTTLS on protocol `imap` with `mail.imap.starttls.required=true`. No plaintext option.
 - SSRF (v3, multi-tenant): resolve the IMAP host once, block loopback, link-local, RFC1918 and metadata addresses, pin the resolved IP, allow only ports 993 and 143 (with the TLS rule above). Provider allowlist for the public deployment.
 - `http-local`: bind to loopback by default, validate `Origin` and `Host`, constant-time bearer token comparison. Docker deviation: inside the container the server binds `0.0.0.0` only behind an explicit flag (`http.allowNonLoopbackBind` / `IMAP_MCP_HTTP_ALLOW_NON_LOOPBACK_BIND`); the port is published host-side as `-p 127.0.0.1:8080:8080`; Host/Origin checks and the bearer token still apply.
-- Credentials: never in the image. Env, Docker secret, mounted file, or OS keyring (v1: platform CLI, Linux/macOS only). Literal secrets in the config file are rejected.
+  - Filter order on `/mcp`: Host -> Origin -> POST only (`405`, `Allow: POST`, before authentication) -> bearer token -> MCP. Bad Host or Origin: `403`. Missing token: `401` with `WWW-Authenticate: Bearer realm="imap-mcp"`; wrong token or scheme: `401` with `error="invalid_token"`. Any other path: `404`.
+  - Defaults: `http.allowedHosts` `localhost:*`, `127.0.0.1:*`, `[::1]:*`; `http.allowedOrigins` empty (an absent Origin passes, any present one including `null` is rejected).
+  - The token is accepted only in the `Authorization` header; a configured `http.token` must have at least 32 characters. Request bodies are capped at 1 MiB (`http.maxRequestBytes`).
+  - `/health` is exempt from Host/Origin checks and the token (5.6).
+- Credentials: never in the image. Env, Docker secret, mounted file, or OS keyring (v1: platform CLI, Linux/macOS only). Literal secrets in the config file are rejected. `env:` and `file:` references are read at connect time (rotated secrets apply to new connections); `keyring:<service>/<account>` references are resolved once at startup and held in memory (timeout `secrets.keyringTimeout`, default 5 s); unsupported platform or missing CLI fails startup. macOS keyring: ASCII passwords only in v1.
 - `http-public` only (v3):
   - Account linking is a separate onboarding flow. Claude's token identifies the user, not the mailbox. No token passthrough.
   - Authorization server is delegated (Keycloak, Zitadel, Auth0 or Entra); this server is a resource server only (RFC 9728 metadata, `401` with `WWW-Authenticate`, JWT checks incl. `aud`, RFC 8707). Must verify the chosen IdP supports client registration for Claude and sets the audience.
@@ -111,20 +121,23 @@ Jetty must stay off the classpath of the stdio entry point.
 
 ### 5.4 IMAP semantics
 
-- Message handle = HMAC-signed `(account, folder full name, UIDVALIDITY, UID)`; the tenant is inside the signed data. Never use message sequence numbers. UIDVALIDITY mismatch is an error ("stale reference"). Do not keep `Message` objects between calls.
+- Message handle = HMAC-signed `(account, folder full name, UIDVALIDITY, UID)`; the tenant is inside the signed data. Do not keep `Message` objects between calls. UIDVALIDITY mismatch is an error ("stale reference").
+  - Wire format `m1.` + base64url: key id, UIDVALIDITY, UID, folder full name (max 1000 UTF-8 bytes) and a 16-byte HMAC-SHA256 tag. Tenant and account enter only the MAC, never the wire. Handles are deterministic and do not expire.
+  - Keys: a key ring with key ids (rotation = add a key id; all configured ids verify, one signs). HKDF-SHA256 purpose subkeys `msg-handle`, `cursor`, `log`.
+- Message sequence numbers never appear in output, handles, cursors or logs. Inside one call on one open folder they may be used on the wire where Angus offers no UID form (SEARCH, partial body and structure fetches); this relies on RFC 3501 7.4.1 (no EXPUNGE during FETCH, STORE or SEARCH), and every fetched row is re-identified by its UID.
 - Never issue a plain `EXPUNGE`. Use `UID EXPUNGE` for exact UIDs only.
 - Move: MOVE if available, else COPY + `\Deleted` + UID EXPUNGE of those UIDs. Return new UIDs (COPYUID/APPENDUID). A retried move that finds the source gone reports success with a note.
-- Paging: signed cursor (UIDVALIDITY, last UID, query hash), default page size 25, max 100. One `FetchProfile` round-trip per page. Report total count.
+- Paging: signed cursor `c1.` (UIDVALIDITY, last UID, query hash; tenant, account and resolved folder bound by the MAC), default page size 25, max 100, keyset by UID descending. Changing only `page_size` keeps a cursor valid; changed criteria give `INVALID_CURSOR` (`criteria_mismatch`). Constant number of IMAP commands per page; the UID data transferred per page is bounded by the page size, not the folder size (except `since`, bounded by `tools.sinceMaxCandidates`); one extra FETCH only after a concurrent expunge. Report total count (all matches at search time).
 - Fetch with PEEK only; open folders read-only for read tools; close with `folder.close(false)`.
-- Body output: pick the text part via BODYSTRUCTURE, partial fetch. Character budget in Unicode code points: default 20 000, hard cap (`max_chars`) 100 000. Always with `truncated` and a continuation offset. Per-part source limit 4 MiB (configurable); beyond it the body is marked source-truncated.
-- Resolve special-use roles by SPECIAL-USE attributes, never by name heuristics (Gmail localizes names); otherwise folders are addressed by full name. Detect capabilities at connect time (MOVE, UIDPLUS, SORT, SPECIAL-USE, `X-GM-EXT-1`), cached per account with a TTL (default 10 min, configurable), and gate features on them.
+- Body output: pick the text part via BODYSTRUCTURE (inside `multipart/alternative` a non-empty `text/plain` wins over `text/html`; `message/rfc822` is not descended), partial fetch. Character budget in Unicode code points: default 20 000, hard cap (`max_chars`) 100 000. Always with `truncated` and a continuation offset. Per-part source limit 4 MiB (configurable, at most 64 MiB), for plain and HTML parts; beyond it the body is marked source-truncated.
+- Resolve special-use roles by SPECIAL-USE attributes, never by name heuristics (Gmail localizes names); otherwise folders are addressed by full name. Angus issues a plain `LIST "" "*"`, so roles exist only where the server reports the attributes there; several folders with one attribute: the first in code-point order; `\Noselect`/`\NonExistent` folders never carry a role. Detect capabilities at connect time (MOVE, UIDPLUS, SORT, SPECIAL-USE, `X-GM-EXT-1`), cached per account with a TTL (default 10 min, configurable), and gate features on them.
 
 ### 5.5 Connection pooling
 
 - Commons Pool 2 `GenericKeyedObjectPool`, keyed by `(tenant, account)`. Pool `IMAPStore` instances, leased exclusively per tool call. Never share a Store or Folder across concurrent calls.
 - Set `mail.<protocol>.connectionpoolsize=1` so one Store means one socket. Use one `Session` per account, never `getDefaultInstance`.
 - Property prefix must match the protocol: `mail.imaps.*` for `imaps`, `mail.gimaps.*` for `gimaps`, `mail.imap.*` for `imap` (a mismatched prefix is silently ignored).
-- Defaults (all configurable):
+- Defaults (all configurable unless noted):
 
 | Setting | Default |
 |---|---|
@@ -134,35 +147,40 @@ Jetty must stay off the classpath of the stdio entry point.
 | Max connections per mailbox | 3 (1–2 when running several replicas) |
 | Max connections per tenant | 8 |
 | Max connections total (global socket cap) | 64 |
-| Acquire timeout | 10 s |
+| Acquire timeout (pool wait plus connect, TLS and LOGIN) | 10 s |
 | Connect / read / write timeout | 10 s / 60 s / 60 s |
-| Overall per-tool deadline | 90 s |
+| Overall per-tool deadline | 90 s (at most 10 min) |
+| Abandoned-lease backstop (not configurable) | max(120 s, deadline + 30 s) |
 
-- Per-tenant semaphore and global socket cap. Fail fast with "busy, retry" instead of queueing.
-- On timeout, cancellation, `FolderClosedException` or `StoreClosedException`: discard the connection, never return it to the pool.
-- v1 deviation: the per-tool deadline is enforced by interrupting the worker and discarding the leased Store. MCP `notifications/cancelled` is not wired in v1 (the SDK offers no hook); keep a cancellation seam so it can be wired later.
+- Per-tenant semaphore and global socket cap. Fail fast with "busy, retry" instead of queueing. An acquire timeout is `UPSTREAM_UNAVAILABLE`.
+- A Store returns to the pool only after a call without an escaping exception. On timeout, cancellation, `FolderClosedException`, `StoreClosedException`, any other connection-level failure or any unchecked exception: discard the connection, never return it to the pool. Closing a Store (LOGOUT) never blocks the caller or the evictor.
+- v1 deviation: the per-tool deadline is enforced by interrupting the worker and discarding the leased Store. The interrupt is what unblocks a worker stuck in a socket read (including TLS); closing the Store from another thread does not. The cancel hook invalidates the Store and releases the admission permits at once, so the caps may be exceeded briefly until the interrupted worker has unwound. MCP `notifications/cancelled` is not wired in v1 (the SDK offers no hook); keep a cancellation seam so it can be wired later.
 - XOAUTH2 (v3): cache the access token, refresh about 5 min early, single-flight per account, one retry on `AUTHENTICATIONFAILED`, mark the account "needs re-link" when the refresh token is revoked.
 - Virtual threads for request handling. Bound IMAP concurrency with semaphores, not thread pools.
 
 ### 5.6 Logging and observability
 
 - Logback to file only. Capture the real stdout for the protocol, then `System.setOut(System.err)`. Pass the captured stream explicitly to the SDK's stdio transport. Logback `NopStatusListener`. Bridge JUL to SLF4J. Launch the stdio JVM with `-Xlog:disable -Xlog:all=warning:stderr` (unified JVM logging writes to stdout by default).
-- IMAP protocol trace (Jakarta Mail debug): off by default. Explicit opt-in diagnostic only (config `imap.trace`); logs a WARN at startup, routed to the logger with `LOGIN`/`AUTHENTICATE` lines redacted. Documented that the trace can contain message content.
-- Never log message bodies, credentials, subjects, or addresses (the only exception is the opt-in IMAP trace above; credentials stay redacted there too). Structured logs carry request ID, hashed tenant, tool name.
-- Metrics per hashed tenant: pool active/idle/wait, IMAP command latency, auth failures. v1: internal in-memory metrics only (no exporter or metrics endpoint), periodic log summary with hashed ids. Health endpoint in HTTP modes.
+- Rolling file (10 MB per file, 7 days, 100 MB total); root level from `IMAP_MCP_LOG_LEVEL` (default INFO). Angus, `jakarta.mail`, the MCP SDK and Jetty are capped at INFO regardless of the root level (they log protocol data and JSON-RPC at lower levels).
+- IMAP protocol trace (Jakarta Mail debug): off by default. Explicit opt-in diagnostic only (config `imap.trace`); logs a WARN at startup, routed to the logger `imapmcp.imap.trace` (level DEBUG independent of the root level) with `LOGIN`/`AUTHENTICATE` lines redacted. Documented that the trace can contain message content.
+- Never log message bodies, credentials, subjects, or addresses (the only exception is the opt-in IMAP trace above; credentials stay redacted there too). Structured logs carry request ID (generated per tool call; the JSON-RPC id is not available), hashed tenant, tool name and hashed account. Hashed ids are HMAC-SHA256 under the `log` subkey, truncated to 12 hex characters.
+- Metrics per hashed tenant: pool active/idle/wait, IMAP command latency, auth failures. v1: internal in-memory metrics only (no exporter or metrics endpoint), periodic log summary with hashed ids; pool created/destroyed counts are pool-wide. Health endpoint in HTTP modes: unauthenticated `GET /health`, liveness only (never touches IMAP), `200 {"status":"ok"}`, `503 {"status":"shutting_down"}` during shutdown.
 
 ### 5.7 Persistence
 
 - v1: no database. Config file (accounts, hosts, policies) and secrets from env / mounted file / OS keyring, behind the `CredentialStore` and `AccountRepository` interfaces.
-- Config: YAML bound to records, unknown keys rejected. Location precedence: `--config` > `IMAP_MCP_CONFIG` > `$XDG_CONFIG_HOME/imap-mcp/config.yaml` (default `~/.config/imap-mcp/config.yaml`).
+- Config: YAML bound to records, unknown keys rejected. Location precedence: `--config` > `IMAP_MCP_CONFIG` > `$XDG_CONFIG_HOME/imap-mcp/config.yaml` (only when set and absolute) > `~/.config/imap-mcp/config.yaml`. Environment overrides exist only for `IMAP_MCP_MODE`, `IMAP_MCP_LOG_LEVEL`, `IMAP_MCP_HTTP_BIND`, `IMAP_MCP_HTTP_PORT` and `IMAP_MCP_HTTP_ALLOW_NON_LOOPBACK_BIND`. Page size and the default character budget are fixed (5.4), not configurable; `tools.maxCharsCap` can only lower the 100 000 cap.
 - State (bearer token, handle key, installation salt): location precedence `IMAP_MCP_STATE_DIR` > `$XDG_STATE_HOME/imap-mcp` (only when set and absolute; relative values are ignored per the XDG spec) > `~/.local/state/imap-mcp`. Logs in `<state>/logs`; `IMAP_MCP_LOG_DIR` overrides. Docker: the image sets `IMAP_MCP_CONFIG=/config/config.yaml`, `IMAP_MCP_STATE_DIR=/config/state` and `IMAP_MCP_LOG_DIR=/logs` explicitly, so XDG variables are irrelevant inside the (headless) container.
+  - Files `http-token`, `handle-key`, `installation-salt` (random, base64url), mode 0600 in a 0700 directory, published without replacing an existing file (hard link), so concurrent first starts agree on one value. The token file is created only in `http-local`.
+  - A configured `http.token` or `security.handleKey` (base64url of 32 bytes) wins and is never written. If the handle key or salt cannot be persisted, an ephemeral value is used with a WARN (handles change after restart); if the token cannot be persisted, startup fails.
+- Docker image: runs as uid/gid 10001; `/config` must be writable by it (the state lives in `/config/state`). HEALTHCHECK uses a probe class from the jar (no curl), against `IMAP_MCP_HTTP_PORT` (default 8080). Base image pinned by digest.
 - v3: Postgres via plain JDBC or jOOQ with Flyway. Tables: `tenant` (IdP `iss` + `sub`), `mailbox_account`, `credential` (encrypted blob, key id, version).
 
 ### 5.8 Testing
 
-- GreenMail for fast tests. Dovecot via Testcontainers for protocol fidelity (MOVE, UIDPLUS, SPECIAL-USE, SORT, UIDVALIDITY change). Toxiproxy for timeouts and dropped connections (pool eviction and discard paths).
+- GreenMail for fast tests. Dovecot via Testcontainers for protocol fidelity (SPECIAL-USE, UIDVALIDITY change, PEEK on the wire, constant commands per page; MOVE, UIDPLUS and SORT as detected capabilities in v1, their behaviour from v2). Toxiproxy for timeouts and dropped connections (pool eviction and discard paths). The Dovecot 2.4 fixture adds `\Archive` by config (the image has no `\Archive` mailbox); fixture files are copied into the container, not bind-mounted.
 - End-to-end with the SDK's `McpClient`: stdio via the shaded jar as a subprocess, asserting every stdout line is valid JSON-RPC; Streamable HTTP with real tokens (v3: Keycloak container; wrong audience, expired, other tenant).
-- Tenant-isolation suite: swapped/forged account handles, tampered or replayed cursors and handles, concurrent load from one tenant not affecting another's pool, credential copied between tenants fails to decrypt.
+- Tenant-isolation suite: swapped/forged account handles, tampered or replayed cursors and handles, concurrent load from one tenant not affecting another's pool; v3: credential copied between tenants fails to decrypt.
 - Periodic manual or nightly smoke test against real Gmail and Microsoft 365 accounts.
 
 ## 6. Open decisions
