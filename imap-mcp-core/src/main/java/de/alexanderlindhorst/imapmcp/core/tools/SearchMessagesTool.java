@@ -49,12 +49,14 @@ import org.eclipse.angus.mail.imap.protocol.ENVELOPE;
  * EXAMINE via lease -> UIDVALIDITY check -> {@link PageFetcher} (SEARCH, then FETCH for UIDs, then one FETCH of the
  * summary items for the page; command count independent of page size) -> summaries -> {@code close(false)}.
  * Everything that comes from a message sits under {@code untrusted} and passes the {@link UntrustedText} caps.
- * {@code since} and {@code gmail_raw} are rejected as not implemented until their tickets replace
- * {@link #rejectUnsupported}; they are never ignored silently.
+ * {@code gmail_raw} is rejected as not implemented until its ticket replaces {@link #rejectUnsupported}; it is
+ * never ignored silently. {@code since} is an exact INTERNALDATE filter done inside {@link PageFetcher}.
  */
 public final class SearchMessagesTool implements ToolHandler {
 
     public static final String NAME = "search_messages";
+
+    public static final int DEFAULT_SINCE_MAX_CANDIDATES = 10_000;
 
     /** {@code as_of} lies this far before the search (SPEC 4: consecutive windows overlap). */
     public static final Duration SINCE_OVERLAP = Duration.ofSeconds(300);
@@ -116,6 +118,7 @@ public final class SearchMessagesTool implements ToolHandler {
     private final MessageHandles handles;
     private final Clock clock;
     private final Duration overlap;
+    private final int sinceMaxCandidates;
 
     public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
             SearchCursorCodec cursors, MessageHandles handles, Clock clock) {
@@ -124,6 +127,17 @@ public final class SearchMessagesTool implements ToolHandler {
 
     public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
             SearchCursorCodec cursors, MessageHandles handles, Clock clock, Duration overlap) {
+        this(accounts, leases, mapper, cursors, handles, clock, overlap, DEFAULT_SINCE_MAX_CANDIDATES);
+    }
+
+    /** @param sinceMaxCandidates most SEARCH hits a {@code since} search may fetch INTERNALDATE for */
+    public SearchMessagesTool(AccountArgument accounts, StoreLeases leases, SearchTermMapper mapper,
+            SearchCursorCodec cursors, MessageHandles handles, Clock clock, Duration overlap,
+            int sinceMaxCandidates) {
+        if (sinceMaxCandidates < 1) {
+            throw new IllegalArgumentException("sinceMaxCandidates must be positive");
+        }
+        this.sinceMaxCandidates = sinceMaxCandidates;
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.leases = Objects.requireNonNull(leases, "leases");
         this.mapper = Objects.requireNonNull(mapper, "mapper");
@@ -165,11 +179,8 @@ public final class SearchMessagesTool implements ToolHandler {
         }
     }
 
-    /** since (#28) and gmail_raw (#29) are not implemented yet; those tickets delete the matching check. */
+    /** gmail_raw (#29) is not implemented yet; that ticket deletes this check. */
     private static ToolError rejectUnsupported(SearchCriteria c, String rid) {
-        if (c.since() != null) {
-            return ToolError.invalidArgument("since", "not_implemented", null, rid);
-        }
         if (c.gmailRaw() != null) {
             return ToolError.invalidArgument("gmail_raw", "not_implemented", null, rid);
         }
@@ -208,7 +219,12 @@ public final class SearchMessagesTool implements ToolHandler {
         // as_of is only given on the first page: a cursor page cannot see mail that arrived after page one, so
         // callers must not advance their "what's new" mark from it.
         String asOf = cursor == null ? asOf(clock.instant()) : null;
-        PageFetcher.Page page = PageFetcher.page(folder, term, cursor == null ? 0 : cursor.lastUid(), in.pageSize());
+        PageFetcher.Page page = PageFetcher.page(folder, term, cursor == null ? 0 : cursor.lastUid(), in.pageSize(),
+                in.criteria().since(), sinceMaxCandidates);
+        if (page.tooManyCandidates()) {
+            return new ToolOutcome.Failure(ToolError.invalidArgumentHint("since", "too_many_candidates",
+                    "Narrow `since` or add criteria.", rid));
+        }
 
         List<Map<String, Object>> summaries = new ArrayList<>();
         for (PageFetcher.Row row : page.rows()) {
