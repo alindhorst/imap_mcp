@@ -41,7 +41,7 @@ public final class ConfigLoader {
     private static final Pattern DURATION = Pattern.compile("(\\d{1,9})(ms|s|m|h)");
     private static final Pattern SIZE = Pattern.compile("(\\d{1,12})(B|KiB|MiB|GiB)");
     private static final Set<String> GMAIL_HOSTS = Set.of("imap.gmail.com", "imap.googlemail.com");
-    private static final Set<String> MODES = Set.of("stdio", "http");
+    private static final Set<String> MODES = Set.of("stdio", "http-local");
     private static final Set<String> LOG_LEVELS = Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR");
     private static final YAMLMapper YAML = YAMLMapper.builder().build();
 
@@ -203,7 +203,7 @@ public final class ConfigLoader {
     private static String envMode(Map<String, String> env) {
         String v = set(env, ENV_MODE);
         if (v != null && !MODES.contains(v.toLowerCase(Locale.ROOT))) {
-            throw new ConfigException(ENV_MODE + ": must be one of stdio, http");
+            throw new ConfigException(ENV_MODE + ": must be one of stdio, http-local");
         }
         return v == null ? null : v.toLowerCase(Locale.ROOT);
     }
