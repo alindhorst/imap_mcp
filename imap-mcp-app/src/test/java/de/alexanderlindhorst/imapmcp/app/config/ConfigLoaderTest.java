@@ -113,7 +113,7 @@ class ConfigLoaderTest {
                 Arguments.of("duplicate id", acct + "  - id: a\n    host: h\n    username: u\n    password: env:P\n",
                         "accounts[1].id"),
                 Arguments.of("literal password", acct.replace("env:P", "hunter2-secret"), "accounts[0].password"),
-                Arguments.of("empty ref", acct.replace("env:P", "env:"), "accounts[0].password"),
+                Arguments.of("empty ref", acct.replace("env:P", "\"env:\""), "accounts[0].password"),
                 Arguments.of("literal token", acct + "http:\n  token: hunter2-secret\n", "http.token"),
                 Arguments.of("literal handle key", acct + "security:\n  handleKey: hunter2-secret\n",
                         "security.handleKey"),
