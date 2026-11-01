@@ -18,7 +18,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 class GreenMailSmokeTest {
 
     @RegisterExtension
-    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS);
+    static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());
 
     @Test
     void readsDeliveredMessageOverImaps() throws Exception {
