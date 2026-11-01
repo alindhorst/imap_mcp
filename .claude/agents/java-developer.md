@@ -59,6 +59,7 @@ Never run a full `mvn verify`; scoped single-module/single-test commands only. C
 
 - Before touching git state for a ticket, call `EnterWorktree` (name it `issue-<n>`, or `issue-<n>-<m>-...` for a batch) to get an isolated checkout on its own branch. Never `git checkout` a branch in the main working directory.
 - One branch per ticket (or per related group), with the issue number identifiable in the branch name.
+- Always push with `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or `git push -u`: the global `push.default=upstream` would send the commits to `master`. If you create worktrees by hand, use `--no-track`.
 - Commit after each TDD unit, keeping the red/green history intact. Every commit message references the ticket number and title.
 - Push and open a PR with `create_pull_request` that references the issue number(s) by number and title. Avoid auto-close keywords (`Closes`/`Fixes`/`Resolves #N`) in commits and PR body: closure is gated on the lead's acceptance.
 - Comment on the ticket when you start and again with the PR link. Keep state labels current if the repo uses them.

@@ -6,7 +6,8 @@ IMAP-only MCP server in Java. Read `doc/SPEC.md` first; it is the source of trut
 
 - The main session only orchestrates. It never reads, writes or reviews code, specs or tests itself for implementation work; it briefs `lead-java-developer`, relays its report and open questions to the user, and nothing else.
 - Every task has a hand-off: main session -> `lead-java-developer` -> `java-developer` (Gitea tickets) -> back to the lead (PR review, merge) -> final report. Agents talk to each other directly via `SendMessage`; Gitea (`lindhrst/imap_mcp`) is the audit record. No exchange through files.
-- Git: one worktree and branch per ticket, never `git checkout` in the main working directory. Real merges only (no squash). Merge tokens live in untracked `.claude/gitea-*token` files.
+- Git: always work in a worktree, one branch per ticket; never `git checkout` or commit in the main working directory. Create worktrees with `--no-track` and push with `git push origin HEAD:refs/heads/<branch>` (the global `push.default=upstream` otherwise pushes to `master`; this already happened once with 9c5e11d). Real merges only (no squash).
+- PR approval: all agents share one Gitea account through the MCP, which cannot approve its own PRs. The final approval and the merge are done with curl, not the MCP, using the token in untracked `.claude/gitea-merge-token` (a different Gitea account). Never print the token.
 - Architects `jee-enterprise-architect` and `backend-api-architect` are consulted by the lead (and by the developer for narrow technical questions). Profiles are in `.claude/agents/`; hand-off enforcement hooks in `.claude/hooks/`.
 
 ## Build
