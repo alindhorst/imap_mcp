@@ -3,9 +3,11 @@ package de.alexanderlindhorst.imapmcp.core.tool;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.slf4j.MDC;
 
 /**
@@ -19,10 +21,22 @@ public final class ToolCallContext {
     private final List<Runnable> callbacks = new ArrayList<>();
     private boolean cancelled;
     private volatile LogIds logIds;
+    private volatile Instant deadline;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
         this.requestId = Objects.requireNonNull(requestId, "requestId");
+    }
+
+    /** With a fixed deadline (tests, or callers that own the clock); the executor sets it otherwise. */
+    public ToolCallContext(AccountContext accountContext, String requestId, Instant deadline) {
+        this(accountContext, requestId);
+        this.deadline = Objects.requireNonNull(deadline, "deadline");
+    }
+
+    /** The instant at which the executor gives up on this call; empty outside an executor. */
+    public Optional<Instant> deadline() {
+        return Optional.ofNullable(deadline);
     }
 
     public AccountContext accountContext() {
@@ -73,8 +87,11 @@ public final class ToolCallContext {
     }
 
     /** Called by the executor on the worker thread. */
-    void attach(LogIds logIds) {
+    void attach(LogIds logIds, Instant executorDeadline) {
         this.logIds = logIds;
+        if (deadline == null) {
+            this.deadline = executorDeadline;
+        }
     }
 
     private static void run(Runnable r) {

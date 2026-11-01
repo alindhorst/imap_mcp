@@ -143,4 +143,17 @@ class ToolExecutorTest {
         assertThat(interrupted).isTrue();
         assertThat(hooks).hasValue(1);
     }
+
+    @Test
+    void executorExposesTheCallDeadlineToTheHandler() {
+        AtomicReference<java.util.Optional<java.time.Instant>> seen = new AtomicReference<>();
+        java.time.Instant before = java.time.Instant.now();
+        executor.wrap("t", (cx, a) -> {
+            seen.set(cx.deadline());
+            return ok();
+        }).handle(ctx("r"), Map.of());
+        java.time.Instant after = java.time.Instant.now();
+        assertThat(seen.get()).isPresent();
+        assertThat(seen.get().get()).isBetween(before.plusMillis(200), after.plusMillis(200));
+    }
 }

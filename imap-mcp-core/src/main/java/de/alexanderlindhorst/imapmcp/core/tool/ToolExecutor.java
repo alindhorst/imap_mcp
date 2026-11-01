@@ -71,13 +71,14 @@ public final class ToolExecutor {
     }
 
     private ToolOutcome run(String toolName, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args) {
+        Instant callDeadline = Instant.now().plus(deadline);
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
         Thread worker = Thread.ofVirtual().name("tool-" + toolName).unstarted(() -> {
             try {
                 MDC.put("req", ctx.requestId());
                 MDC.put("tool", toolName);
                 MDC.put("tenant", logIds.tenant(ctx.accountContext().tenantId().value()));
-                ctx.attach(logIds);
+                ctx.attach(logIds, callDeadline);
                 future.complete(delegate.handle(ctx, args));
             } catch (Throwable t) {
                 future.completeExceptionally(t);

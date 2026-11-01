@@ -95,7 +95,7 @@ class ListFoldersToolTest {
     }
 
     ListFoldersTool tool(int max) {
-        return new ListFoldersTool(new AccountArgument(repo), leases, max);
+        return new ListFoldersTool(new AccountArgument(repo), leases, max, ListFoldersTool.CountEnricher.NONE);
     }
 
     String handleA() {
@@ -172,7 +172,7 @@ class ListFoldersToolTest {
         for (int i = 0; i < 99; i++) {
             mailbox("alpha", String.format("F%03d", i));
         }
-        ListFoldersTool t = new ListFoldersTool(new AccountArgument(repo), leases); // INBOX + 99 = 100
+        ListFoldersTool t = new ListFoldersTool(new AccountArgument(repo), leases, 100, ListFoldersTool.CountEnricher.NONE); // INBOX + 99 = 100
         Map<String, Object> out = ok(call(t, A, Map.of("account", handleA())));
         assertThat(folders(out)).hasSize(100);
         assertThat(out).containsEntry("folders_truncated", false);

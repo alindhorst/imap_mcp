@@ -26,8 +26,8 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
  * LIST attributes only (SPEC 5.4), never from names. {@code folder} is the server's decoded full name, returned
  * verbatim because clients send it back; the display field {@code name} passes through
  * {@link UntrustedText#singleLine} because auto-created folder names can derive from sender-controlled headers.
- * Counts are filled by a {@link CountEnricher} (STATUS, #24); without one they are null and
- * {@code counts_complete} is false.
+ * Counts are filled by a {@link CountEnricher} ({@link StatusCountEnricher} by default); without one they are
+ * null and {@code counts_complete} is false.
  */
 public final class ListFoldersTool implements ToolHandler {
 
@@ -35,12 +35,15 @@ public final class ListFoldersTool implements ToolHandler {
     public static final int DEFAULT_MAX_FOLDERS = 100;
     static final int NAME_MAX = 255;
 
-    /** Fills {@code total}/{@code unread} of the (already capped) entries; returns whether all counts are known. */
+    /**
+     * Fills {@code total}/{@code unread} of the (already capped) entries; returns whether all counts of the
+     * selectable folders are known. Implementations must never throw for a single failing folder.
+     */
     @FunctionalInterface
     public interface CountEnricher {
-        CountEnricher NONE = (lease, entries) -> false;
+        CountEnricher NONE = (lease, ctx, entries) -> false;
 
-        boolean enrich(ImapLease lease, List<Map<String, Object>> entries) throws MessagingException;
+        boolean enrich(ImapLease lease, ToolCallContext ctx, List<Map<String, Object>> entries) throws MessagingException;
     }
 
     static final Map<String, Object> INPUT_SCHEMA = schema("type", "object",
@@ -81,11 +84,11 @@ public final class ListFoldersTool implements ToolHandler {
     private final CountEnricher counts;
 
     public ListFoldersTool(AccountArgument accounts, StoreLeases leases) {
-        this(accounts, leases, DEFAULT_MAX_FOLDERS, CountEnricher.NONE);
+        this(accounts, leases, DEFAULT_MAX_FOLDERS);
     }
 
     public ListFoldersTool(AccountArgument accounts, StoreLeases leases, int maxFolders) {
-        this(accounts, leases, maxFolders, CountEnricher.NONE);
+        this(accounts, leases, maxFolders, new StatusCountEnricher());
     }
 
     public ListFoldersTool(AccountArgument accounts, StoreLeases leases, int maxFolders, CountEnricher counts) {
@@ -111,7 +114,7 @@ public final class ListFoldersTool implements ToolHandler {
             Map<String, Object> described = describe(listed, maxFolders);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> entries = (List<Map<String, Object>>) described.get("folders");
-            if (includeCounts && counts.enrich(lease, entries)) {
+            if (includeCounts && counts.enrich(lease, ctx, entries)) {
                 described.put("counts_complete", true);
             }
             Map<String, Object> out = new LinkedHashMap<>();
