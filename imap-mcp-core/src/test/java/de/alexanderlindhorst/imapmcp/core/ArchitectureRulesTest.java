@@ -26,4 +26,12 @@ class ArchitectureRulesTest {
         assertThatThrownBy(() -> ArchitectureRules.CORE_HAS_NO_FORBIDDEN_DEPENDENCIES.check(fixture))
                 .isInstanceOf(AssertionError.class);
     }
+
+    @Test
+    void guardDetectsSdkTypeOutsideMcpPackage() {
+        JavaClasses fixture = new ClassFileImporter()
+                .importPackages("de.alexanderlindhorst.imapmcp.core.archfixture.sdk");
+        assertThatThrownBy(() -> ArchitectureRules.SDK_ONLY_IN_CORE_MCP.check(fixture))
+                .isInstanceOf(AssertionError.class);
+    }
 }
