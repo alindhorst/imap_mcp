@@ -274,7 +274,8 @@ class ListAttachmentsToolTest {
         try (Store s = client()) {
             s.getFolder("Box").delete(true);
         }
-        // a different UIDVALIDITY must be observable for the same folder name
+        // GreenMail appears to derive UIDVALIDITY from the clock (second resolution): wait so it differs
+        Thread.sleep(1500);
         deliver("Box", withAttachments(), A, ACCT);
         Map<String, Object> e = error(call(A, acctHandle, h));
         assertThat(e).containsEntry("code", "STALE_REFERENCE");
