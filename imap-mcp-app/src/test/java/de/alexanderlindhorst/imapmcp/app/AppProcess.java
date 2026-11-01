@@ -13,7 +13,9 @@ final class AppProcess implements AutoCloseable {
 
     private final Process process;
     private final ByteArrayOutputStream err = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream out = new ByteArrayOutputStream();
     private final Thread errPump;
+    private Thread outPump;
 
     private AppProcess(Process process) {
         this.process = process;
@@ -43,6 +45,23 @@ final class AppProcess implements AutoCloseable {
     private static String classpath() {
         String cp = System.getProperty("surefire.test.class.path");
         return cp != null ? cp : System.getProperty("java.class.path");
+    }
+
+    /** Collects stdout in the background (for modes where stdout is not a protocol channel). */
+    AppProcess pumpStdout() {
+        outPump = Thread.ofVirtual().start(() -> {
+            try {
+                process.getInputStream().transferTo(out);
+            } catch (IOException ignored) {
+                // process gone
+            }
+        });
+        return this;
+    }
+
+    String collectedStdout() throws InterruptedException {
+        outPump.join(2000);
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     Process process() {
