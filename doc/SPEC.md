@@ -41,9 +41,9 @@ All tools require an account handle (from `list_accounts`) except `list_accounts
 | Tool | Notes |
 |---|---|
 | `list_accounts` | Linked mailboxes and capability summary. |
-| `list_folders` | Includes special-use role (`\Trash`, `\Sent`, ...), unread and total counts. |
-| `search_messages` | Paged summaries (sender, subject, date, flags, size, has-attachment). Criteria: from, to, subject, text, date range, `since`, flags, folder. Gmail `X-GM-RAW` when supported. Signed cursor. |
-| `get_message` | Text body by default (HTML converted to text), attachment list, optional headers. Character budget with `truncated` flag and continuation offset. Body returned as clearly labeled untrusted data. |
+| `list_folders` | Includes special-use role (`\Trash`, `\Sent`, ...), unread and total counts. Capped at 100 folders by default (configurable) with a truncation flag; folders beyond the cap stay addressable by full name. |
+| `search_messages` | Paged summaries (sender, subject, date, flags, size, has-attachment). Criteria: from, to, subject, text, date range, `since`, flags, folder. Gmail `X-GM-RAW` only for Gmail accounts (protocol `gimaps`) that advertise `X-GM-EXT-1`, otherwise `UNSUPPORTED`. Signed cursor. |
+| `get_message` | Text body by default (HTML converted to text), attachment list, optional headers. Character budget with `truncated` flag and continuation offset (limits in 5.4). |
 | `list_attachments` | Metadata only (name, type, size) in v1. |
 
 ### v2: reversible changes
@@ -67,6 +67,7 @@ All tools require an account handle (from `list_accounts`) except `list_accounts
 
 - Mutating tools take explicit lists of handles, never "all matching".
 - Bulk size is capped.
+- Untrusted output: every email-derived string (subject, sender/recipient display names and addresses, envelope dates and IDs, header values, body text, attachment filenames and content types) is returned only inside `untrusted` objects, sanitized and length-capped (single-line except body text); every response that carries them includes a `content_notice`. Folder names from LIST are identifiers and stay outside `untrusted`. Upstream server NO/BAD text in errors is sanitized, single-line and capped at 200 characters.
 - Errors are actionable: stale reference ("re-run search"), account needs re-linking, server busy (retry).
 - No push or IDLE. "What's new" is a search with `since`.
 - Dropped from the original idea list: delete folder, quota, save draft.
@@ -115,8 +116,8 @@ Jetty must stay off the classpath of the stdio entry point.
 - Move: MOVE if available, else COPY + `\Deleted` + UID EXPUNGE of those UIDs. Return new UIDs (COPYUID/APPENDUID). A retried move that finds the source gone reports success with a note.
 - Paging: signed cursor (UIDVALIDITY, last UID, query hash), default page size 25, max 100. One `FetchProfile` round-trip per page. Report total count.
 - Fetch with PEEK only; open folders read-only for read tools; close with `folder.close(false)`.
-- Body output: pick the text part via BODYSTRUCTURE, partial fetch, default budget of 20k characters, always with `truncated` and a continuation offset.
-- Resolve folders by SPECIAL-USE attributes, never by name (Gmail localizes names). Detect capabilities at connect time (MOVE, UIDPLUS, SORT, SPECIAL-USE, `X-GM-EXT-1`), cached per account with a TTL, and gate features on them.
+- Body output: pick the text part via BODYSTRUCTURE, partial fetch. Character budget in Unicode code points: default 20 000, hard cap (`max_chars`) 100 000. Always with `truncated` and a continuation offset. Per-part source limit 4 MiB (configurable); beyond it the body is marked source-truncated.
+- Resolve special-use roles by SPECIAL-USE attributes, never by name heuristics (Gmail localizes names); otherwise folders are addressed by full name. Detect capabilities at connect time (MOVE, UIDPLUS, SORT, SPECIAL-USE, `X-GM-EXT-1`), cached per account with a TTL (default 10 min, configurable), and gate features on them.
 
 ### 5.5 Connection pooling
 
