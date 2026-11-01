@@ -45,7 +45,7 @@ class SummaryFormatTest {
         f.add(Flags.Flag.FLAGGED);
         f.add("zeta");
         f.add("alpha");
-        f.add("evil‮flag");
+        f.add("evil\u202eflag");
         assertThat(SummaryFormat.flags(f)).containsExactly("\\Seen", "\\Flagged", "alpha", "evilflag", "zeta");
         assertThat(SummaryFormat.flags(new Flags())).isEmpty();
     }

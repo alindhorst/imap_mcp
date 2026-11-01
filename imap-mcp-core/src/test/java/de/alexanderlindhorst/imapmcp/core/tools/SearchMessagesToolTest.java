@@ -155,7 +155,7 @@ class SearchMessagesToolTest {
 
     @Test
     void summaryFieldsFlagsSizeReceivedAttachmentAndSentAtOffset() throws Exception {
-        MimeMessage plain = env.message("Jürgen Müller", "j@example.org", "Grüße");
+        MimeMessage plain = env.message("J\u00fcrgen M\u00fcller", "j@example.org", "Gr\u00fc\u00dfe");
         plain.setHeader("Date", "Thu, 5 Mar 2026 10:00:07 +0100");
         plain.addRecipient(jakarta.mail.Message.RecipientType.CC, new jakarta.mail.internet.InternetAddress("cc@example.org"));
         env.user.deliver(plain);
@@ -179,8 +179,8 @@ class SearchMessagesToolTest {
         assertThat((String) pl.get("received_at")).matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$");
         @SuppressWarnings("unchecked")
         Map<String, Object> u = (Map<String, Object>) pl.get("untrusted");
-        assertThat(u.get("subject")).isEqualTo("Grüße");
-        assertThat(u.get("from")).isEqualTo(Map.of("name", "Jürgen Müller", "address", "j@example.org"));
+        assertThat(u.get("subject")).isEqualTo("Gr\u00fc\u00dfe");
+        assertThat(u.get("from")).isEqualTo(Map.of("name", "J\u00fcrgen M\u00fcller", "address", "j@example.org"));
         assertThat(u.get("sent_at")).isEqualTo("2026-03-05T10:00:07+01:00");
         assertThat(u).containsEntry("recipients_truncated", false);
         assertThat((List<?>) u.get("cc")).hasSize(1);
