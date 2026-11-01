@@ -2,7 +2,6 @@ package de.alexanderlindhorst.imapmcp.core.tools;
 
 import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
-import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentClassifier;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentList;
@@ -179,30 +178,32 @@ public final class GetMessageTool implements ToolHandler {
         if (!(checked instanceof MessageLocator.Checked.Ok ref)) {
             return new ToolOutcome.Failure(((MessageLocator.Checked.Invalid) checked).error());
         }
-        try (ImapLease lease = leases.lease(ok.key(), ctx)) {
-            try {
-                MessageLocator.Located located = locator.locate(lease, ctx, ref.ref());
-                if (!(located instanceof MessageLocator.Located.Found found)) {
-                    return new ToolOutcome.Failure(((MessageLocator.Located.Failed) located).error());
+        try {
+            return leases.withLease(ok.key(), ctx, lease -> {
+                try {
+                    MessageLocator.Located located = locator.locate(lease, ctx, ref.ref());
+                    if (!(located instanceof MessageLocator.Located.Found found)) {
+                        return new ToolOutcome.Failure(((MessageLocator.Located.Failed) located).error());
+                    }
+                    // The sequence number is internal to this open folder and never leaves this call.
+                    int seq = found.message().getMessageNumber();
+                    Fetched f = fetch(found.folder(), seq, includeHeaders);
+                    Optional<SelectedPart> part = BodyPartSelector.select(f.structure());
+                    AttachmentList attachments = AttachmentClassifier.classify(f.structure(),
+                            part.map(SelectedPart::sectionPath).orElse(null));
+                    BodyWindow window = part.isPresent()
+                            ? reader.read(found.folder(), ref.ref().uid(), part.get(), offset, maxChars) : null;
+                    return new ToolOutcome.Success(output(accountHandle, messageHandle, ref.ref().folder(), f,
+                            includeHeaders, window, offset, attachments));
+                } catch (MessagingException e) {
+                    ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, ctx.requestId());
+                    if (mapped.discardConnection()) {
+                        lease.markBroken();
+                    }
+                    return new ToolOutcome.Failure(mapped.error());
                 }
-                // The sequence number is internal to this open folder and never leaves this call.
-                int seq = found.message().getMessageNumber();
-                Fetched f = fetch(found.folder(), seq, includeHeaders);
-                Optional<SelectedPart> part = BodyPartSelector.select(f.structure());
-                AttachmentList attachments = AttachmentClassifier.classify(f.structure(),
-                        part.map(SelectedPart::sectionPath).orElse(null));
-                BodyWindow window = part.isPresent()
-                        ? reader.read(found.folder(), ref.ref().uid(), part.get(), offset, maxChars) : null;
-                return new ToolOutcome.Success(output(accountHandle, messageHandle, ref.ref().folder(), f,
-                        includeHeaders, window, offset, attachments));
-            } catch (MessagingException | RuntimeException e) {
-                ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, ctx.requestId());
-                if (mapped.discardConnection()) {
-                    lease.markBroken();
-                }
-                return new ToolOutcome.Failure(mapped.error());
-            }
-        } catch (RuntimeException e) {
+            });
+        } catch (MessagingException | RuntimeException e) {
             return new ToolOutcome.Failure(ImapErrorMapper.map(e, ctx.requestId()).error());
         }
     }

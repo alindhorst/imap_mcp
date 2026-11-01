@@ -109,18 +109,20 @@ public final class ListFoldersTool implements ToolHandler {
         }
         AccountArgument.Result.Ok ok = (AccountArgument.Result.Ok) r;
         boolean includeCounts = !Boolean.FALSE.equals(args.get("include_counts"));
-        try (ImapLease lease = leases.lease(ok.key(), ctx)) {
-            Folder[] listed = lease.store().getDefaultFolder().list("*");
-            Map<String, Object> described = describe(listed, maxFolders);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> entries = (List<Map<String, Object>>) described.get("folders");
-            if (includeCounts && counts.enrich(lease, ctx, entries)) {
-                described.put("counts_complete", true);
-            }
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("account", ok.account().handle());
-            out.putAll(described);
-            return new ToolOutcome.Success(out);
+        try {
+            return leases.withLease(ok.key(), ctx, lease -> {
+                Folder[] listed = lease.store().getDefaultFolder().list("*");
+                Map<String, Object> described = describe(listed, maxFolders);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> entries = (List<Map<String, Object>>) described.get("folders");
+                if (includeCounts && counts.enrich(lease, ctx, entries)) {
+                    described.put("counts_complete", true);
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("account", ok.account().handle());
+                out.putAll(described);
+                return new ToolOutcome.Success(out);
+            });
         } catch (MessagingException e) {
             throw new IllegalStateException("LIST failed", e); // mapped by the ToolExecutor
         }

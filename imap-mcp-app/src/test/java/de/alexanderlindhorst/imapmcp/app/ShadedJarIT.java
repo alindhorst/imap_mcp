@@ -107,8 +107,11 @@ class ShadedJarIT {
 
     @Test
     void javaDashJarWithoutArgsExitsTwoWithUsageOnStderr() throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-jar", jar.toString());
+        List<String> cmd = new java.util.ArrayList<>();
+        cmd.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        cmd.addAll(CoverageAgent.childArgs());
+        cmd.addAll(List.of("-jar", jar.toString()));
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().keySet().removeIf(k -> k.startsWith("IMAP_MCP_"));
         Path errFile = Files.createTempFile("shaded-err", ".txt");
         Path outFile = Files.createTempFile("shaded-out", ".txt");

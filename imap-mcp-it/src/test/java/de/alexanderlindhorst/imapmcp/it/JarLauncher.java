@@ -32,6 +32,7 @@ public final class JarLauncher {
         List<String> cmd = new ArrayList<>();
         cmd.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
         cmd.addAll(List.of("-Xlog:disable", "-Xlog:all=warning:stderr"));
+        cmd.addAll(CoverageAgent.childArgs());
         cmd.addAll(config.jvmArgs());
         cmd.addAll(List.of("-jar", jar().toString()));
         if (mode != null) {

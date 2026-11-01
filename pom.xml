@@ -17,6 +17,7 @@
     <module>imap-mcp-transport-http</module>
     <module>imap-mcp-app</module>
     <module>imap-mcp-it</module>
+    <module>imap-mcp-coverage</module>
   </modules>
 
   <properties>
@@ -26,6 +27,9 @@
 
     <!-- Empty by default so surefire's @{argLine} late binding resolves; see surefire config below. -->
     <argLine></argLine>
+    <!-- Same for failsafe (@{jacoco.it.argLine}); never reference these with a dollar-brace, the declared value would be frozen. -->
+    <jacoco.it.argLine></jacoco.it.argLine>
+    <jacoco.version>0.8.16</jacoco.version>
 
     <mcp.sdk.version>2.1.0</mcp.sdk.version>
     <jetty.version>12.1.14</jetty.version>
@@ -237,6 +241,24 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-failsafe-plugin</artifactId>
           <version>3.6.1</version>
+          <configuration>
+            <argLine>@{jacoco.it.argLine}</argLine>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-site-plugin</artifactId>
+          <version>3.22.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-project-info-reports-plugin</artifactId>
+          <version>3.9.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -364,6 +386,35 @@
         </executions>
       </plugin>
 
+      <!-- Coverage (unit: target/jacoco.exec, IT: target/jacoco-it.exec); aggregated in imap-mcp-coverage.
+           -Djacoco.skip=true switches it off. Only our own classes are instrumented. -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>de.alexanderlindhorst.imapmcp.*</include>
+          </includes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>jacoco-unit</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-it</id>
+            <goals>
+              <goal>prepare-agent-integration</goal>
+            </goals>
+            <configuration>
+              <propertyName>jacoco.it.argLine</propertyName>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <!-- Resolve ${org.mockito:mockito-core:jar} so surefire can load Mockito as a java agent
            instead of letting it self-attach (JDK 21+ warns, later versions will refuse). -->
       <plugin>
@@ -388,4 +439,23 @@
       </plugin>
     </plugins>
   </build>
+
+  <reporting>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-project-info-reports-plugin</artifactId>
+        <version>3.9.0</version>
+        <reportSets>
+          <reportSet>
+            <reports>
+              <report>index</report>
+              <report>modules</report>
+              <report>summary</report>
+            </reports>
+          </reportSet>
+        </reportSets>
+      </plugin>
+    </plugins>
+  </reporting>
 </project>

@@ -47,6 +47,7 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -130,7 +131,7 @@ public final class AppComponents implements AutoCloseable {
         AppConfig.Pool p = config.pool();
         PoolSettings settings = new PoolSettings(p.maxPerMailbox(), p.maxPerTenant(), p.maxTotal(), p.idleEviction(),
                 p.validateAfterIdle(), p.maxLifetime(), p.acquireTimeout(), PoolSettings.DEFAULTS.evictionInterval(),
-                PoolSettings.DEFAULTS.abandonedTimeout());
+                abandonedTimeout(config.tools().deadline()));
 
         ImapSessionFactory sessions = new ImapSessionFactory(
                 new ImapTimeouts(imap.connectTimeout(), imap.readTimeout(), imap.writeTimeout()), sessionHook,
@@ -233,5 +234,12 @@ public final class AppComponents implements AutoCloseable {
         metrics.close();
         pool.close();
         sessions.close();
+    }
+
+    /** A leased Store must outlive the longest tool call, or the evictor would destroy it mid-use. */
+    static Duration abandonedTimeout(Duration toolDeadline) {
+        Duration derived = toolDeadline.plusSeconds(30);
+        return derived.compareTo(PoolSettings.DEFAULTS.abandonedTimeout()) > 0
+                ? derived : PoolSettings.DEFAULTS.abandonedTimeout();
     }
 }
