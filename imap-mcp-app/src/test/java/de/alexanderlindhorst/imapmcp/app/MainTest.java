@@ -52,11 +52,13 @@ class MainTest {
     }
 
     @Test
-    void missingLauncherClassIsAClearErrorWithExitTwo() throws Exception {
-        // HttpLocalMain is delivered by #48; until then the dispatcher must fail cleanly.
-        try (AppProcess p = run(Map.of(), "--mode", "http-local")) {
-            assertThat(p.exitCode()).isEqualTo(2);
-            assertThat(p.stderr()).contains("http-local").contains("not available");
+    void httpLocalDispatchesToItsLauncher() throws Exception {
+        // HttpLocalMain exists since #48: a missing config file is its startup error, not a dispatch error.
+        try (AppProcess p = run(Map.of("IMAP_MCP_CONFIG", "/nonexistent/imap-mcp-config.yaml",
+                "IMAP_MCP_STATE_DIR", System.getProperty("java.io.tmpdir") + "/imap-mcp-main-test-state"),
+                "--mode", "http-local")) {
+            assertThat(p.exitCode()).isEqualTo(1);
+            assertThat(p.stderr()).contains("startup failed").contains("config file not found");
             assertThat(p.stdoutRest()).isEmpty();
         }
     }
