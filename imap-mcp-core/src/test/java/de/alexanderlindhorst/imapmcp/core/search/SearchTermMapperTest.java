@@ -27,8 +27,20 @@ class SearchTermMapperTest {
     @Test
     void noCriteriaMapsToNullMeaningMatchAll() {
         assertThat(mapper.map(E)).isNull();
-        // since and gmail_raw are not mapped here (#28/#29)
-        assertThat(mapper.map(E.withSince(java.time.Instant.EPOCH))).isNull();
+        // gmail_raw is not mapped here (#29)
+    }
+
+    // #28: coarse pre-filter only; the exact instant filter happens after INTERNALDATE is fetched
+    @Test
+    void sinceMapsToReceivedDateGeOnTheUtcDateMinusOneDayAtLocalNoon() {
+        // 2026-03-05T00:30+14:00 is 2026-03-04T10:30Z -> UTC date 03-04 -> SINCE 03-03
+        java.time.Instant since = java.time.OffsetDateTime.parse("2026-03-05T00:30:00+14:00").toInstant();
+        assertThat(mapper.map(E.withSince(since))).isInstanceOfSatisfying(ReceivedDateTerm.class, t -> {
+            assertThat(t.getComparison()).isEqualTo(ComparisonTerm.GE);
+            assertThat(ZonedDateTime.ofInstant(t.getDate().toInstant(), ZONE))
+                    .isEqualTo(ZonedDateTime.of(2026, 3, 3, 12, 0, 0, 0, ZONE));
+        });
+        assertThat(mapper.map(E.withSince(since).withSubject("x"))).isInstanceOf(jakarta.mail.search.AndTerm.class);
     }
 
     @Test
