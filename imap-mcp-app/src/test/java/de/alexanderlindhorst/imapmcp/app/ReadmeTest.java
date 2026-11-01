@@ -107,4 +107,41 @@ class ReadmeTest {
                 .contains("flavor: auto").contains("gimaps").contains("secret-tool store")
                 .contains("security add-generic-password").contains("within 5 minutes");
     }
+
+    /**
+     * The option table: every documented key must be accepted by the loader, and loading all of them at their
+     * documented defaults must equal loading a minimal config (so the table cannot drift from the code).
+     */
+    @Test
+    void optionTableMatchesLoaderDefaults(@TempDir Path dir) throws IOException {
+        Map<String, StringBuilder> sections = new java.util.LinkedHashMap<>();
+        Matcher m = Pattern.compile("(?m)^\\| `([a-zA-Z]+)\\.([a-zA-Z]+)` \\| `([^`]*)` \\|").matcher(readme);
+        int rows = 0;
+        while (m.find()) {
+            rows++;
+            sections.computeIfAbsent(m.group(1), k -> new StringBuilder(k + ":\n"))
+                    .append("  ").append(m.group(2)).append(": ").append(m.group(3)).append('\n');
+        }
+        assertThat(sections.keySet()).containsExactlyInAnyOrder("imap", "pool", "tools", "secrets", "http");
+        assertThat(rows).isGreaterThanOrEqualTo(24);
+        String account = "accounts:\n  - id: a\n    host: imap.example.com\n    username: u\n    password: env:X\n";
+        Path minimal = dir.resolve("minimal.yaml");
+        Files.writeString(minimal, account);
+        Path full = dir.resolve("full.yaml");
+        Files.writeString(full, account + String.join("", sections.values().stream().map(StringBuilder::toString).toList()));
+        AppConfig expected = ConfigLoader.load(minimal, Map.of());
+        AppConfig actual = ConfigLoader.load(full, Map.of());
+        assertThat(actual.imap()).isEqualTo(expected.imap());
+        assertThat(actual.pool()).isEqualTo(expected.pool());
+        assertThat(actual.tools()).isEqualTo(expected.tools());
+        assertThat(actual.secrets()).isEqualTo(expected.secrets());
+        assertThat(actual.http()).isEqualTo(expected.http());
+        assertThat(readme).contains("`http.token`").contains("`security.handleKey`");
+    }
+
+    @Test
+    void logStatementNamesTheTraceException() {
+        assertThat(readme).contains(
+                "not logged (except in the opt-in IMAP protocol trace below; credentials stay redacted there too)");
+    }
 }
