@@ -112,6 +112,8 @@ public final class SearchEnv implements AutoCloseable {
         sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");
+            p.put("mail.gimaps.ssl.trust", "*"); // Gmail-flavored accounts use the gimaps prefix
+            p.put("mail.gimaps.ssl.checkserveridentity", "false");
             return p;
         }, true);
         pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), capabilities,
