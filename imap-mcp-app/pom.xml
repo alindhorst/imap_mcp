@@ -156,4 +156,44 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <!-- Not part of the default build: builds the http-local image with the local Docker daemon (#50).
+         Runs in package, after the shade execution declared in <build> (same phase, plugin order). -->
+    <profile>
+      <id>docker</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>docker-build</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>docker</executable>
+                  <workingDirectory>${project.basedir}</workingDirectory>
+                  <arguments>
+                    <argument>build</argument>
+                    <argument>-f</argument>
+                    <argument>src/main/docker/Dockerfile</argument>
+                    <argument>--build-arg</argument>
+                    <argument>JAR_FILE=target/${project.build.finalName}-all.jar</argument>
+                    <argument>-t</argument>
+                    <argument>imap-mcp:${project.version}</argument>
+                    <argument>-t</argument>
+                    <argument>imap-mcp:latest</argument>
+                    <argument>.</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
