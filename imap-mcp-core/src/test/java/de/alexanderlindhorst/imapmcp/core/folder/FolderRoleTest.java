@@ -29,4 +29,12 @@ class FolderRoleTest {
         assertThat(FolderRole.fromWire("\\Sent")).isEmpty();
         assertThat(FolderRole.fromWire(null)).isEmpty();
     }
+
+    @Test
+    void fromAttributeIsCaseInsensitiveAndNeverMapsInboxOrUnknown() {
+        assertThat(FolderRole.fromAttribute("\\Sent")).contains(FolderRole.SENT);
+        assertThat(FolderRole.fromAttribute("\\IMPORTANT")).contains(FolderRole.IMPORTANT);
+        assertThat(FolderRole.fromAttribute("\\HasNoChildren")).isEmpty();
+        assertThat(FolderRole.fromAttribute(null)).isEmpty();
+    }
 }
