@@ -44,6 +44,9 @@ public final class RedactingDebugStream extends PrintStream {
         private final Consumer<String> sink;
         private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
         private boolean redactNextClientLine;
+        private boolean midLine;
+        private boolean currentLineRedacted;
+        private boolean continuedChunk;
 
         LineOutput(Consumer<String> sink) {
             this.sink = sink;
@@ -52,11 +55,11 @@ public final class RedactingDebugStream extends PrintStream {
         @Override
         public synchronized void write(int b) {
             if (b == '\n') {
-                emit();
+                emit(true);
             } else {
                 buf.write(b);
                 if (buf.size() >= MAX_LINE_BYTES) {
-                    emit();
+                    emit(false);
                 }
             }
         }
@@ -71,33 +74,40 @@ public final class RedactingDebugStream extends PrintStream {
         @Override
         public synchronized void flush() {
             if (buf.size() > 0) {
-                emit();
+                emit(false);
             }
         }
 
-        private void emit() {
+        /** Emits the buffered bytes; the redaction decision is made on the first chunk of a logical line only. */
+        private void emit(boolean endOfLine) {
             String line = buf.toString(StandardCharsets.UTF_8);
             buf.reset();
             if (line.endsWith("\r")) {
                 line = line.substring(0, line.length() - 1);
             }
-            sink.accept(redact(line));
+            if (!midLine) {
+                currentLineRedacted = decide(line);
+            }
+            midLine = !endOfLine;
+            if (endOfLine && line.isEmpty() && continuedChunk) {
+                continuedChunk = false;
+                return;
+            }
+            continuedChunk = !endOfLine;
+            sink.accept(currentLineRedacted ? REDACTED : line);
         }
 
-        private String redact(String line) {
+        private boolean decide(String line) {
             String body = line.startsWith("S: ") || line.startsWith("C: ") ? line.substring(3) : line;
             if (redactNextClientLine) {
                 redactNextClientLine = false;
-                return REDACTED;
+                return true;
             }
             if (body.equals("+") || body.startsWith("+ ")) {
                 redactNextClientLine = true;
-                return REDACTED;
+                return true;
             }
-            if (AUTH_COMMAND.matcher(body).find()) {
-                return REDACTED;
-            }
-            return line;
+            return AUTH_COMMAND.matcher(body).find();
         }
     }
 }
