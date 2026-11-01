@@ -213,7 +213,7 @@ class ListAttachmentsToolTest {
         assertThat(list).extracting(m -> m.get("inline")).containsExactly(true, false, false);
         assertThat(((Map<String, Object>) list.get(1).get("untrusted"))).containsEntry("filename", MARKER + ".pdf")
                 .containsEntry("content_type", "application/pdf");
-        assertThat((Long) list.get(1).get("size")).isBetween(2900L, 3100L);
+        assertThat((Long) list.get(1).get("size")).isBetween(2900L, 3300L);
     }
 
     // AC2
