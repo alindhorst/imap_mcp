@@ -139,6 +139,19 @@ class ToolErrorTest {
     }
 
     @Test
+    void upstreamErrorStripsBidiAndDoesNotSplitSurrogatePairAtCap() {
+        String text = "NO bad\r\n\u202Ereversed " + "x".repeat(185) + "\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00";
+        Map<?, ?> err = (Map<?, ?>) ToolError.upstreamError(text, RID).toMap().get("error");
+        String out = (String) ((Map<?, ?>) err.get("details")).get("server_text");
+        assertThat(out).doesNotContain("\n", "\r", "\u202E");
+        assertThat(out.codePointCount(0, out.length())).isLessThanOrEqualTo(200);
+        assertThat(out).startsWith("NO bad").doesNotContain("\uFFFD");
+        assertThat(Character.isHighSurrogate(out.charAt(out.length() - 1))).isFalse();
+        Map<String, Object> nullErr = (Map<String, Object>) ToolError.upstreamError(null, RID).toMap().get("error");
+        assertThat(nullErr.containsKey("details")).isFalse();
+    }
+
+    @Test
     void goldenRetryableCodes() {
         assertThat(json(ToolError.serverBusy(RID))).isEqualTo(
                 "{\"error\":{\"code\":\"SERVER_BUSY\","
