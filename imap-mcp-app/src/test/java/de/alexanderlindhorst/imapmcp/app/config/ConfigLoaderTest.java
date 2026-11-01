@@ -132,6 +132,10 @@ class ConfigLoaderTest {
                 Arguments.of("deadline above 10m", acct + "tools:\n  deadline: 11m\n", "tools.deadline"),
                 Arguments.of("maxBodyPartBytes above 64MiB", acct + "tools:\n  maxBodyPartBytes: 65MiB\n",
                         "tools.maxBodyPartBytes"),
+                Arguments.of("maxBodyPartBytes overflow wraps to 0", acct
+                        + "tools:\n  maxBodyPartBytes: 17179869184GiB\n", "tools.maxBodyPartBytes"),
+                Arguments.of("maxRequestBytes overflow wraps to 0", acct
+                        + "http:\n  maxRequestBytes: 17179869184GiB\n", "http.maxRequestBytes"),
                 Arguments.of("maxFolders", acct + "tools:\n  maxFolders: 0\n", "tools.maxFolders"),
                 Arguments.of("pool maxTotal", acct + "pool:\n  maxTotal: 0\n", "pool.maxTotal"),
                 Arguments.of("missing host", acct.replace("    host: h\n", ""), "accounts[0].host"),
