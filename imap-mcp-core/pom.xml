@@ -10,4 +10,24 @@
   </parent>
   <artifactId>imap-mcp-core</artifactId>
   <name>IMAP MCP :: Core</name>
+  <!-- No transport, Jetty, servlet or database dependency here (SPEC 5.2). -->
+  <dependencies>
+    <dependency>
+      <groupId>jakarta.mail</groupId>
+      <artifactId>jakarta.mail-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.angus</groupId>
+      <artifactId>angus-mail</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.icegreen</groupId>
+      <artifactId>greenmail-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 </project>
