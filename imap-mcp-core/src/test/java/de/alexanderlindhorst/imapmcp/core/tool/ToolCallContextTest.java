@@ -58,4 +58,12 @@ class ToolCallContextTest {
         assertThatThrownBy(() -> new ToolCallContext(new AccountContext(new TenantId("t")), null))
                 .isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    void deadlineIsAbsentUnlessGiven() {
+        assertThat(ctx().deadline()).isEmpty();
+        java.time.Instant d = java.time.Instant.parse("2026-01-01T00:00:00Z");
+        ToolCallContext c = new ToolCallContext(new AccountContext(new TenantId("t1")), "r", d);
+        assertThat(c.deadline()).contains(d);
+    }
 }
