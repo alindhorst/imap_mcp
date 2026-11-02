@@ -109,18 +109,27 @@ class ListAccountsToolTest {
 
     /** Builds repo, pool and tool for the given accounts of tenant A (and optionally tenant B). */
     void wire(Map<TenantId, List<MailAccount>> byTenant) {
-        wire(byTenant, PoolSettings.DEFAULTS, null);
+        wire(byTenant, PoolSettings.DEFAULTS, null, null);
     }
 
-    /** {@code missingSecrets} (account ids, may be mutated later) simulates deleted secrets; null for none. */
-    void wire(Map<TenantId, List<MailAccount>> byTenant, PoolSettings s, Set<String> missingSecrets) {
+    /**
+     * Account ids (sets may be mutated later, null for none): {@code missingSecrets} resolve to an empty Optional,
+     * {@code unreadableSecrets} throw like a deleted {@code file:} secret does in production.
+     */
+    void wire(Map<TenantId, List<MailAccount>> byTenant, PoolSettings s, Set<String> missingSecrets,
+            Set<String> unreadableSecrets) {
         repo = new InMemoryAccountRepository(byTenant);
         Map<PoolKey, MailAccount> byKey = new java.util.HashMap<>();
         byTenant.forEach((t, list) -> list.forEach(a -> byKey.put(
                 PoolKey.of(new AccountContext(t), new ResolvedAccount(t, a, "acc_x")), a)));
         pool = new StorePool(sessions,
-                (t, a) -> missingSecrets != null && missingSecrets.contains(a.value()) ? Optional.empty()
-                        : Optional.of(new Secret(PASSWORDS.get(a.value()).toCharArray())), cache,
+                (t, a) -> {
+                    if (unreadableSecrets != null && unreadableSecrets.contains(a.value())) {
+                        throw new IllegalStateException("secret file cannot be read");
+                    }
+                    return missingSecrets != null && missingSecrets.contains(a.value()) ? Optional.empty()
+                        : Optional.of(new Secret(PASSWORDS.get(a.value()).toCharArray()));
+                }, cache,
                 byKey::get, s);
         admission = new Admission(s);
         tool = new ListAccountsTool(repo, cache, new StoreLeases(pool, Duration.ofSeconds(10), admission), 4);
@@ -247,7 +256,7 @@ class ListAccountsToolTest {
                 account("zeta", "Zeta", "zeta", Flavor.GENERIC, null)));
         PoolSettings one = new PoolSettings(1, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
                 Duration.ofMinutes(30), Duration.ofSeconds(10), Duration.ofSeconds(30), Duration.ofSeconds(120));
-        wire(accts, one, null);
+        wire(accts, one, null, null);
         ResolvedAccount alpha = repo.findByTenant(A).stream()
                 .filter(r -> r.account().id().value().equals("alpha")).findFirst().orElseThrow();
         try (Admission.Permit held = admission.tryAcquire(PoolKey.of(new AccountContext(A), alpha))) {
@@ -261,8 +270,19 @@ class ListAccountsToolTest {
     void deletedSecretGivesUnknownAndOtherAccountsAreUnaffected() {
         Set<String> missing = new HashSet<>();
         wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null),
-                account("zeta", "Zeta", "zeta", Flavor.GENERIC, null))), PoolSettings.DEFAULTS, missing);
+                account("zeta", "Zeta", "zeta", Flavor.GENERIC, null))), PoolSettings.DEFAULTS, missing, null);
         missing.add("alpha");
+        List<Map<String, Object>> accounts = list(A);
+        assertThat(accounts.get(0)).containsEntry("status", "unknown").containsEntry("capabilities", null);
+        assertThat(accounts.get(1)).containsEntry("status", "ok");
+    }
+
+    @Test
+    void unreadableSecretFileGivesUnknownAndOtherAccountsAreUnaffected() {
+        Set<String> unreadable = new HashSet<>();
+        wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null),
+                account("zeta", "Zeta", "zeta", Flavor.GENERIC, null))), PoolSettings.DEFAULTS, null, unreadable);
+        unreadable.add("alpha");
         List<Map<String, Object>> accounts = list(A);
         assertThat(accounts.get(0)).containsEntry("status", "unknown").containsEntry("capabilities", null);
         assertThat(accounts.get(1)).containsEntry("status", "ok");
