@@ -40,6 +40,7 @@ public final class StateDirectory {
     private final char[] configuredToken;
     private final char[] configuredHandleKey;
     private final boolean posix;
+    private final PermissionSetter chmod;
     private boolean dirChecked;
     private char[] token;
     private byte[] handleKey;
@@ -54,6 +55,17 @@ public final class StateDirectory {
      * @param configuredHandleKey already resolved {@code security.handleKey} (base64url of 32 bytes), or null
      */
     public StateDirectory(Path dir, char[] configuredToken, char[] configuredHandleKey) {
+        this(dir, configuredToken, configuredHandleKey, Files::setPosixFilePermissions);
+    }
+
+    /** Test seam for the chmod calls (a refused or ineffective chmod is hard to provoke on a real file system). */
+    @FunctionalInterface
+    interface PermissionSetter {
+        void set(Path path, Set<PosixFilePermission> perms) throws IOException;
+    }
+
+    StateDirectory(Path dir, char[] configuredToken, char[] configuredHandleKey, PermissionSetter chmod) {
+        this.chmod = chmod;
         this.dir = dir;
         this.configuredToken = configuredToken == null ? null : configuredToken.clone();
         this.configuredHandleKey = configuredHandleKey == null ? null : configuredHandleKey.clone();
@@ -230,7 +242,7 @@ public final class StateDirectory {
             return;
         }
         LOG.warn("State path {} is accessible by group or others; restricting it to {}", path, octal);
-        Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(mode));
+        chmod.set(path, PosixFilePermissions.fromString(mode));
         if (looserThanOwner(Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS))) {
             LOG.warn("State path {} is still accessible by group or others after chmod {}", path, octal);
         }

@@ -250,18 +250,62 @@ class StateDirectoryTest {
         assertThatThrownBy(() -> new StateDirectory(dir).handleKey()).isInstanceOf(StateDirectoryException.class);
     }
 
-    @Test
-    void looseDirectoryWeCannotTightenFailsTheTokenAndMakesTheHandleKeyEphemeral() throws Exception {
-        Path foreign = Path.of("/usr"); // world-readable, owned by root: chmod is refused for us
-        assumeThat(Files.isDirectory(foreign)).isTrue();
-        assumeThat(Files.getOwner(foreign).getName()).as("not the current user")
-                .isNotEqualTo(System.getProperty("user.name"));
-        StateDirectory sd = new StateDirectory(foreign);
+    private static final StateDirectory.PermissionSetter REFUSED = (p, perms) -> {
+        throw new java.nio.file.AccessDeniedException(p.toString());
+    };
+
+    private void assertTokenFailsAndKeyMaterialIsEphemeral(StateDirectory sd, Path dir) throws Exception {
         assertThatThrownBy(sd::bearerToken).isInstanceOf(StateDirectoryException.class);
-        assertThat(sd.handleKey()).hasSize(32);
+        byte[] key = sd.handleKey();
+        assertThat(key).hasSize(32);
+        assertThat(sd.installationSalt()).hasSize(16);
         assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
                 && e.getFormattedMessage().contains("handles will be invalid after restart"));
-        assertThat(Files.exists(foreign.resolve("handle-key"))).isFalse();
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("account handles will change after restart"));
+        try (Stream<Path> s = Files.list(dir)) {
+            assertThat(s.map(f -> f.getFileName().toString())).as("nothing written")
+                    .doesNotContain("http-token", "installation-salt").noneMatch(n -> n.endsWith(".tmp"));
+        }
+    }
+
+    @Test
+    void refusedChmodOnALooseDirectoryFailsTheTokenAndMakesKeyAndSaltEphemeral() throws Exception {
+        Path dir = tmp.resolve("state");
+        Files.createDirectory(dir);
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        assertTokenFailsAndKeyMaterialIsEphemeral(new StateDirectory(dir, null, null, REFUSED), dir);
+        assertThat(Files.getPosixFilePermissions(dir)).isEqualTo(PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
+    @Test
+    void refusedChmodOnALooseExistingFileFailsTheTokenAndMakesKeyAndSaltEphemeral() throws Exception {
+        Path dir = tmp.resolve("state");
+        new StateDirectory(dir).bearerToken();
+        Files.setPosixFilePermissions(dir.resolve("http-token"), PosixFilePermissions.fromString("rw-r--r--"));
+        StateDirectory sd = new StateDirectory(dir, null, null, REFUSED);
+        assertThatThrownBy(sd::bearerToken).isInstanceOf(StateDirectoryException.class);
+        // a loose handle-key file: the key becomes ephemeral and the file is left as it was
+        new StateDirectory(dir).handleKey();
+        Files.setPosixFilePermissions(dir.resolve("handle-key"), PosixFilePermissions.fromString("rw-r--r--"));
+        String before = Files.readString(dir.resolve("handle-key"));
+        assertThat(sd.handleKey()).hasSize(32).isNotEqualTo(Base64.getUrlDecoder().decode(before.strip()));
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("handles will be invalid after restart"));
+        assertThat(Files.readString(dir.resolve("handle-key"))).isEqualTo(before);
+    }
+
+    @Test
+    void chmodThatSucceedsWithoutEffectOnlyWarns() throws Exception {
+        Path dir = tmp.resolve("state");
+        Files.createDirectory(dir);
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        StateDirectory sd = new StateDirectory(dir, null, null, (p, perms) -> { /* "succeeds", changes nothing */ });
+        assertThat(sd.bearerToken()).hasSize(43);
+        assertThat(sd.handleKey()).hasSize(32);
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("still accessible by group or others"));
+        assertThat(Files.exists(dir.resolve("http-token"))).isTrue();
     }
 
     // AC6
