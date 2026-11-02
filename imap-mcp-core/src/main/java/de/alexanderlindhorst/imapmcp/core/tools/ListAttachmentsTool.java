@@ -84,7 +84,7 @@ public final class ListAttachmentsTool implements ToolHandler {
                     BODYSTRUCTURE bs = (BODYSTRUCTURE) found.folder().doCommand(p -> p.fetchBodyStructure(seq));
                     if (bs == null) { // Angus returns null for a NO answer (and drops its text): not "no attachments"
                         return new ToolOutcome.Failure(ToolError.upstreamError(
-                                "BODYSTRUCTURE FETCH was rejected by the server", ctx.requestId()));
+                                null, ctx.requestId())); // no server text: Angus dropped it
                     }
                     String bodyPath = BodyPartSelector.select(bs).map(SelectedPart::sectionPath).orElse(null);
                     return new ToolOutcome.Success(output(accountHandle, messageHandle,
