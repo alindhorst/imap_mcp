@@ -25,7 +25,7 @@ doc/                      specification
 
 ## Conventions
 
-- Maven multi-module, group `de.alexanderlindhorst.imapmcp` (placeholder, see SPEC section 6).
+- Maven multi-module, group `de.alexanderlindhorst.imapmcp` (final, see SPEC section 5.2).
 - Dependency versions are pinned in the parent POM.
 - Logging goes to a file via Logback. Nothing but protocol messages may reach stdout in stdio mode.
 - Unit tests live in their module; slow/container tests only in `imap-mcp-it`.
@@ -42,6 +42,14 @@ mvn -B -Pdocker -pl imap-mcp-app -am package -DskipTests   # also builds the Doc
 ```
 
 `imap-mcp-app` produces the runnable shaded jar `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`; the thin jar stays the main artifact.
+
+## Release
+
+Master is protected, so every step that changes it goes through a PR and the gate `.claude/gitea-pr.sh`.
+1. Set the release version with `mvn -B versions:set -DnewVersion=<version> -DgenerateBackupPoms=false` (plugin version pinned on the command line) in a PR.
+2. Run `mvn -B clean verify` on the merge commit; only if it is green, put the annotated tag `v<version>` on exactly that commit.
+3. Attach `imap-mcp-app/target/imap-mcp-app-<version>-all.jar` and its SHA-256 checksum file (`.sha256`) to the Gitea release for the tag.
+4. Set the next `-SNAPSHOT` version the same way, via PR.
 
 ## Running
 
