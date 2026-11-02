@@ -25,6 +25,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -239,7 +240,7 @@ public final class GetMessageTool implements ToolHandler {
         out.put("account", account);
         out.put("handle", handle);
         out.put("folder", folder);
-        out.put("received_at", f.internalDate() == null ? null : f.internalDate().toInstant().toString());
+        out.put("received_at", f.internalDate() == null ? null : f.internalDate().toInstant().truncatedTo(ChronoUnit.SECONDS).toString());
         out.put("size", f.size() < 0 ? null : f.size());
         out.put("flags", flags(f.flags()));
         out.put("content_notice", UntrustedText.CONTENT_NOTICE);

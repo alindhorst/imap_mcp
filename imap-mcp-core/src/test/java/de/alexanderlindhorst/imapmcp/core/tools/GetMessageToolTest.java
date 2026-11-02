@@ -236,7 +236,7 @@ class GetMessageToolTest {
         assertThat(out).containsEntry("account", acctHandle).containsEntry("handle", h)
                 .containsEntry("folder", "INBOX").containsEntry("content_notice", UntrustedText.CONTENT_NOTICE);
         assertThat(out.get("size")).isInstanceOf(Number.class);
-        assertThat((String) out.get("received_at")).matches("\\d{4}-\\d{2}-\\d{2}T.*Z");
+        assertThat((String) out.get("received_at")).matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"); // whole seconds, like search_messages (#147 item 4)
         assertThat((List<String>) out.get("flags")).doesNotContain("\\Seen");
         Map<String, Object> u = untrusted(out);
         assertThat(u).containsEntry("subject", "Hello \u00fcber").containsEntry("recipients_truncated", false);
