@@ -402,9 +402,17 @@ class StdioFunctionalIT {
         }
     }
 
+    /**
+     * Self-contained (#143): reads mail itself (search, get_message with body and attachment), so the assertions are
+     * meaningful whatever ran before; unordered tests run after the {@code @Order}ed ones anyway.
+     */
     @Test
-    @Order(99)
     void theWholeFlowLeftNoMessageSeenAndLoggedNoMailContent() throws Exception {
+        resolveAccounts();
+        pageThroughInbox(tlsAccount);
+        call("get_message", args("account", tlsAccount, "message", HANDLES.get("plain-007")));
+        call("get_message", args("account", tlsAccount, "message", HANDLES.get(ATTACH_SUBJECT)));
+        call("list_attachments", args("account", tlsAccount, "message", HANDLES.get(ATTACH_SUBJECT)));
         try (MailSeeder seeder = DOVECOT.seeder(USER)) {
             for (String folder : List.of("INBOX", sentFolder)) {
                 IMAPFolder f = (IMAPFolder) seeder.store().getFolder(folder);
@@ -422,9 +430,8 @@ class StdioFunctionalIT {
         }
         // stderr and the log file must carry no mail content (subjects, bodies).
         String logs = String.join("\n", STDERR);
-        if (Files.exists(config.logFile())) {
-            logs += Files.readString(config.logFile());
-        }
+        assertThat(config.logFile()).as("the server's log file").exists();
+        logs += Files.readString(config.logFile());
         assertThat(logs).doesNotContain("plain-0").doesNotContain("body of message").doesNotContain("report.pdf")
                 .doesNotContain("long body line").doesNotContain("secret");
     }
