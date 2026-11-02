@@ -5,9 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import de.alexanderlindhorst.imapmcp.app.config.AppConfig;
 import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader;
+import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
+import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import de.alexanderlindhorst.imapmcp.store.secret.CommandRunner;
+import de.alexanderlindhorst.imapmcp.store.secret.Platform;
+import de.alexanderlindhorst.imapmcp.store.secret.RefCredentialStore;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -54,6 +60,42 @@ class ReadmeTest {
             AppConfig c = ConfigLoader.load(f, Map.of());
             assertThat(c.accounts()).isNotEmpty();
         }
+    }
+
+    /**
+     * #143 / #62: every {@code keyring:} reference in the README passes the store's own validation (form, length,
+     * control characters) and is looked up under exactly the service and account the README's storing commands use.
+     */
+    @Test
+    void keyringRefsPassTheStoreRulesAndMatchTheDocumentedStoreCommands(@TempDir Path dir) throws IOException {
+        List<List<String>> calls = new ArrayList<>();
+        CommandRunner runner = (argv, timeout) -> {
+            calls.add(List.copyOf(argv));
+            return new CommandRunner.Result(0, "pw".getBytes(java.nio.charset.StandardCharsets.UTF_8), 0);
+        };
+        Set<String> refs = new HashSet<>();
+        int i = 0;
+        for (String block : yamlBlocks()) {
+            Path f = dir.resolve("keyring-" + i++ + ".yaml");
+            Files.writeString(f, block);
+            List<MailAccount> accounts = ConfigLoader.load(f, Map.of()).accounts().stream()
+                    .map(AppConfig.Account::toMailAccount).toList();
+            RefCredentialStore store = RefCredentialStore.withEnvAndKeyring(new TenantId("local"), accounts, Map.of(),
+                    Platform.LINUX, runner, p -> true, Duration.ofSeconds(5));
+            for (MailAccount a : accounts) {
+                if (a.secretRef().value().startsWith("keyring:")) {
+                    store.validate(a.secretRef());
+                    refs.add(a.secretRef().value());
+                }
+            }
+        }
+        assertThat(refs).as("README keyring references").isNotEmpty();
+        assertThat(calls).hasSize(refs.size());
+        for (List<String> argv : calls) {
+            assertThat(argv).contains("imap-mcp", "work@example.com");
+        }
+        assertThat(readme).contains("service imap-mcp account work@example.com")
+                .contains("-s imap-mcp -a work@example.com");
     }
 
     /** AC2: env variables named in the README are exactly known ones (config overrides + path variables). */

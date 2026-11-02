@@ -13,11 +13,18 @@ import org.junit.jupiter.api.Test;
 class ArchitectureRulesTest {
 
     @ArchTest
-    static final ArchRule coreHasNoForbiddenDependencies = ArchitectureRules.CORE_HAS_NO_FORBIDDEN_DEPENDENCIES
-            .allowEmptyShould(true);
+    static final ArchRule coreHasNoForbiddenDependencies = ArchitectureRules.CORE_HAS_NO_FORBIDDEN_DEPENDENCIES;
 
     @ArchTest
-    static final ArchRule sdkOnlyInCoreMcp = ArchitectureRules.SDK_ONLY_IN_CORE_MCP.allowEmptyShould(true);
+    static final ArchRule sdkOnlyInCoreMcp = ArchitectureRules.SDK_ONLY_IN_CORE_MCP;
+
+    /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
+    @Test
+    void rulesFailOnAnEmptyClassSet() {
+        JavaClasses none = new ClassFileImporter().importPackages("de.alexanderlindhorst.imapmcp.core.doesnotexist");
+        assertThatThrownBy(() -> coreHasNoForbiddenDependencies.check(none)).isInstanceOf(AssertionError.class);
+        assertThatThrownBy(() -> sdkOnlyInCoreMcp.check(none)).isInstanceOf(AssertionError.class);
+    }
 
     @Test
     void guardDetectsJettyReferenceInFixture() {

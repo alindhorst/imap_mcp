@@ -11,6 +11,9 @@ public final class DockerGuard {
 
     static final String PROPERTY = "imapmcp.requireDocker";
 
+    /** Test seam for {@link DockerGuardTest}: the real probe unless a test replaces it. */
+    static volatile BooleanSupplier dockerProbe = () -> DockerClientFactory.instance().isDockerAvailable();
+
     private DockerGuard() {
     }
 
@@ -32,6 +35,6 @@ public final class DockerGuard {
 
     /** Called once per test run by {@link DockerGuardListener}. */
     static void requireFromSystemProperties() {
-        require(Boolean.getBoolean(PROPERTY), () -> DockerClientFactory.instance().isDockerAvailable());
+        require(Boolean.getBoolean(PROPERTY), dockerProbe);
     }
 }

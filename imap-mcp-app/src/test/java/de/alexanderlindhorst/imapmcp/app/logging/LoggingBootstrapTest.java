@@ -66,7 +66,9 @@ class LoggingBootstrapTest {
     @Test
     void protocolTraceLoggersAreCappedEvenWithRootTrace() throws Exception {
         String log = logText(fullRun(Map.of("IMAP_MCP_LOG_LEVEL", "TRACE")));
-        assertThat(log).doesNotContain("ANGUS-FINEST", "ANGUS-FINE", "MCP-DEBUG");
+        // every capped logger family of logback.xml: angus (JUL), jakarta.mail (JUL), MCP SDK and Jetty (SLF4J)
+        assertThat(log).contains("L-TRACE").doesNotContain("ANGUS-FINEST", "ANGUS-FINE", "MCP-DEBUG",
+                "JAKARTA-FINE", "JETTY-DEBUG");
     }
 
     @Test

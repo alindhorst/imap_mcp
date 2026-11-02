@@ -12,6 +12,7 @@ import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.Admission;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import eu.rekawek.toxiproxy.model.ToxicDirection;
@@ -91,6 +92,7 @@ class ToxiproxyFaultIT {
     private final class Fixture {
         final AppComponents components;
         final StorePool pool;
+        final Admission admission;
         final PoolKey key;
         final String account;
         private final Map<String, McpServerFeatures.SyncToolSpecification> specs = new HashMap<>();
@@ -132,6 +134,7 @@ class ToxiproxyFaultIT {
             });
             created.add(components);
             pool = AppComponentsAccess.pool(components);
+            admission = AppComponentsAccess.admission(components);
             components.statefulToolSpecs().forEach(s -> specs.put(s.tool().name(), s));
             when(exchange.transportContext()).thenReturn(McpTransportContext.EMPTY);
             key = PoolKey.of(components.accountContext(),
@@ -365,7 +368,7 @@ class ToxiproxyFaultIT {
         proxy.toxics().toxics().latency("slow", ToxicDirection.DOWNSTREAM, 20_000);
         AtomicReference<Result> first = new AtomicReference<>();
         Thread caller = Thread.ofPlatform().start(() -> first.set(f.search()));
-        Thread.sleep(500);
+        eventually("first call holds the mailbox permit", () -> f.admission.availableMailbox(f.key) == 0);
 
         Result second = f.search();
 
@@ -402,6 +405,9 @@ class ToxiproxyFaultIT {
     @Test
     void afterAllScenariosNothingLeaks() throws Exception {
         Fixture f = new Fixture("60s");
+        int globalBaseline = f.admission.availableGlobal();
+        int tenantBaseline = f.admission.availableTenant(f.key.tenantId());
+        int mailboxBaseline = f.admission.availableMailbox(f.key);
         proxy.toxics().toxics().resetPeer("reset", ToxicDirection.DOWNSTREAM, 0);
         assertThat(f.search().errorCode()).isEqualTo("UPSTREAM_UNAVAILABLE");
         clearToxics();
@@ -416,6 +422,10 @@ class ToxiproxyFaultIT {
         assertThat(f.search().ok()).isTrue();
         assertThat(f.search().ok()).isTrue();
         eventually("pool back to baseline", () -> f.active() == 0);
+        // Tenant and global permits are invisible to the SERVER_BUSY probe above (maxPerTenant/maxTotal are large).
+        eventually("no admission permit leaked", () -> f.admission.availableGlobal() == globalBaseline
+                && f.admission.availableTenant(f.key.tenantId()) == tenantBaseline
+                && f.admission.availableMailbox(f.key) == mailboxBaseline);
         assertThat(f.pool.numIdle(f.key)).isLessThanOrEqualTo(1);
         assertThat(f.pool.createdCount() - f.pool.destroyedCount()).isEqualTo(f.pool.numIdle(f.key));
     }

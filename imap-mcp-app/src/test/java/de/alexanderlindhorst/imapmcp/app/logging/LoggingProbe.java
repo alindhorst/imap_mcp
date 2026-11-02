@@ -42,6 +42,8 @@ public final class LoggingProbe {
         Logger.getLogger("org.eclipse.angus.mail.imap.protocol").finest("ANGUS-FINEST");
         Logger.getLogger("org.eclipse.angus.mail.imap.protocol").fine("ANGUS-FINE");
         LoggerFactory.getLogger("io.modelcontextprotocol.server").debug("MCP-DEBUG");
+        Logger.getLogger("jakarta.mail").fine("JAKARTA-FINE");
+        LoggerFactory.getLogger("org.eclipse.jetty.server").debug("JETTY-DEBUG");
         MDC.put("req", "REQ-1");
         MDC.put("tenant", "TENANT-1");
         MDC.put("tool", "TOOL-1");
@@ -61,23 +63,23 @@ public final class LoggingProbe {
     }
 
     /**
-     * Logback checks the file size only every few invocations or at most once per interval (internal
-     * invocation gate, not configurable), so log in batches until three files exist, bounded by a timeout.
+     * Logback checks the file size only every {@code mask + 1}-th invocation (DefaultInvocationGate); the mask starts
+     * at 15 and doubles every time two checks are less than 100 ms apart, up to 65535. Whether a given number of
+     * lines or seconds triggers a rollover is therefore timing dependent. A line budget above three full gate
+     * periods is not: once the active file is over the limit, a check (and with it a rollover) happens within 65536
+     * lines, so three files exist well before the budget is spent. Bounded by lines, not by time.
      */
     private static void rotate(Path dir) throws Exception {
         var log = LoggerFactory.getLogger("imapmcp.probe");
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
-        int n = 0;
-        while (System.nanoTime() < deadline) {
-            for (int i = 0; i < 300; i++) {
-                log.info("ROTATE-LINE-{} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", n++);
-            }
-            try (var files = java.nio.file.Files.list(dir)) {
-                if (files.count() > 2) {
-                    return;
+        for (int n = 0; n < 400_000; n++) {
+            log.info("ROTATE-LINE-{} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", n);
+            if (n % 1000 == 999) {
+                try (var files = java.nio.file.Files.list(dir)) {
+                    if (files.count() > 2) {
+                        return;
+                    }
                 }
             }
-            Thread.sleep(100);
         }
     }
 

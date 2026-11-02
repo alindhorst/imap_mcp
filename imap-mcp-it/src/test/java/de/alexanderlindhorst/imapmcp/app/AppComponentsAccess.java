@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.app;
 
 import de.alexanderlindhorst.imapmcp.app.config.AppConfig;
 import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.Admission;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
 import de.alexanderlindhorst.imapmcp.store.secret.Platform;
 import java.io.IOException;
@@ -27,6 +28,10 @@ public final class AppComponentsAccess {
                 (argv, timeout) -> {
                     throw new IOException("no command expected");
                 }, platform -> true);
+    }
+
+    public static Admission admission(AppComponents components) {
+        return components.admission();
     }
 
     public static StorePool pool(AppComponents components) {

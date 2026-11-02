@@ -73,16 +73,18 @@ public final class AppComponents implements AutoCloseable {
 
     private final ImapSessionFactory sessions;
     private final StorePool pool;
+    private final Admission admission;
     private final InMemoryMetricsRecorder metrics;
     private final ToolExecutor executor;
     private final StateDirectory state;
     private final Map<ToolDefinition, ToolHandler> tools;
     private boolean closed;
 
-    private AppComponents(ImapSessionFactory sessions, StorePool pool, InMemoryMetricsRecorder metrics,
-            ToolExecutor executor, StateDirectory state, Map<ToolDefinition, ToolHandler> tools) {
+    private AppComponents(ImapSessionFactory sessions, StorePool pool, Admission admission,
+            InMemoryMetricsRecorder metrics, ToolExecutor executor, StateDirectory state, Map<ToolDefinition, ToolHandler> tools) {
         this.sessions = sessions;
         this.pool = pool;
+        this.admission = admission;
         this.metrics = metrics;
         this.executor = executor;
         this.state = state;
@@ -163,7 +165,7 @@ public final class AppComponents implements AutoCloseable {
             tools.put(ListAttachmentsTool.DEFINITION, new ListAttachmentsTool(account, locator, leases));
 
             metrics.start();
-            return new AppComponents(sessions, pool, metrics, executor, state,
+            return new AppComponents(sessions, pool, admission, metrics, executor, state,
                     java.util.Collections.unmodifiableMap(tools));
         } catch (RuntimeException e) {
             if (metrics != null) {
@@ -223,6 +225,10 @@ public final class AppComponents implements AutoCloseable {
 
     StorePool pool() {
         return pool;
+    }
+
+    Admission admission() {
+        return admission;
     }
 
     @Override

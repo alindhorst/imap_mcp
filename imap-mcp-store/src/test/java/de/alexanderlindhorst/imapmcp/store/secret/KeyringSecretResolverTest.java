@@ -25,14 +25,13 @@ class KeyringSecretResolverTest {
     private static final String MARKER = "MARKER-SECRET-91d";
     private static final Duration TIMEOUT = Duration.ofMillis(300);
 
-    /** Fake runner: records argv, replays a canned outcome or simulates a hang (then records destruction). */
+    /** Fake runner: records argv, replays a canned outcome or simulates a hang (process destruction is verified against the real runner in ProcessCommandRunnerTest). */
     static final class FakeRunner implements CommandRunner {
         final List<List<String>> calls = new ArrayList<>();
         int exitCode;
         byte[] stdout = new byte[0];
         int stderrLength;
         boolean hang;
-        volatile boolean destroyed;
         IOException failToStart;
 
         FakeRunner reply(int exit, String out) {
@@ -53,7 +52,6 @@ class KeyringSecretResolverTest {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                destroyed = true;
                 throw new TimeoutException("timed out");
             }
             return new Result(exitCode, stdout.clone(), stderrLength);
@@ -177,7 +175,7 @@ class KeyringSecretResolverTest {
     }
 
     @Test
-    void hangingCommandTimesOutAndIsDestroyed() {
+    void hangingCommandIsMappedToATimeoutKind() {
         runner.hang = true;
         long start = System.nanoTime();
         assertThatThrownBy(() -> lookup(Platform.LINUX, "imap-mcp", "alice"))
@@ -186,7 +184,6 @@ class KeyringSecretResolverTest {
                     assertThat(e.getMessage()).contains("imap-mcp", "alice");
                 });
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(TIMEOUT.plusSeconds(1));
-        assertThat(runner.destroyed).isTrue();
     }
 
     @Test

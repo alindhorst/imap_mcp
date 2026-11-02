@@ -17,11 +17,18 @@ import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import com.icegreen.greenmail.util.GreenMail;
+import com.icegreen.greenmail.util.ServerSetupTest;
+import jakarta.mail.MessagingException;
 import jakarta.mail.NoSuchProviderException;
 import jakarta.mail.Session;
+import jakarta.mail.Store;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ScheduledExecutorService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -93,6 +100,69 @@ class ImapSessionFactoryTest {
         assertThat(p.get("mail.debug.auth.password")).hasToString("false");
         assertThat(p.get("mail.imaps.executor.writetimeout")).isInstanceOf(ScheduledExecutorService.class);
         assertThat(p.keySet().stream().map(Object::toString)).noneMatch(k -> k.contains("starttls"));
+    }
+
+    /** #143: the complete key set per protocol (nothing missing, nothing extra), with the values that matter. */
+    @Test
+    void exactKeySetAndValuesPerProtocol() {
+        record Case(MailAccount account, String protocol, boolean starttls) {
+        }
+        List<Case> cases = List.of(
+                new Case(account("a", Security.IMPLICIT_TLS, Flavor.GENERIC), "imaps", false),
+                new Case(account("b", Security.IMPLICIT_TLS, Flavor.GMAIL), "gimaps", false),
+                new Case(account("c", Security.STARTTLS, Flavor.GENERIC), "imap", true));
+        for (Case c : cases) {
+            Properties p = props(c.account());
+            String prefix = "mail." + c.protocol() + ".";
+            Set<String> expected = new TreeSet<>(Set.of("connectiontimeout", "timeout", "writetimeout",
+                    "executor.writetimeout", "connectionpoolsize", "ssl.checkserveridentity", "peek",
+                    "throwsearchexception", "sasl.enable", "auth.mechanisms").stream().map(k -> prefix + k).toList());
+            if (c.starttls()) {
+                expected.add(prefix + "starttls.enable");
+                expected.add(prefix + "starttls.required");
+            }
+            expected.addAll(Set.of("mail.debug.auth", "mail.debug.auth.username", "mail.debug.auth.password"));
+            Set<String> actual = new TreeSet<>();
+            p.keySet().forEach(k -> {
+                if (k.toString().startsWith("mail.")) {
+                    actual.add(k.toString());
+                }
+            });
+            assertThat(actual).as(c.protocol() + " exact key set").isEqualTo(expected);
+            assertThat(p.get(prefix + "ssl.checkserveridentity")).hasToString("true");
+            assertThat(p.get(prefix + "peek")).hasToString("true");
+            assertThat(p.get(prefix + "auth.mechanisms")).hasToString("LOGIN PLAIN");
+            assertThat(p.get(prefix + "sasl.enable")).hasToString("false");
+            assertThat(p.get(prefix + "connectionpoolsize")).hasToString("1");
+            assertThat(p.get(prefix + "throwsearchexception")).hasToString("true");
+            assertThat(p.get(prefix + "connectiontimeout")).hasToString("10000");
+            assertThat(p.get(prefix + "timeout")).hasToString("60000");
+            assertThat(p.get(prefix + "writetimeout")).hasToString("60000");
+            assertThat(p.get(prefix + "executor.writetimeout")).isInstanceOf(ScheduledExecutorService.class);
+            if (c.starttls()) {
+                assertThat(p.get(prefix + "starttls.enable")).hasToString("true");
+                assertThat(p.get(prefix + "starttls.required")).hasToString("true");
+            }
+        }
+    }
+
+    /** #143: STARTTLS is mandatory; a server that does not offer it must fail the connect, never fall back to plaintext. */
+    @Test
+    void starttlsAccountAgainstAServerWithoutStarttlsFailsWithoutLogin() throws Exception {
+        GreenMail plain = new GreenMail(ServerSetupTest.IMAP.dynamicPort());
+        plain.start();
+        try {
+            plain.setUser("u@localhost", "u", "pw");
+            MailAccount a = new MailAccount(new AccountId("s"), "label", null, "127.0.0.1",
+                    plain.getImap().getPort(), Security.STARTTLS, Flavor.GENERIC, "u", new SecretRef(SECRET_MARKER));
+            try (Store store = factory.sessionFor(key(a), a).getStore("imap")) {
+                assertThatThrownBy(() -> store.connect("127.0.0.1", plain.getImap().getPort(), "u", "pw"))
+                        .isInstanceOf(MessagingException.class);
+                assertThat(store.isConnected()).isFalse();
+            }
+        } finally {
+            plain.stop();
+        }
     }
 
     @Test
