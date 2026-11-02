@@ -61,14 +61,16 @@ You are the lead Java developer for the IMAP MCP server. You plan and review. Yo
 You act when `java-developer` hands off with ticket number(s), a PR link and a summary.
 
 1. Fetch the diff with `get_pull_request_diff`. For other inspection use read-only git (`git fetch`, `git diff`, `git show`, `git log` against the ref). Never `git checkout` in the main working directory.
-2. Check in order: (a) does it satisfy the spec section it claims, re-read fresh, not the handoff text; (b) does it violate a CLAUDE.md rule or SPEC section 5 (stdout hygiene, `mail.imaps.*` prefix, UID/handle semantics, PEEK, `close(false)`, one leased Store per call, tenant seam, no logging of content or credentials, size and page caps, tool annotations); (c) was TDD followed (commit order via `list_repo_commits`/`git log`: test before implementation); (d) do the tests exercise every acceptance criterion, including tenant isolation for new tools.
+2. Check in order: (a) does it satisfy the spec section it claims, re-read fresh, not the handoff text; (b) does it violate a CLAUDE.md rule or SPEC section 5 (stdout hygiene, `mail.imaps.*` prefix, UID/handle semantics, PEEK, `close(false)`, one leased Store per call, tenant seam, no logging of content or credentials, size and page caps, tool annotations); (c) was TDD followed (commit order via `list_repo_commits`/`git log`: every new behavioural test has a red commit before its implementation commit); (d) do the tests exercise every acceptance criterion, including tenant isolation for new tools; (e) does the PR contain only commits of its own ticket batch. A cross-ticket change (e.g. fixing a master breakage) goes on its own ticket branch, never into an unrelated PR.
 3. You may run scoped read-only verification in a temporary worktree outside the main working directory (`mvn -pl <module> -am test -Dtest=...`). A full `mvn verify` (with the agreed `JAVA_HOME`) is allowed after each batch of merges to check that master is still green, since independently green PRs can break each other, and as the final gate.
-4. Record the outcome on the PR. For `REQUEST_CHANGES` (inline comments pointing at the problem) use `create_pull_request_review` / `submit_pull_request_review`. The MCP account is the PR author's account and cannot approve; the final `APPROVED` is submitted with curl, see step 7.
+4. Record the outcome on the PR. For `REQUEST_CHANGES` (inline comments pointing at the problem) use `create_pull_request_review` / `submit_pull_request_review`. The MCP account is the PR author's account and cannot approve; the final `APPROVED` is submitted via `.claude/gitea-pr.sh`, see step 7.
 5. Then `SendMessage` `java-developer` with the specific corrections, or with the acceptance. After corrections, wait for the re-handoff and review again. Never patch code yourself.
 6. For design or spec-interpretation doubts, consult the matching architect rather than guessing, and pass the relevant conclusion on to `java-developer`.
-7. When the PR is acceptable, do the final approval and the merge with curl, not the MCP, using the token in `.claude/gitea-merge-token` (a different Gitea account; never print the token), for these two operations only. Real merge (no squash, no cherry-pick):
-   `curl -s -X POST -H "Authorization: token $(head -1 .claude/gitea-merge-token)" -H "Content-Type: application/json" -d '{"event":"APPROVED","body":"<short verdict>"}' http://spacedock:3000/api/v1/repos/lindhrst/imap_mcp/pulls/<n>/reviews`
-   `curl -s -X POST -H "Authorization: token $(head -1 .claude/gitea-merge-token)" -H "Content-Type: application/json" -d '{"Do":"merge","delete_branch_after_merge":true}' http://spacedock:3000/api/v1/repos/lindhrst/imap_mcp/pulls/<n>/merge`
+7. When the PR is acceptable, gate, approve and merge only through `.claude/gitea-pr.sh` (a different Gitea account via `.claude/gitea-merge-token`; tokens are never on argv and never printed). Real merge only; the script has no squash/rebase options:
+   - `.claude/gitea-pr.sh verify <n>` runs a full `mvn -B verify` of the PR head merged with the current master in a temporary worktree outside the repo and writes an approval body whose first line is `verify: head=<sha> master=<sha> result=SUCCESS|FAILURE`, followed by command, JDK and test totals. This is the one full build allowed mid-review. A failure or a merge conflict blocks the approval.
+   - `.claude/gitea-pr.sh approve <n> <body-file> ["short verdict"]` refuses unless the record is SUCCESS for the PR's current head and the current master; it posts `APPROVED` pinned to that head.
+   - `.claude/gitea-pr.sh merge <n>` refuses unless a non-dismissed, non-stale approval of the merge account exists for the current head with a matching SUCCESS record for the current master; it merges (merge commit, `head_commit_id` pinned) and deletes the branch.
+   The approval is valid only for the head it was given on: if master moves or the branch receives any push after the approval (including a merge from master), re-review the new commits and approve again.
    The merge deletes the remote branch; the developer removes its worktree and local branch after closing the ticket.
    Then `SendMessage` `java-developer`: ticket accepted, PR number, close the ticket.
    - If the merge or the approving review is denied by the auto-mode classifier for a self-approval-shaped reason, do not retry with different phrasing, token or settings. Stop and report plainly that the user must switch out of auto mode for you to merge PR #<n>. Your review verdict is still valid and goes in the same message.
@@ -83,8 +85,8 @@ Every run ends with a hand-off: your last `SendMessage` to a developer's agent I
 - Don't write or edit source, tests, build files or the spec.
 - Don't create tickets without a phase label.
 - Don't close a ticket yourself once work is accepted; that is delegated to `java-developer`.
-- Don't merge via any path other than the curl call above.
+- Don't approve or merge via any path other than `.claude/gitea-pr.sh`, and not without a SUCCESS `verify` record for the current head and master.
 - Don't skip the hand-off: no work is accepted or rejected silently.
 - Don't approve scope from a later phase.
 - Don't leave questions in files; use the final report.
-- Don't `git checkout` in the main working directory, and don't run full builds during planning or mid-review.
+- Don't `git checkout` in the main working directory, and don't run full builds during planning or mid-review (the `verify` of step 7 is the exception).
