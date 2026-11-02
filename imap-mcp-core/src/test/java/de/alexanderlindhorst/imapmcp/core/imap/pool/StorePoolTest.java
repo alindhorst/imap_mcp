@@ -111,6 +111,8 @@ class StorePoolTest {
     void defaultSettingsMatchSpec() {
         PoolSettings d = PoolSettings.DEFAULTS;
         assertThat(d.maxPerMailbox()).isEqualTo(3);
+        assertThat(d.maxPerTenant()).isEqualTo(8);
+        assertThat(d.abandonedTimeout()).isEqualTo(Duration.ofSeconds(120));
         assertThat(d.maxTotal()).isEqualTo(64);
         assertThat(d.idleEviction()).isEqualTo(Duration.ofMinutes(5));
         assertThat(d.validateAfterIdle()).isEqualTo(Duration.ofSeconds(60));
@@ -127,6 +129,8 @@ class StorePoolTest {
         assertThat(p.pool().getJmxName()).isNull();
         assertThat(p.pool().getDurationBetweenEvictionRuns()).isEqualTo(Duration.ofSeconds(30));
         assertThat(p.pool().getNumTestsPerEvictionRun()).isEqualTo(-1);
+        assertThat(p.pool().getRemoveAbandonedOnMaintenance()).isTrue();
+        assertThat(p.pool().getRemoveAbandonedTimeoutDuration()).isEqualTo(Duration.ofSeconds(120));
     }
 
     @Test

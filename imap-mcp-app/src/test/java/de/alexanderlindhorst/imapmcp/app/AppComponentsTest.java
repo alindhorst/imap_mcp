@@ -108,6 +108,23 @@ class AppComponentsTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void configuredPoolSettingsReachTheUnderlyingPool() throws Exception {
+        AppComponents c = create(config("env:MAIL_PW", "tools:\n  deadline: 5m\npool:\n  maxPerMailbox: 2\n"), NO_RUNNER);
+        // StorePool.pool() is package-private to core: read the commons-pool field reflectively
+        var field = de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool.class.getDeclaredField("pool");
+        field.setAccessible(true);
+        var pool = (org.apache.commons.pool2.impl.GenericKeyedObjectPool<?, ?>) field.get(c.pool());
+        assertThat(pool.getMaxTotalPerKey()).isEqualTo(2);
+        assertThat(pool.getMaxTotal()).isEqualTo(64);
+        assertThat(pool.getRemoveAbandonedOnMaintenance()).isTrue();
+        // derived from tools.deadline, not the 120 s default (#147 item 9)
+        assertThat(pool.getRemoveAbandonedTimeoutDuration())
+                .isEqualTo(AppComponents.abandonedTimeout(Duration.ofMinutes(5)))
+                .isEqualTo(Duration.ofMinutes(5).plusSeconds(30));
+    }
+
+    @Test
     void statefulSpecsAreExactlyTheFiveReadOnlyTools() throws IOException {
         List<McpServerFeatures.SyncToolSpecification> specs = create().statefulToolSpecs();
         assertThat(specs).extracting(s -> s.tool().name()).containsExactlyElementsOf(TOOLS);
