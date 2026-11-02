@@ -43,7 +43,11 @@ public final class RedactingDebugStream extends PrintStream {
     private static final class LineOutput extends OutputStream {
         private final Consumer<String> sink;
         private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        private boolean redactNextClientLine;
+        /**
+         * Set by a SASL continuation; per thread because one Session (and so one stream) serves several connections,
+         * and a connection is only ever driven by one thread at a time: continuation and client reply share a thread.
+         */
+        private final ThreadLocal<boolean[]> redactNextClientLine = ThreadLocal.withInitial(() -> new boolean[1]);
         private boolean midLine;
         private boolean currentLineRedacted;
         private boolean continuedChunk;
@@ -99,12 +103,13 @@ public final class RedactingDebugStream extends PrintStream {
 
         private boolean decide(String line) {
             String body = line.startsWith("S: ") || line.startsWith("C: ") ? line.substring(3) : line;
-            if (redactNextClientLine) {
-                redactNextClientLine = false;
+            boolean[] flag = redactNextClientLine.get();
+            if (flag[0]) {
+                flag[0] = false;
                 return true;
             }
             if (body.equals("+") || body.startsWith("+ ")) {
-                redactNextClientLine = true;
+                flag[0] = true;
                 return true;
             }
             return AUTH_COMMAND.matcher(body).find();
