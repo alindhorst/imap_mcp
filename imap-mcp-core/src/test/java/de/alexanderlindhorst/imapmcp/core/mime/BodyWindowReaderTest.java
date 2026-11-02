@@ -158,6 +158,40 @@ class BodyWindowReaderTest {
 
     // ---- AC1 ----
 
+    /** #138 AC4: an offset near Long.MAX_VALUE must not overflow into a negative partial-fetch length. */
+    private void assertHugeOffsetsYieldAnEmptyWindow(String cte) throws Exception {
+        open(single("plain", "short body", "UTF-8", cte));
+        BodyWindowReader r = new BodyWindowReader();
+        for (long offset : new long[] {Long.MAX_VALUE, Long.MAX_VALUE - 5, Long.MAX_VALUE / 3, 1L << 62, 1L << 61,
+            1L << 60, 1L << 59, 1L << 40, Integer.MAX_VALUE}) {
+            BodyWindow w = read(r, offset, 100_000);
+            assertThat(w.text()).as("offset " + offset).isEmpty();
+            assertThat(w.returnedChars()).isZero();
+            assertThat(w.truncated()).isFalse();
+            assertThat(w.nextOffset()).isNull();
+        }
+        // A negative length makes Angus drop the partial range and fetch the whole part: every body fetch must be a
+        // bounded "<0.n>" with n > 0.
+        List<String> fetches = debug.toString(StandardCharsets.UTF_8).lines()
+                .filter(l -> l.contains("BODY.PEEK[1")).toList();
+        assertThat(fetches).isNotEmpty().allMatch(l -> l.matches(".*BODY\\.PEEK\\[1\\]<0\\.[1-9]\\d*>.*"));
+    }
+
+    @Test
+    void hugeOffsetOn7bitBodyIsAnEmptyWindowWithoutANegativeFetchLength() throws Exception {
+        assertHugeOffsetsYieldAnEmptyWindow("7bit");
+    }
+
+    @Test
+    void hugeOffsetOnQuotedPrintableBodyIsAnEmptyWindowWithoutANegativeFetchLength() throws Exception {
+        assertHugeOffsetsYieldAnEmptyWindow("quoted-printable");
+    }
+
+    @Test
+    void hugeOffsetOnBase64BodyIsAnEmptyWindowWithoutANegativeFetchLength() throws Exception {
+        assertHugeOffsetsYieldAnEmptyWindow("base64");
+    }
+
     @Test
     void asciiPlainWindowsConcatenateToWhole() throws Exception {
         open(single("plain", repeat("line number # of the body\r\n", 150), "UTF-8", "7bit"));
