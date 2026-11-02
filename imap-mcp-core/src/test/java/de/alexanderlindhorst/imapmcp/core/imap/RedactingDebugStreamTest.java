@@ -131,4 +131,14 @@ class RedactingDebugStreamTest {
             Thread.currentThread().interrupt();
         }
     }
+
+    @Test
+    void printlnLineIsNotGluedToAnotherThreadsPartialBytes() throws Exception {
+        Thread other = new Thread(() -> write("* partial fragment of another connection"));
+        other.start();
+        other.join(5_000);
+        stream.println("A1 OK done");
+        // The whole logical line is handled in one call and never shares the byte buffer.
+        assertThat(lines).containsExactly("A1 OK done");
+    }
 }
