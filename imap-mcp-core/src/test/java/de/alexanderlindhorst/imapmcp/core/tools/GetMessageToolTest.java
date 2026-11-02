@@ -535,6 +535,45 @@ class GetMessageToolTest {
         assertThat(e.get("details")).isEqualTo(Map.of("field", "max_chars", "reason", "out_of_range", "max", 100000));
     }
 
+    // #138: offset has a published maximum (Integer.MAX_VALUE), enforced before any IMAP I/O
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void offsetPublishesTheIntMaximum() {
+        Map<String, Object> props = (Map<String, Object>) GetMessageTool.definition(100000).inputSchema()
+                .get("properties");
+        assertThat(((Map<String, Object>) props.get("offset")).get("maximum")).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    @Test
+    void offsetsAboveTheMaximumAreInvalidArgumentBeforeAnyImapIo() {
+        ValidatingToolHandler v = new ValidatingToolHandler(GetMessageTool.definition(100000), tool);
+        List<Object> bad = List.of(2147483648L, new java.math.BigInteger("9223372036854775808"),
+                new java.math.BigInteger("18446744073709551616"), 1e300, 2147483648.0, Long.MAX_VALUE);
+        for (Object offset : bad) {
+            Map<String, Object> e = error(v.handle(new ToolCallContext(new AccountContext(A), "rid"),
+                    Map.of("account", acctHandle, "message", "m", "offset", offset)));
+            assertThat(e).containsEntry("code", "INVALID_ARGUMENT");
+            assertThat(e.get("details")).as(String.valueOf(offset))
+                    .isEqualTo(Map.of("field", "offset", "reason", "out_of_range", "max", Integer.MAX_VALUE));
+        }
+        assertThat(pool.createdCount()).isZero();
+        assertThat(traceLines()).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void offsetAtTheMaximumOnAShortMessageIsAnEmptyWindowAndTheStoreIsReturned() throws Exception {
+        String h = deliver(plain("short", "tiny"));
+        ValidatingToolHandler v = new ValidatingToolHandler(GetMessageTool.definition(100000), tool);
+        ToolOutcome o = v.handle(new ToolCallContext(new AccountContext(A), "rid"),
+                Map.of("account", acctHandle, "message", h, "offset", Integer.MAX_VALUE));
+        Map<String, Object> b = body(ok(o));
+        assertThat(b).containsEntry("returned_chars", 0).containsEntry("text", "").containsEntry("truncated", false);
+        assertThat(pool.destroyedCount()).isZero();
+        assertThat(pool.createdCount()).isEqualTo(1);
+    }
+
     @Test
     void configuredCapLowersThePublishedMaximumAndTheValidatedLimit() {
         @SuppressWarnings("unchecked")

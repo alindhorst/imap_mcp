@@ -72,7 +72,8 @@ public final class BodyWindowReader {
         }
         int seq = msg.getMessageNumber();
 
-        long need = offset + maxChars + 1;
+        // saturating: an offset near Long.MAX_VALUE must not wrap into a negative target length
+        long need = offset > Long.MAX_VALUE - maxChars - 1 ? Long.MAX_VALUE : offset + maxChars + 1;
         long n = html ? limit : estimate(need, encoding, limit);
         String text = "";
         Charset charset = CharsetResolver.resolve(part.charsetParam());
