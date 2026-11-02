@@ -42,6 +42,8 @@ public final class LoggingProbe {
         Logger.getLogger("org.eclipse.angus.mail.imap.protocol").finest("ANGUS-FINEST");
         Logger.getLogger("org.eclipse.angus.mail.imap.protocol").fine("ANGUS-FINE");
         LoggerFactory.getLogger("io.modelcontextprotocol.server").debug("MCP-DEBUG");
+        Logger.getLogger("jakarta.mail").fine("JAKARTA-FINE");
+        LoggerFactory.getLogger("org.eclipse.jetty.server").debug("JETTY-DEBUG");
         MDC.put("req", "REQ-1");
         MDC.put("tenant", "TENANT-1");
         MDC.put("tool", "TOOL-1");
