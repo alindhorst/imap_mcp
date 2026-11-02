@@ -206,7 +206,7 @@ class ConfigLoaderTest {
     void invalidEnvOverrideNamesVariable() throws IOException {
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_HTTP_PORT", "abc")))
                 .hasMessageContaining("IMAP_MCP_HTTP_PORT");
-        for (String bad : List.of("grpc", "http", "http-public")) {
+        for (String bad : List.of("grpc", "http", "http-public", "STDIO", "Http-Local")) {
             String echoed = "was " + bad;
             assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_MODE", bad)))
                     .hasMessageContaining("IMAP_MCP_MODE").message().doesNotContain(echoed).doesNotContain(bad + ",");
