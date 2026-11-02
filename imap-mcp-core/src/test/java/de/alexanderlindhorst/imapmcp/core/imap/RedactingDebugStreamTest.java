@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class RedactingDebugStreamTest {
 
-    private final List<String> lines = new ArrayList<>();
+    private final List<String> lines = Collections.synchronizedList(new ArrayList<>());
     private final RedactingDebugStream stream = new RedactingDebugStream(lines::add);
 
     private void write(String s) {
@@ -95,5 +98,61 @@ class RedactingDebugStreamTest {
         assertThat(lines).noneMatch(l -> l.contains("ppp"));
         assertThat(lines.subList(0, lines.size() - 1)).allMatch("<redacted>"::equals);
         assertThat(lines.getLast()).isEqualTo("A2 OK");
+    }
+
+    @Test
+    void continuationFlagIsPerThread() throws Exception {
+        CountDownLatch continuationPrinted = new CountDownLatch(1);
+        CountDownLatch otherLinePrinted = new CountDownLatch(1);
+        Thread a = new Thread(() -> {
+            stream.println("S: + ");
+            continuationPrinted.countDown();
+            await(otherLinePrinted);
+            stream.println("C: AHVzZXIAbWFya2VyLXBhc3M=");
+        });
+        Thread b = new Thread(() -> {
+            await(continuationPrinted);
+            stream.println("S: * OK still here");
+            otherLinePrinted.countDown();
+        });
+        a.start();
+        b.start();
+        a.join(5_000);
+        b.join(5_000);
+        // Thread B's line is not consumed as the client reply of thread A's continuation, and A's reply is redacted.
+        assertThat(lines).containsExactlyInAnyOrder("<redacted>", "S: * OK still here", "<redacted>");
+        assertThat(lines).doesNotContain("C: AHVzZXIAbWFya2VyLXBhc3M=");
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
+    void printlnLineIsNotGluedToAnotherThreadsPartialBytes() throws Exception {
+        Thread other = new Thread(() -> write("* partial fragment of another connection"));
+        other.start();
+        other.join(5_000);
+        stream.println("A1 OK done");
+        // The whole logical line is handled in one call and never shares the byte buffer.
+        assertThat(lines).containsExactly("A1 OK done");
+    }
+
+    @Test
+    void printlnSplitsStripsAndChunksLogicalLines() {
+        stream.println("A1 OK\r\nA2 LOGIN u p\r\n* x");
+        stream.println((Object) "A3 OK");
+        stream.println();
+        stream.println("x".repeat(RedactingDebugStream.MAX_LINE_BYTES + 10));
+        stream.println("+ ");
+        stream.println("p".repeat(RedactingDebugStream.MAX_LINE_BYTES + 10));
+        stream.println("A4 OK");
+        assertThat(lines).containsExactly("A1 OK", "<redacted>", "* x", "A3 OK", "",
+                "x".repeat(RedactingDebugStream.MAX_LINE_BYTES), "x".repeat(10),
+                "<redacted>", "<redacted>", "<redacted>", "A4 OK");
     }
 }
