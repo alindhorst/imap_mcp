@@ -3,7 +3,6 @@ package de.alexanderlindhorst.imapmcp.core.search;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.Normalizer;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
@@ -12,8 +11,10 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * First 8 bytes of SHA-256 over the canonical JSON of the normalized criteria plus the resolved folder
- * full name. The JSON is written by hand (sorted keys, minimal escaping) so a library upgrade cannot change
+ * First 8 bytes of SHA-256 over the canonical JSON of the criteria plus the resolved folder full name. Strings are
+ * hashed exactly as they are sent in the SEARCH (no NFC, no strip); {@code SearchArguments} is the only place that
+ * canonicalizes. Cursors issued before this change carry a hash of the old normalization and get one
+ * {@code criteria_mismatch}. The JSON is written by hand (sorted keys, minimal escaping) so a library upgrade cannot change
  * hashes of cursors already handed out. page_size and cursor are not part of {@link SearchCriteria}.
  */
 public final class QueryHash {
@@ -56,7 +57,7 @@ public final class QueryHash {
         List<String> kw = c.keywords();
         if (kw != null && !kw.isEmpty()) {
             TreeSet<String> sorted = new TreeSet<>(); // natural String order = UTF-16 code unit order, stable
-            kw.forEach(k -> sorted.add(normalize(k)));
+            sorted.addAll(kw);
             StringBuilder sb = new StringBuilder("[");
             for (String k : sorted) {
                 if (sb.length() > 1) {
@@ -77,14 +78,10 @@ public final class QueryHash {
         return out.append('}').toString();
     }
 
-    private static String normalize(String s) {
-        return Normalizer.normalize(s.strip(), Normalizer.Form.NFC);
-    }
-
     private static void putString(Map<String, String> fields, String key, String value) {
         if (value != null) {
             StringBuilder sb = new StringBuilder();
-            quote(sb, normalize(value));
+            quote(sb, value);
             fields.put(key, sb.toString());
         }
     }

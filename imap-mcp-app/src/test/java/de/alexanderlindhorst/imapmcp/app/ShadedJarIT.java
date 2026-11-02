@@ -76,7 +76,11 @@ class ShadedJarIT {
 
     @Test
     void mailcapFilesAreMerged() throws IOException {
-        assertThat(text("META-INF/mailcap")).isNotBlank();
+        // angus-mail contributes the handlers; gimap ships no mailcap of its own (#147 item 9)
+        for (String name : List.of("META-INF/mailcap", "META-INF/jakarta.mailcap")) {
+            assertThat(text(name)).as(name).contains("org.eclipse.angus.mail.handlers.text_plain")
+                    .contains("org.eclipse.angus.mail.handlers.multipart_mixed");
+        }
     }
 
     @Test

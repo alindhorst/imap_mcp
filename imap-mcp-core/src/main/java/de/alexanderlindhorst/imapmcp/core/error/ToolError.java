@@ -125,7 +125,8 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
     public static ToolError authFailed(String requestId) {
         return of(ErrorCode.AUTH_FAILED,
                 "Authentication to the IMAP server failed. Ask the operator to check the account credentials.",
-                "Do not retry; the credentials must be fixed by the operator.", null, requestId);
+                "Update credentials / app password in server config. Do not retry; the credentials must be fixed by the operator.",
+                null, requestId);
     }
 
     public static ToolError serverBusy(String requestId) {

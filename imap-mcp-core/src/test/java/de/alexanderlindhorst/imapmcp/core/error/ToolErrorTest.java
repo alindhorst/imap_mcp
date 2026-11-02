@@ -31,6 +31,17 @@ class ToolErrorTest {
     }
 
     @Test
+    void goldenAuthFailed() {
+        assertThat(json(ToolError.authFailed(RID))).isEqualTo(
+                "{\"error\":{\"code\":\"AUTH_FAILED\","
+                        + "\"message\":\"Authentication to the IMAP server failed. Ask the operator to check the account "
+                        + "credentials.\",\"retryable\":false,"
+                        + "\"hint\":\"Update credentials / app password in server config. Do not retry; the credentials "
+                        + "must be fixed by the operator.\","
+                        + "\"request_id\":\"req-1\"}}");
+    }
+
+    @Test
     void goldenInvalidHandle() {
         assertThat(json(ToolError.invalidHandle(RID))).isEqualTo(
                 "{\"error\":{\"code\":\"INVALID_HANDLE\","
@@ -233,7 +244,9 @@ class ToolErrorTest {
 
     @Test
     void payloadsNeverLeakExceptionDetails() {
-        Exception ex = new java.net.UnknownHostException("marker-host.example.invalid");
+        // the marker travels through the real mapper, whose result must not carry it
+        ToolError mapped = ImapErrorMapper.map(new java.net.UnknownHostException("marker-host.example.invalid"), RID)
+                .error();
         // the API cannot accept a Throwable
         for (Method m : ToolError.class.getDeclaredMethods()) {
             for (Class<?> p : m.getParameterTypes()) {
@@ -241,9 +254,8 @@ class ToolErrorTest {
             }
         }
         for (ToolError e : new ToolError[] {ToolError.internalError(RID), ToolError.upstreamUnavailable(RID),
-                ToolError.timeout(RID), ToolError.authFailed(RID), ToolError.serverBusy(RID)}) {
+                ToolError.timeout(RID), ToolError.authFailed(RID), ToolError.serverBusy(RID), mapped}) {
             assertThat(json(e)).doesNotContain("marker-host", "UnknownHostException", "java.", "\\tat ", "Exception");
         }
-        assertThat(ex.getMessage()).contains("marker-host");
     }
 }

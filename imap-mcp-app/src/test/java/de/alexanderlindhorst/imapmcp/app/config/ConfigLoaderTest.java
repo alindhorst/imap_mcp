@@ -206,7 +206,7 @@ class ConfigLoaderTest {
     void invalidEnvOverrideNamesVariable() throws IOException {
         assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_HTTP_PORT", "abc")))
                 .hasMessageContaining("IMAP_MCP_HTTP_PORT");
-        for (String bad : List.of("grpc", "http", "http-public")) {
+        for (String bad : List.of("grpc", "http", "http-public", "STDIO", "Http-Local")) {
             String echoed = "was " + bad;
             assertThatThrownBy(() -> load(ACCOUNT, Map.of("IMAP_MCP_MODE", bad)))
                     .hasMessageContaining("IMAP_MCP_MODE").message().doesNotContain(echoed).doesNotContain(bad + ",");
@@ -230,7 +230,8 @@ class ConfigLoaderTest {
         }
         assertThat(load(ACCOUNT.replace("mail.example.org", "imap.gmail.com.evil.example")).accounts().get(0)
                 .flavor()).isEqualTo(MailAccount.Flavor.GENERIC);
-        AppConfig forced = load(ACCOUNT + "    flavor: generic\n".replace("    ", "    "));
+        // an explicit flavor overrides the Gmail host detection (#147 item 9)
+        AppConfig forced = load(ACCOUNT.replace("mail.example.org", "imap.gmail.com") + "    flavor: generic\n");
         assertThat(forced.accounts().get(0).flavor()).isEqualTo(MailAccount.Flavor.GENERIC);
     }
 

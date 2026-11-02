@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.metrics;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -98,9 +99,16 @@ class MetricsSummaryLogTest {
     }
 
     @Test
-    void privateVirtualThreadSchedulerIsShutDownOnClose() {
+    void privateVirtualThreadSchedulerIsShutDownOnClose() throws Exception {
+        assertThat(InMemoryMetricsRecorder.DEFAULT_SUMMARY_PERIOD).isEqualTo(Duration.ofMinutes(5));
+        rec.operation(TENANT, "t", "o", Duration.ofMillis(1));
         rec.start();
+        Thread.sleep(150);
+        assertThat(lines()).as("the default period is minutes, not milliseconds").isEmpty();
+        assertThatThrownBy(rec::start).isInstanceOf(IllegalStateException.class); // running
         rec.close();
         rec.close(); // idempotent
+        rec.start(); // closed, so it can start again
+        rec.close();
     }
 }
