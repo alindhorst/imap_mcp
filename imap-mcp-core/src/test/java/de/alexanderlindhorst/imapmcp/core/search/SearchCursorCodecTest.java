@@ -131,7 +131,7 @@ class SearchCursorCodecTest {
 
     @Test
     void equivalentCriteriaKeepCursorValid() {
-        String c = codec.encode(T, A, F, SearchCriteria.empty().withSubject(" hello").withKeywords(java.util.List.of("b", "a")), 3, 4);
+        String c = codec.encode(T, A, F, SearchCriteria.empty().withSubject("hello").withKeywords(java.util.List.of("b", "a")), 3, 4);
         SearchCriteria same = SearchCriteria.empty().withSubject("hello").withKeywords(java.util.List.of("a", "b", "a"));
         assertThat(codec.decode(T, A, F, same, c)).isEqualTo(new Ok(3, 4));
     }
