@@ -7,10 +7,13 @@ import jakarta.mail.search.SearchTerm;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.eclipse.angus.mail.iap.ByteArray;
 import org.eclipse.angus.mail.iap.Response;
@@ -255,17 +258,16 @@ public final class PageFetcher {
         return hits(fetch(folder, seqs, "UID INTERNALDATE"), seqs);
     }
 
-    /** Package-private for tests with fabricated responses. */
+    /**
+     * Package-private for tests with fabricated responses. Only responses for the requested seqs count (unsolicited
+     * FETCH data for other messages may arrive during any command, RFC 3501 7.4.2); the items of one seq may be
+     * split over several responses and are merged.
+     */
     static List<Hit> hits(Response[] responses, int[] seqs) {
         List<Hit> hits = new ArrayList<>();
-        for (Response r : responses) {
-            // getItem hands out each item once, so it is read exactly once per class
-            if (r instanceof FetchResponse f) {
-                UID uid = f.getItem(UID.class);
-                if (uid != null) {
-                    INTERNALDATE received = f.getItem(INTERNALDATE.class);
-                    hits.add(new Hit(uid.uid, f.getNumber(), received == null ? null : received.getDate()));
-                }
+        for (Merged m : merge(responses, seqs)) {
+            if (m.uid != null) {
+                hits.add(new Hit(m.uid.uid, m.seq, m.received == null ? null : m.received.getDate()));
             }
         }
         return hits;
@@ -278,26 +280,68 @@ public final class PageFetcher {
         return rows(fetch(folder, sorted, SUMMARY_ITEMS), sorted);
     }
 
-    /** Package-private for tests with fabricated responses. */
+    /**
+     * Package-private for tests with fabricated responses. A row needs the UID and the ENVELOPE of a requested seq,
+     * merged over all its responses; anything else (unsolicited, FLAGS-only, partial) creates no row.
+     */
     static List<Row> rows(Response[] responses, int[] seqs) {
         List<Row> rows = new ArrayList<>();
-        for (Response r : responses) {
-            if (!(r instanceof FetchResponse f)) {
+        for (Merged m : merge(responses, seqs)) {
+            if (m.uid == null || m.envelope == null) {
                 continue;
             }
-            UID id = f.getItem(UID.class);
-            if (id == null) {
-                continue;
-            }
-            INTERNALDATE received = f.getItem(INTERNALDATE.class);
-            RFC822SIZE size = f.getItem(RFC822SIZE.class);
-            FLAGS flags = f.getItem(FLAGS.class);
-            rows.add(new Row(id.uid, f.getItem(ENVELOPE.class), flags == null ? new Flags() : flags,
-                    received == null ? null : received.getDate(), size == null ? 0 : size.size,
-                    f.getItem(BODYSTRUCTURE.class), dateHeader(f.getItem(BODY.class))));
+            rows.add(new Row(m.uid.uid, m.envelope, m.flags == null ? new Flags() : m.flags,
+                    m.received == null ? null : m.received.getDate(), m.size == null ? 0 : m.size.size,
+                    m.structure, dateHeader(m.body)));
         }
         rows.sort(Comparator.comparingLong(Row::uid).reversed());
         return rows;
+    }
+
+    /** The items of one sequence number over all its FETCH responses; the first of each kind wins, FLAGS the last. */
+    private static final class Merged {
+        final int seq;
+        UID uid;
+        FLAGS flags;
+        INTERNALDATE received;
+        RFC822SIZE size;
+        ENVELOPE envelope;
+        BODYSTRUCTURE structure;
+        BODY body;
+
+        Merged(int seq) {
+            this.seq = seq;
+        }
+    }
+
+    private static Collection<Merged> merge(Response[] responses, int[] seqs) {
+        Set<Integer> requested = new HashSet<>();
+        for (int s : seqs) {
+            requested.add(s);
+        }
+        Map<Integer, Merged> bySeq = new LinkedHashMap<>();
+        for (Response r : responses) {
+            if (!(r instanceof FetchResponse f) || !requested.contains(f.getNumber())) {
+                continue;
+            }
+            Merged m = bySeq.computeIfAbsent(f.getNumber(), Merged::new);
+            // getItem hands out each item once, so it is read exactly once per class
+            UID uid = f.getItem(UID.class);
+            m.uid = m.uid == null ? uid : m.uid;
+            FLAGS flags = f.getItem(FLAGS.class);
+            m.flags = flags == null ? m.flags : flags;
+            INTERNALDATE received = f.getItem(INTERNALDATE.class);
+            m.received = m.received == null ? received : m.received;
+            RFC822SIZE size = f.getItem(RFC822SIZE.class);
+            m.size = m.size == null ? size : m.size;
+            ENVELOPE envelope = f.getItem(ENVELOPE.class);
+            m.envelope = m.envelope == null ? envelope : m.envelope;
+            BODYSTRUCTURE structure = f.getItem(BODYSTRUCTURE.class);
+            m.structure = m.structure == null ? structure : m.structure;
+            BODY body = f.getItem(BODY.class);
+            m.body = m.body == null ? body : m.body;
+        }
+        return bySeq.values();
     }
 
     private static String dateHeader(BODY body) {
