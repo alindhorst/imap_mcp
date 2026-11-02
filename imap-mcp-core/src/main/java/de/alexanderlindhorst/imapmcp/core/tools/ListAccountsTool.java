@@ -35,8 +35,10 @@ import org.slf4j.LoggerFactory;
  * {@code list_accounts} (SPEC 4): the tenant's linked mailboxes with a capability summary. Capabilities come
  * from the {@link CapabilityCache}; a Missing or Expired entry is refreshed by leasing a connection through
  * {@link StoreLeases} (admission and timeouts apply) and reading the capabilities right after login. No folder
- * is ever opened. A failing account never fails the call: it gets {@code auth_failed} or {@code unreachable}
- * and its stale capabilities if cached. Addresses are returned but never logged.
+ * is ever opened. A failing account never fails the call: it gets {@code auth_failed} (login refused),
+ * {@code unreachable} (UPSTREAM_UNAVAILABLE, TIMEOUT, UPSTREAM_ERROR: connect, TLS, no answer, server refusal) or
+ * {@code unknown} (any other code, e.g. SERVER_BUSY admission refusal or an unreadable secret: the probe did
+ * not complete for a local reason), and its stale capabilities if cached. Addresses are returned but never logged.
  */
 public final class ListAccountsTool implements ToolHandler {
 
@@ -175,8 +177,13 @@ public final class ListAccountsTool implements ToolHandler {
         }
     }
 
+    /** Status of a failed probe: the server is at fault (unreachable), the login is (auth_failed), else unknown. */
     static String statusFor(ErrorCode code) {
-        return code == ErrorCode.AUTH_FAILED ? "auth_failed" : "unreachable";
+        return switch (code) {
+            case AUTH_FAILED -> "auth_failed";
+            case UPSTREAM_UNAVAILABLE, TIMEOUT, UPSTREAM_ERROR -> "unreachable";
+            default -> "unknown"; // SERVER_BUSY, INTERNAL_ERROR: the probe did not complete for a local reason
+        };
     }
 
     private static Map<String, Object> capabilityMap(ImapCapabilities c) {
