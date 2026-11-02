@@ -11,6 +11,7 @@ set -euo pipefail
 BASE="${GITEA_URL:-http://spacedock:3000}/api/v1/repos/lindhrst/imap_mcp"
 API="${GITEA_URL:-http://spacedock:3000}/api/v1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 TOKEN_FILE="${GITEA_MERGE_TOKEN_FILE:-$SCRIPT_DIR/gitea-merge-token}"
 HEX40='[0-9a-f]{40}'
 
@@ -33,7 +34,7 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/gitea-pr.XXXXXX")
 RESP="$TMP/resp.json"
 WT=""
 cleanup() {
-  if [[ -n "$WT" ]]; then git worktree remove --force "$WT" >/dev/null 2>&1 || true; fi
+  if [[ -n "$WT" ]]; then git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || true; fi
   # keep the temp dir when it holds the approval body / build log of a verify run
   [[ -n "${KEEP_TMP:-}" ]] || rm -rf "$TMP"
 }
@@ -71,12 +72,12 @@ cmd_verify() {
   local n="${1:?usage: verify <n>}"
   pr_info "$n"
   KEEP_TMP=1
-  git fetch -q origin
-  local master; master=$(git rev-parse origin/master)
+  git -C "$REPO" fetch -q origin
+  local master; master=$(git -C "$REPO" rev-parse origin/master)
   [[ "$master" == "$MASTER_SHA" ]] || die "local origin/master ($master) differs from the API master ($MASTER_SHA)"
-  git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null || git fetch -q origin "refs/pull/$n/head"
+  git -C "$REPO" cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null || git -C "$REPO" fetch -q origin "refs/pull/$n/head"
   WT="$TMP/wt"
-  git worktree add -q --detach "$WT" "$HEAD_SHA"
+  git -C "$REPO" worktree add -q --detach "$WT" "$HEAD_SHA"
   local log="$TMP/verify.log" result=SUCCESS jdk="${JAVA_HOME:-/usr/lib/jvm/java-26}"
   if ! git -C "$WT" merge -q --no-edit "$master" >"$TMP/merge.log" 2>&1; then
     echo "gitea-pr: merge of origin/master into the PR head conflicts; resolve it on the branch, then re-run" >&2

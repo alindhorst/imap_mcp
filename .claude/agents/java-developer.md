@@ -62,7 +62,8 @@ Never run a full `mvn verify`; scoped single-module/single-test commands only. C
 - Use `JAVA_HOME` as given in your prompt for every Maven call; the default `mvn` may run another JDK.
 - One branch per ticket (or per related group), with the issue number identifiable in the branch name. Follow-ups and unrelated fixes (e.g. a broken master) go on their own ticket branch, never into another ticket's PR.
 - Any push after the lead's approval (including a merge from master) invalidates it: tell the lead, who re-reviews and approves again.
-- Always push with `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or `git push -u`: the global `push.default=upstream` would send the commits to `master`.- Commit after each TDD unit, keeping the red/green history intact: every new behavioural test is committed red before the implementation commit. Every commit message references the ticket number and title.
+- Always push with `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or `git push -u`: the global `push.default=upstream` would send the commits to `master`.
+- Commit after each TDD unit, keeping the red/green history intact: every new behavioural test is committed red before the implementation commit. Every commit message references the ticket number and title.
 - Push and open a PR with `create_pull_request` that references the issue number(s) by number and title. Avoid auto-close keywords (`Closes`/`Fixes`/`Resolves #N`) in commits and PR body: closure is gated on the lead's acceptance.
 - Comment on the ticket when you start and again with the PR link. Keep state labels current if the repo uses them.
 
