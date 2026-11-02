@@ -21,21 +21,23 @@ class QueryHashTest {
     }
 
     @Test
-    void trimsStrings() {
-        assertThat(h(EMPTY.withSubject("  Foo"))).isEqualTo(h(EMPTY.withSubject("Foo")));
-        assertThat(h(EMPTY.withSubject("Foo\t\n "))).isEqualTo(h(EMPTY.withSubject("Foo")));
+    void hashesExactlyTheStringsSentInTheSearchWithoutTrimming() {
+        // SearchArguments is the only place that canonicalizes; the hash covers what SEARCH sends (#147 item 5)
+        assertThat(h(EMPTY.withSubject("  Foo"))).isNotEqualTo(h(EMPTY.withSubject("Foo")));
+        assertThat(h(EMPTY.withSubject("Foo\t\n "))).isNotEqualTo(h(EMPTY.withSubject("Foo")));
     }
 
     @Test
-    void normalizesToNfcButPreservesCase() {
-        assertThat(h(EMPTY.withFrom("e\u0301"))).isEqualTo(h(EMPTY.withFrom("\u00e9")));
+    void doesNotNormalizeUnicodeAndPreservesCase() {
+        assertThat(h(EMPTY.withFrom("e\u0301"))).isNotEqualTo(h(EMPTY.withFrom("\u00e9")));
         assertThat(h(EMPTY.withFrom("Foo"))).isNotEqualTo(h(EMPTY.withFrom("foo")));
     }
 
     @Test
     void keywordsAreSortedAndDeduplicated() {
         assertThat(h(EMPTY.withKeywords(List.of("b", "a", "b")))).isEqualTo(h(EMPTY.withKeywords(List.of("a", "b"))));
-        assertThat(h(EMPTY.withKeywords(List.of(" a", "e\u0301")))).isEqualTo(h(EMPTY.withKeywords(List.of("\u00e9", "a"))));
+        assertThat(h(EMPTY.withKeywords(List.of("e\u0301", "a")))).isEqualTo(h(EMPTY.withKeywords(List.of("a", "e\u0301"))));
+        assertThat(h(EMPTY.withKeywords(List.of("e\u0301")))).isNotEqualTo(h(EMPTY.withKeywords(List.of("\u00e9"))));
         assertThat(h(EMPTY.withKeywords(List.of("a")))).isNotEqualTo(h(EMPTY.withKeywords(List.of("a", "b"))));
     }
 
