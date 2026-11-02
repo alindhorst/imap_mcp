@@ -562,4 +562,45 @@ class SearchMessagesToolTest {
         cmds.addAll(commands(() -> env.error(SearchEnv.T1, args("gmail_raw", "has:attachment"))));
         assertThat(cmds).anyMatch(c -> c.contains("SEARCH") && c.contains("X-GM-RAW has:attachment"));
     }
+
+    /**
+     * #137 AC5: a stale capability entry is not trusted. The capabilities are re-read from the leased Store (local,
+     * no IMAP command) and the cache entry is refreshed; the stale "gmail" claim must not let the query through.
+     */
+    @Test
+    void gmailRawWithAnExpiredCapabilityEntryRereadsTheLeasedStoreAndRefreshesTheCache() throws Exception {
+        env.close();
+        env = new SearchEnv(SearchMessagesTool.DEFAULT_SINCE_MAX_CANDIDATES,
+                de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor.GMAIL);
+        SearchEnv.TestClock clock = new SearchEnv.TestClock();
+        de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache cache =
+                new de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache(clock);
+        SearchMessagesTool tool = new SearchMessagesTool(new AccountArgument(env.repo), env.leases,
+                new de.alexanderlindhorst.imapmcp.core.search.SearchTermMapper(), env.cursors, env.handles,
+                env.clock, SearchMessagesTool.SINCE_OVERLAP, SearchMessagesTool.DEFAULT_SINCE_MAX_CANDIDATES, cache);
+        de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler handler =
+                new de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler(SearchMessagesTool.DEFINITION, tool);
+        de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext ctx =
+                new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(
+                        new de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext(SearchEnv.T1), "rid");
+        de.alexanderlindhorst.imapmcp.core.account.PoolKey key = de.alexanderlindhorst.imapmcp.core.account.PoolKey
+                .of(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext(SearchEnv.T1),
+                        new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(SearchEnv.T1, env.account,
+                                env.handleT1));
+        handler.handle(ctx, args()); // warm the pooled connection
+        cache.put(key, de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities.fromNames(List.of("X-GM-EXT-1")));
+        clock.now = clock.now.plus(java.time.Duration.ofMinutes(11));
+        assertThat(cache.get(key)).isInstanceOf(de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache.Lookup.Expired.class);
+
+        List<String> cmds = new ArrayList<>();
+        de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome[] out = new de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome[1];
+        cmds.addAll(commands(() -> out[0] = handler.handle(ctx, args("gmail_raw", "x"))));
+
+        assertThat(out[0]).isInstanceOf(de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome.Failure.class);
+        assertUnsupported(((de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome.Failure) out[0]).error());
+        assertThat(cmds).isEmpty(); // no extra IMAP command: the capabilities come from the leased Store
+        assertThat(cache.get(key)).isInstanceOf(de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache.Lookup.Fresh.class);
+        assertThat(((de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache.Lookup.Fresh) cache.get(key))
+                .capabilities().gmail()).isFalse();
+    }
 }
