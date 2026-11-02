@@ -171,8 +171,12 @@ public final class ListAccountsTool implements ToolHandler {
         } catch (MessagingException | RuntimeException e) {
             ErrorCode code = ImapErrorMapper.map(e, ctx.requestId()).error().code();
             LOG.debug("account probe failed: {}", code);
-            return code == ErrorCode.AUTH_FAILED ? "auth_failed" : "unreachable";
+            return statusFor(code);
         }
+    }
+
+    static String statusFor(ErrorCode code) {
+        return code == ErrorCode.AUTH_FAILED ? "auth_failed" : "unreachable";
     }
 
     private static Map<String, Object> capabilityMap(ImapCapabilities c) {
