@@ -195,7 +195,7 @@ class ReadmeTest {
         assertThat(m.find()).as("README has a '## Release' section").isTrue();
         String section = m.group(1);
         assertThat(section).contains("versions:set").contains("v<version>").contains("-all.jar")
-                .contains("SHA-256").contains("-SNAPSHOT").contains("gitea-pr.sh")
+                .contains("SHA-256").contains("snapshot").contains("gitea-pr.sh")
                 .doesNotContain("```yaml").doesNotContain("0.1.");
         long lines = section.lines().filter(l -> !l.isBlank()).count();
         assertThat(lines).as("non-blank lines in Release section").isBetween(5L, 10L);

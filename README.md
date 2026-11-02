@@ -49,7 +49,7 @@ Master is protected, so every step that changes it goes through a PR and the gat
 1. Set the release version with `mvn -B versions:set -DnewVersion=<version> -DgenerateBackupPoms=false` (plugin version pinned on the command line) in a PR.
 2. Run `mvn -B clean verify` on the merge commit; only if it is green, put the annotated tag `v<version>` on exactly that commit.
 3. Attach `imap-mcp-app/target/imap-mcp-app-<version>-all.jar` and its SHA-256 checksum file (`.sha256`) to the Gitea release for the tag.
-4. Set the next `-SNAPSHOT` version the same way, via PR.
+4. Set the next development (snapshot) version the same way, via PR.
 
 ## Running
 
