@@ -91,7 +91,11 @@ class ImapLeaseTest {
     }
 
     private StoreLeases leases(Duration acquireTimeout) {
-        PoolSettings s = new PoolSettings(3, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
+        return leases(acquireTimeout, 3);
+    }
+
+    private StoreLeases leases(Duration acquireTimeout, int maxPerMailbox) {
+        PoolSettings s = new PoolSettings(maxPerMailbox, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
                 Duration.ofMinutes(30), acquireTimeout, Duration.ofSeconds(30), Duration.ofSeconds(120));
         pool = new StorePool(sessions, (t, a) -> credentials.resolve(t, a), new CapabilityCache(),
                 k -> k.equals(key) ? account : null, s);
@@ -255,6 +259,44 @@ class ImapLeaseTest {
         assertThat(pool.destroyedCount()).isEqualTo(1);
         assertThat(pool.numActive(key)).isZero();
         assertThat(pool.numIdle(key)).isZero();
+    }
+
+    /** The cancel hook must not run a waiting borrower's connect (commons-pool2 reuseCapacity) on the cancelling thread. */
+    @Test
+    void cancelHookDoesNotBlockWhileABorrowerWaitsForTheSlot() throws Exception {
+        leases(Duration.ofSeconds(10), 1);
+        ToolCallContext c = ctx();
+        ImapLease lease = leases.lease(key, c);
+        CountDownLatch release = new CountDownLatch(1);
+        credentials = (t, a) -> { // the waiter's connect, once the slot frees up, blocks here
+            while (true) {
+                try {
+                    release.await();
+                    break;
+                } catch (InterruptedException ignored) {
+                    // keep waiting
+                }
+            }
+            return Optional.of(new Secret(PASSWORD.toCharArray()));
+        };
+        Thread waiter = Thread.ofVirtual().start(() -> {
+            try {
+                pool.borrow(key);
+            } catch (Exception ignored) {
+                // pool closed at teardown
+            }
+        });
+        try {
+            await(() -> pool.pool().getNumWaiters() == 1);
+            Thread canceller = Thread.ofPlatform().start(c::cancel);
+            canceller.join(500);
+            assertThat(canceller.isAlive()).as("cancel() must return without waiting for the waiter's connect").isFalse();
+            assertThat(c.isCancelled()).isTrue();
+        } finally {
+            release.countDown();
+            waiter.join(5000);
+        }
+        lease.close();
     }
 
     @Test
