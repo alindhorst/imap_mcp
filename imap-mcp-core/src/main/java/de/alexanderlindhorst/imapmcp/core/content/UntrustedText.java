@@ -40,15 +40,16 @@ public final class UntrustedText {
         if (in == null) {
             return null;
         }
-        int[] cps = sanitize(in, true);
-        if (cps.length <= maxCodePoints) {
-            return new String(cps, 0, cps.length);
+        StringBuilder sb = sanitize(in, true);
+        int count = sb.codePointCount(0, sb.length());
+        if (count <= maxCodePoints) {
+            return sb.toString();
         }
-        int keep = Math.max(maxCodePoints - 1, 0);
-        while (keep > 0 && (cps[keep - 1] == ZWNJ || cps[keep - 1] == ZWJ)) {
-            keep--; // a joiner left dangling at the cut
+        int end = sb.offsetByCodePoints(0, Math.max(maxCodePoints - 1, 0));
+        while (end > 0 && (sb.charAt(end - 1) == ZWNJ || sb.charAt(end - 1) == ZWJ)) {
+            end--; // a joiner left dangling at the cut
         }
-        return new String(cps, 0, keep) + '…';
+        return sb.substring(0, end) + '\u2026';
     }
 
     /**
@@ -59,8 +60,7 @@ public final class UntrustedText {
         if (in == null) {
             return null;
         }
-        int[] cps = sanitize(in, false);
-        return new String(cps, 0, cps.length);
+        return sanitize(in, false).toString();
     }
 
     /** True for code points in the strip table S (also used by the guard test against the JDK's Cf set). */
@@ -100,9 +100,8 @@ public final class UntrustedText {
     }
 
     /** Single pass over the input; lone surrogates become U+FFFD. */
-    private static int[] sanitize(String in, boolean singleLine) {
-        int[] out = new int[in.length()];
-        int n = 0;
+    private static StringBuilder sanitize(String in, boolean singleLine) {
+        StringBuilder out = new StringBuilder(in.length());
         State state = State.NONE;
         boolean pendingSpace = false;
         int i = 0;
@@ -114,7 +113,7 @@ public final class UntrustedText {
             }
             if (singleLine) {
                 if (isControl(cp) || isWhiteSpace(cp)) {
-                    pendingSpace = n > 0;
+                    pendingSpace = out.length() > 0;
                     state = State.NONE;
                     continue;
                 }
@@ -122,13 +121,13 @@ public final class UntrustedText {
                 if (cp == '\r' && i < in.length() && in.charAt(i) == '\n') {
                     i++;
                 }
-                out[n++] = '\n';
+                out.append('\n');
                 state = State.NONE;
                 continue;
             } else if (isControl(cp) && cp != '\t' && cp != '\n') {
                 continue;
             } else if (isWhiteSpace(cp)) {
-                out[n++] = cp;
+                out.appendCodePoint(cp);
                 state = State.NONE;
                 continue;
             }
@@ -149,11 +148,11 @@ public final class UntrustedText {
                 state = State.BASE;
             }
             if (pendingSpace) {
-                out[n++] = ' ';
+                out.append(' ');
                 pendingSpace = false;
             }
-            out[n++] = cp;
+            out.appendCodePoint(cp);
         }
-        return java.util.Arrays.copyOf(out, n);
+        return out;
     }
 }
