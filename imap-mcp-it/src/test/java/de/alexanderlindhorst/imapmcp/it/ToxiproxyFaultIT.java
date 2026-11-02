@@ -230,6 +230,30 @@ class ToxiproxyFaultIT {
         assertThat(f.pool.createdCount()).as("fresh connection").isGreaterThan(createdBefore);
     }
 
+    // #134 AC1, AC2: a connection reset during LIST must not return the broken Store to the pool
+
+    @Test
+    void resetPeerDuringListFoldersDiscardsTheStoreAndTheNextCallReconnects() throws Exception {
+        Fixture f = new Fixture("60s");
+        long createdBefore = f.pool.createdCount();
+        long destroyedBefore = f.pool.destroyedCount();
+        assertThat(f.pool.numIdle(f.key)).as("warm Store from the account probe").isEqualTo(1);
+        proxy.toxics().toxics().resetPeer("reset", ToxicDirection.DOWNSTREAM, 0);
+
+        Result r = f.call("list_folders", Map.of("account", f.account));
+
+        assertThat(r.ok()).isFalse();
+        assertThat(r.errorCode()).isEqualTo("UPSTREAM_UNAVAILABLE");
+        assertThat(f.pool.destroyedCount()).isEqualTo(destroyedBefore + 1);
+        assertThat(f.pool.numIdle(f.key)).isZero();
+        assertThat(f.active()).isZero();
+
+        clearToxics();
+        Result next = f.call("list_folders", Map.of("account", f.account));
+        assertThat(next.ok()).as("call after recovery, no spurious failure").isTrue();
+        assertThat(f.pool.createdCount()).isEqualTo(createdBefore + 1);
+    }
+
     // AC2
 
     @Test
