@@ -132,6 +132,20 @@ class GetMessageSdkTest {
         msg.setSubject("s");
         msg.setContent(mixed);
         msg.saveChanges();
+        return append(msg);
+    }
+
+    String deliverMessage(MimeMultipart content) throws Exception {
+        MimeMessage msg = new MimeMessage(Session.getInstance(new java.util.Properties()));
+        msg.setFrom("a@localhost");
+        msg.setRecipients(Message.RecipientType.TO, "user@localhost");
+        msg.setSubject("s");
+        msg.setContent(content);
+        msg.saveChanges();
+        return append(msg);
+    }
+
+    private String append(MimeMessage msg) throws Exception {
         java.util.Properties props = new java.util.Properties();
         props.put("mail.imaps.ssl.trust", "*");
         props.put("mail.imaps.ssl.checkserveridentity", "false");
@@ -162,6 +176,31 @@ class GetMessageSdkTest {
         Map<?, ?> untrusted = (Map<?, ?>) ((Map<?, ?>) withHeaders.structuredContent()).get("untrusted");
         assertThat(untrusted.get("headers")).isNotNull();
         assertThat(((Map<?, ?>) untrusted.get("body")).get("truncated")).isEqualTo(true);
+    }
+
+    /** #137 AC1: an attachment-only mail has no text part; the body object must still satisfy the outputSchema. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void messageWithoutTextPartSucceedsAndPassesTheOutputSchemaValidation() throws Exception {
+        MimeMultipart mixed = new MimeMultipart("mixed");
+        MimeBodyPart att = new MimeBodyPart();
+        att.setDataHandler(new jakarta.activation.DataHandler(new ByteArrayDataSource(new byte[50], "application/pdf")));
+        att.setFileName("only.pdf");
+        att.setDisposition("attachment");
+        mixed.addBodyPart(att);
+        String handle = deliverMessage(mixed);
+        String account = InMemoryAccountRepository.handle(T, ID);
+
+        McpSchema.CallToolResult r = mcp.call("get_message", Map.of("account", account, "message", handle),
+                McpTransportContext.EMPTY);
+
+        assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
+        Map<String, Object> out = (Map<String, Object>) r.structuredContent();
+        Map<String, Object> body = (Map<String, Object>) ((Map<String, Object>) out.get("untrusted")).get("body");
+        assertThat(body.get("content_type")).isNull();
+        assertThat(body).containsEntry("text", "").containsEntry("total_chars", 0L).containsEntry("truncated", false);
+        assertThat(out.get("attachments_total")).isEqualTo(1);
+        assertThat(((List<Map<String, Object>>) out.get("attachments")).get(0)).containsEntry("filename", "only.pdf");
     }
 
     @Test
