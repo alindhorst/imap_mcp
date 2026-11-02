@@ -58,7 +58,7 @@ class SanitizedOutputEndToEndTest {
     static final KeyRing KEYS = new KeyRing(1, Map.of(1, new byte[32]));
     /** Tag characters U+E0041 U+E0042 as a surrogate-pair string. */
     static final String TAGS = new String(new int[] {0xE0041, 0xE0042}, 0, 2);
-    static final String LS = " ";
+    static final String LS = "\u2028";
 
     @RegisterExtension
     static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());

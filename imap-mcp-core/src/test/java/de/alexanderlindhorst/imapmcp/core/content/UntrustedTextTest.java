@@ -73,8 +73,8 @@ class UntrustedTextTest {
 
     @Test
     void singleLineTurnsEveryLineSeparatorIntoOneSpace() {
-        assertThat(UntrustedText.singleLine("a b", 10)).isEqualTo("a b");
-        assertThat(UntrustedText.singleLine("a b", 10)).isEqualTo("a b");
+        assertThat(UntrustedText.singleLine("a\u2028b", 10)).isEqualTo("a b");
+        assertThat(UntrustedText.singleLine("a\u2029b", 10)).isEqualTo("a b");
         assertThat(UntrustedText.singleLine("a\u0085b", 10)).isEqualTo("a b");
         assertThat(UntrustedText.singleLine("a\nb\rc", 10)).isEqualTo("a b c");
     }
@@ -82,7 +82,7 @@ class UntrustedTextTest {
     @Test
     void singleLineCollapsesRunsOfControlsAndWhiteSpaceAndTrims() {
         assertThat(UntrustedText.singleLine("a \t\r\n b", 10)).isEqualTo("a b");
-        assertThat(UntrustedText.singleLine("a 　 \u0085\u007F\u009Bb", 10)).isEqualTo("a b");
+        assertThat(UntrustedText.singleLine("a\u00A0　 \u0085\u007F\u009Bb", 10)).isEqualTo("a b");
         assertThat(UntrustedText.singleLine("  a  ", 10)).isEqualTo("a");
         assertThat(UntrustedText.singleLine(" \t\n ", 10)).isEmpty();
     }
@@ -120,7 +120,7 @@ class UntrustedTextTest {
 
     @Test
     void bodyTextNormalizesAllLineBreaksToLf() {
-        assertThat(UntrustedText.bodyText("a\u0085b c d\r\ne\rf")).isEqualTo("a\nb\nc\nd\ne\nf");
+        assertThat(UntrustedText.bodyText("a\u0085b\u2028c\u2029d\r\ne\rf")).isEqualTo("a\nb\nc\nd\ne\nf");
     }
 
     @Test
@@ -132,7 +132,7 @@ class UntrustedTextTest {
 
     @Test
     void capsHoldAfterStripping() {
-        String in = ("a" + cps(0xE0041) + "​").repeat(50);
+        String in = ("a" + cps(0xE0041) + "\u200B").repeat(50);
         String out = UntrustedText.singleLine(in, 10);
         assertThat(out.codePointCount(0, out.length())).isLessThanOrEqualTo(10);
         assertThat(UntrustedText.singleLine("x".repeat(20), 10)).isEqualTo("x".repeat(9) + "…");
@@ -142,30 +142,30 @@ class UntrustedTextTest {
 
     @Test
     void bidiOverrideInFilenameIsRemoved() {
-        assertThat(UntrustedText.singleLine("invoice‮fdp.exe", 255)).isEqualTo("invoicefdp.exe");
+        assertThat(UntrustedText.singleLine("invoice\u202Efdp.exe", 255)).isEqualTo("invoicefdp.exe");
     }
 
     @Test
     void zwnjAndZwjSurviveOnlyInContextAtMostOnce() {
-        assertThat(UntrustedText.singleLine("a‌‌b", 10)).isEqualTo("a‌b");
-        assertThat(UntrustedText.singleLine("a‍‌b", 10)).isEqualTo("a‍b");
-        assertThat(UntrustedText.singleLine("‌ab", 10)).isEqualTo("ab");
-        assertThat(UntrustedText.singleLine("a ‍b", 10)).isEqualTo("a b");
-        assertThat(UntrustedText.bodyText("a‌‌b")).isEqualTo("a‌b");
-        assertThat(UntrustedText.bodyText("‍ab")).isEqualTo("ab");
+        assertThat(UntrustedText.singleLine("a\u200C\u200Cb", 10)).isEqualTo("a\u200Cb");
+        assertThat(UntrustedText.singleLine("a\u200D\u200Cb", 10)).isEqualTo("a\u200Db");
+        assertThat(UntrustedText.singleLine("\u200Cab", 10)).isEqualTo("ab");
+        assertThat(UntrustedText.singleLine("a \u200Db", 10)).isEqualTo("a b");
+        assertThat(UntrustedText.bodyText("a\u200C\u200Cb")).isEqualTo("a\u200Cb");
+        assertThat(UntrustedText.bodyText("\u200Dab")).isEqualTo("ab");
         // a removed code point is not a base: the joiner after it has none either
-        assertThat(UntrustedText.singleLine(" ​‍b", 10)).isEqualTo("b");
+        assertThat(UntrustedText.singleLine(" \u200B\u200Db", 10)).isEqualTo("b");
     }
 
     @Test
     void legitimateJoinerTextRoundTrips() {
         List<String> samples = List.of(
-                "می‌خواهم", // Persian with ZWNJ
-                "क्‍ष", // Devanagari virama + ZWJ
-                "ශ්‍රී", // Sinhala
-                "👨‍👩‍👧", // family
-                "❤️‍🔥", // heart on fire
-                "🏳️‍🌈", // rainbow flag
+                "می\u200Cخواهم", // Persian with ZWNJ
+                "क्\u200Dष", // Devanagari virama + ZWJ
+                "ශ්\u200Dරී", // Sinhala
+                "👨\u200D👩\u200D👧", // family
+                "❤️\u200D🔥", // heart on fire
+                "🏳️\u200D🌈", // rainbow flag
                 "1️⃣"); // keycap
         for (String sample : samples) {
             assertThat(UntrustedText.singleLine(sample, 100)).isEqualTo(sample);
@@ -204,12 +204,12 @@ class UntrustedTextTest {
         assertThat(UntrustedText.singleLine("a\uDC00", 10)).isEqualTo("a�");
         assertThat(UntrustedText.bodyText("a\uD800")).isEqualTo("a�");
         // U+FFFD counts as a base for a following joiner
-        assertThat(UntrustedText.singleLine("\uD800‍", 10)).isEqualTo("�‍");
+        assertThat(UntrustedText.singleLine("\uD800\u200D", 10)).isEqualTo("�\u200D");
     }
 
     @Test
     void capKeepsZwjSequencesWholeOrDropsTheDanglingJoiner() {
-        String seq = "x👨‍👩y"; // 5 code points
+        String seq = "x👨\u200D👩y"; // 5 code points
         assertThat(UntrustedText.singleLine(seq, 5)).isEqualTo(seq);
         String cut = UntrustedText.singleLine(seq, 4); // keeps x, man, ZWJ -> joiner dangling -> dropped
         assertThat(cut).isEqualTo("x👨…");
