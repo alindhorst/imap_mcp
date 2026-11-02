@@ -13,11 +13,19 @@ import org.junit.jupiter.api.Test;
 class StdioArchitectureRulesTest {
 
     @ArchTest
-    static final ArchRule stdioHasNoHttpStack = StdioArchitectureRules.STDIO_HAS_NO_HTTP_STACK
-            .allowEmptyShould(true);
+    static final ArchRule stdioHasNoHttpStack = StdioArchitectureRules.STDIO_HAS_NO_HTTP_STACK;
 
     @ArchTest
     static final ArchRule stdioStreamsHasNoSlf4j = StdioArchitectureRules.STDIO_STREAMS_HAS_NO_SLF4J;
+
+    /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
+    @Test
+    void rulesFailOnAnEmptyClassSet() {
+        JavaClasses none = new ClassFileImporter()
+                .importPackages("de.alexanderlindhorst.imapmcp.transport.stdio.doesnotexist");
+        assertThatThrownBy(() -> stdioHasNoHttpStack.check(none)).isInstanceOf(AssertionError.class);
+        assertThatThrownBy(() -> stdioStreamsHasNoSlf4j.check(none)).isInstanceOf(AssertionError.class);
+    }
 
     @Test
     void guardDetectsJettyReferenceInFixture() {
