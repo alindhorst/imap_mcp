@@ -7,6 +7,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search 
 ## Documentation
 
 - [`doc/SPEC.md`](doc/SPEC.md): scope, tools, phasing, architecture. Start here.
+- [`doc/TUTORIAL.md`](doc/TUTORIAL.md): getting started (build, config, keyring, stdio and HTTP setup, pitfalls).
 - [`CLAUDE.md`](CLAUDE.md): rules for AI-assisted development in this repo.
 
 ## Project layout
