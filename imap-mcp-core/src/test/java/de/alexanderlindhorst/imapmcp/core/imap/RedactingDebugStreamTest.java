@@ -141,4 +141,18 @@ class RedactingDebugStreamTest {
         // The whole logical line is handled in one call and never shares the byte buffer.
         assertThat(lines).containsExactly("A1 OK done");
     }
+
+    @Test
+    void printlnSplitsStripsAndChunksLogicalLines() {
+        stream.println("A1 OK\r\nA2 LOGIN u p\r\n* x");
+        stream.println((Object) "A3 OK");
+        stream.println();
+        stream.println("x".repeat(RedactingDebugStream.MAX_LINE_BYTES + 10));
+        stream.println("+ ");
+        stream.println("p".repeat(RedactingDebugStream.MAX_LINE_BYTES + 10));
+        stream.println("A4 OK");
+        assertThat(lines).containsExactly("A1 OK", "<redacted>", "* x", "A3 OK", "",
+                "x".repeat(RedactingDebugStream.MAX_LINE_BYTES), "x".repeat(10),
+                "<redacted>", "<redacted>", "<redacted>", "A4 OK");
+    }
 }
