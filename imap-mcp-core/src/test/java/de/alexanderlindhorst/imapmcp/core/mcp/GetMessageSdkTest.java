@@ -200,7 +200,9 @@ class GetMessageSdkTest {
         assertThat(body.get("content_type")).isNull();
         assertThat(body).containsEntry("text", "").containsEntry("total_chars", 0L).containsEntry("truncated", false);
         assertThat(out.get("attachments_total")).isEqualTo(1);
-        assertThat(((List<Map<String, Object>>) out.get("attachments")).get(0)).containsEntry("filename", "only.pdf");
+        Map<String, Object> pdf = ((List<Map<String, Object>>) out.get("attachments")).get(0);
+        assertThat((Map<String, Object>) pdf.get("untrusted")).containsEntry("filename", "only.pdf")
+                .containsEntry("content_type", "application/pdf");
     }
 
     @Test
