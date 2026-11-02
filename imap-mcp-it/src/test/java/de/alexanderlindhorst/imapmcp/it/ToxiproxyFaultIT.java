@@ -254,6 +254,46 @@ class ToxiproxyFaultIT {
         assertThat(f.pool.createdCount()).isEqualTo(createdBefore + 1);
     }
 
+    // #137 AC2: a connection reset during get_message / list_attachments discards the Store
+
+    @SuppressWarnings("unchecked")
+    private String firstMessageHandle(Fixture f) {
+        Map<String, Object> out = (Map<String, Object>) f.search().getStructured();
+        return (String) ((List<Map<String, Object>>) out.get("messages")).get(0).get("handle");
+    }
+
+    private void assertResetDuringReadToolDiscardsTheStoreAndTheNextCallSucceeds(String tool) throws Exception {
+        Fixture f = new Fixture("60s");
+        Map<String, Object> args = Map.of("account", f.account, "message", firstMessageHandle(f));
+        assertThat(f.call(tool, args).ok()).as("warm call").isTrue();
+        long createdBefore = f.pool.createdCount();
+        long destroyedBefore = f.pool.destroyedCount();
+        assertThat(f.pool.numIdle(f.key)).isEqualTo(1);
+        proxy.toxics().toxics().resetPeer("reset", ToxicDirection.DOWNSTREAM, 0);
+
+        Result r = f.call(tool, args);
+
+        assertThat(r.ok()).isFalse();
+        assertThat(r.errorCode()).isEqualTo("UPSTREAM_UNAVAILABLE");
+        assertThat(f.pool.destroyedCount()).isEqualTo(destroyedBefore + 1);
+        assertThat(f.pool.numIdle(f.key)).isZero();
+        assertThat(f.active()).isZero();
+
+        clearToxics();
+        assertThat(f.call(tool, args).ok()).as("call after recovery").isTrue();
+        assertThat(f.pool.createdCount()).isEqualTo(createdBefore + 1);
+    }
+
+    @Test
+    void resetPeerDuringGetMessageDiscardsTheStoreAndTheNextCallSucceeds() throws Exception {
+        assertResetDuringReadToolDiscardsTheStoreAndTheNextCallSucceeds("get_message");
+    }
+
+    @Test
+    void resetPeerDuringListAttachmentsDiscardsTheStoreAndTheNextCallSucceeds() throws Exception {
+        assertResetDuringReadToolDiscardsTheStoreAndTheNextCallSucceeds("list_attachments");
+    }
+
     // AC2
 
     @Test
