@@ -82,7 +82,7 @@ Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`
 | `pool.idleEviction` | `5m` | close connections idle longer than this |
 | `pool.validateAfterIdle` | `60s` | NOOP check before reuse when idle longer |
 | `pool.maxLifetime` | `30m` | maximum connection age |
-| `pool.acquireTimeout` | `10s` | wait for a free connection |
+| `pool.acquireTimeout` | `10s` | time to get a ready connection: pool wait plus connect, TLS and LOGIN |
 | `pool.capabilityTtl` | `10m` | cache time for server capabilities |
 | `tools.deadline` | `90s` | time limit per tool call |
 | `tools.maxCharsCap` | `100000` | upper bound for `max_chars` (configurable down only) |
