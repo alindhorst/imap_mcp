@@ -17,6 +17,7 @@ import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -230,7 +231,7 @@ class StdioHygieneIT {
 
         try (RunningServer server = JarLauncher.start(cfg, "stdio")) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Thread.ofVirtual().start(() -> {
+            Thread pump = Thread.ofVirtual().start(() -> {
                 try {
                     server.stdout().transferTo(out);
                 } catch (IOException ignored) {
@@ -245,7 +246,8 @@ class StdioHygieneIT {
                 server.process().destroyForcibly().waitFor();
             }
             String stderr = server.stderr();
-            Thread.sleep(200); // let the stdout pump drain the closed pipe
+            pump.join(Duration.ofSeconds(5)); // the pump ends at EOF once the process is gone
+            assertThat(pump.isAlive()).as("stdout pump drained").isFalse();
             String stdout = out.toString(StandardCharsets.UTF_8);
             String logText = readLogs(cfg.logDir());
             return new Run(requests, exited ? server.exitCode() : -1, exited, stdout, stderr, logText,
