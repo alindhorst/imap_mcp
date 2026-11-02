@@ -54,7 +54,7 @@ public final class PageFetcher {
         }
     }
 
-    private record Hit(long uid, int seq, Date received) {
+    record Hit(long uid, int seq, Date received) {
     }
 
     private PageFetcher() {
@@ -252,7 +252,11 @@ public final class PageFetcher {
     }
 
     private static List<Hit> hits(IMAPFolder folder, int[] seqs) throws MessagingException {
-        Response[] responses = fetch(folder, seqs, "UID INTERNALDATE");
+        return hits(fetch(folder, seqs, "UID INTERNALDATE"), seqs);
+    }
+
+    /** Package-private for tests with fabricated responses. */
+    static List<Hit> hits(Response[] responses, int[] seqs) {
         List<Hit> hits = new ArrayList<>();
         for (Response r : responses) {
             // getItem hands out each item once, so it is read exactly once per class
@@ -271,8 +275,13 @@ public final class PageFetcher {
     private static List<Row> rows(IMAPFolder folder, int[] seqs) throws MessagingException {
         int[] sorted = seqs.clone();
         java.util.Arrays.sort(sorted);
+        return rows(fetch(folder, sorted, SUMMARY_ITEMS), sorted);
+    }
+
+    /** Package-private for tests with fabricated responses. */
+    static List<Row> rows(Response[] responses, int[] seqs) {
         List<Row> rows = new ArrayList<>();
-        for (Response r : fetch(folder, sorted, SUMMARY_ITEMS)) {
+        for (Response r : responses) {
             if (!(r instanceof FetchResponse f)) {
                 continue;
             }
