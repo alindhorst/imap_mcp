@@ -102,4 +102,24 @@ class ToolExecutorMetricsTest {
         assertThat(plain.wrap("t", (cx, a) -> new ToolOutcome.Success(Map.of())).handle(ctx(T1), Map.of()))
                 .isInstanceOf(ToolOutcome.Success.class);
     }
+
+    @Test
+    void externalCancelIsNotCountedAsTimeout() throws Exception {
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        ToolCallContext c = ctx(T1);
+        ToolExecutor longDeadline = new ToolExecutor(Duration.ofSeconds(5), logIds, rec);
+        Thread caller = Thread.ofPlatform().start(() -> longDeadline.wrap("t", (cx, a) -> {
+            started.countDown();
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException e) {
+                // cancelled
+            }
+            return new ToolOutcome.Success(Map.of());
+        }).handle(c, Map.of()));
+        started.await();
+        c.cancel();
+        caller.join(2000);
+        assertThat(rec.snapshot().tenants()).isEmpty();
+    }
 }
