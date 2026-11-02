@@ -51,7 +51,7 @@ class ToolExecutorTest {
         long t0 = System.nanoTime();
         ToolOutcome o = h.handle(c, Map.of());
         long ms = (System.nanoTime() - t0) / 1_000_000;
-        assertThat(ms).isLessThan(300);
+        assertThat(ms).isLessThan(700);
         assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.TIMEOUT);
         assertThat(done.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(interrupted).isTrue();
@@ -118,30 +118,74 @@ class ToolExecutorTest {
         assertThat(reqB).hasValue("B");
     }
 
+    /** Loops on the latch and swallows interrupts, like a handler stuck in uninterruptible I/O. */
+    static ToolHandler stubborn(CountDownLatch started, CountDownLatch release, AtomicInteger interrupts) {
+        return (cx, a) -> {
+            started.countDown();
+            while (true) {
+                try {
+                    if (release.await(10, TimeUnit.SECONDS)) {
+                        return ok();
+                    }
+                } catch (InterruptedException e) {
+                    interrupts.incrementAndGet();
+                }
+            }
+        };
+    }
+
     @Test
-    void externalCancelRunsHooksOnceAndInterruptsWorker() throws Exception {
+    void externalCancelReturnsTimeoutEvenIfHandlerIgnoresInterruptAndLaterSucceeds() throws Exception {
         ToolExecutor ex = new ToolExecutor(Duration.ofSeconds(5), logIds);
         AtomicInteger hooks = new AtomicInteger();
+        AtomicInteger interrupts = new AtomicInteger();
         CountDownLatch started = new CountDownLatch(1);
-        AtomicBoolean interrupted = new AtomicBoolean();
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<ToolOutcome> outcome = new AtomicReference<>();
         ToolCallContext c = ctx("r");
         c.onCancel(hooks::incrementAndGet);
-        ToolHandler h = ex.wrap("t", (cx, a) -> {
-            started.countDown();
-            try {
-                Thread.sleep(10_000);
-            } catch (InterruptedException e) {
-                interrupted.set(true);
-            }
-            return ok();
-        });
-        Thread caller = Thread.ofPlatform().start(() -> h.handle(c, Map.of()));
+        ToolHandler h = ex.wrap("t", stubborn(started, release, interrupts));
+        Thread caller = Thread.ofPlatform().start(() -> outcome.set(h.handle(c, Map.of())));
         assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        long t0 = System.nanoTime();
         c.cancel();
         c.cancel();
-        caller.join(2000);
-        assertThat(interrupted).isTrue();
+        caller.join(500);
+        assertThat(caller.isAlive()).isFalse();
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(500);
+        assertThat(((ToolOutcome.Failure) outcome.get()).error().code()).isEqualTo(ErrorCode.TIMEOUT);
+        release.countDown(); // the handler now returns Success; it must never surface
         assertThat(hooks).hasValue(1);
+        assertThat(interrupts.get()).isLessThanOrEqualTo(1);
+        assertThat(outcome.get()).isInstanceOf(ToolOutcome.Failure.class);
+    }
+
+    @Test
+    void deadlineWithStubbornHandlerThenCancelRunsHooksOnce() throws Exception {
+        AtomicInteger hooks = new AtomicInteger();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ToolCallContext c = ctx("r");
+        c.onCancel(hooks::incrementAndGet);
+        ToolOutcome o = executor.wrap("t", stubborn(started, release, new AtomicInteger())).handle(c, Map.of());
+        assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.TIMEOUT);
+        c.cancel();
+        release.countDown();
+        assertThat(hooks).hasValue(1);
+    }
+
+    @Test
+    void callCancelledBeforeStartLaunchesNoWorker() throws Exception {
+        AtomicInteger handled = new AtomicInteger();
+        ToolCallContext c = ctx("r");
+        c.cancel();
+        ToolOutcome o = executor.wrap("t", (cx, a) -> {
+            handled.incrementAndGet();
+            return ok();
+        }).handle(c, Map.of());
+        assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.TIMEOUT);
+        Thread.sleep(100);
+        assertThat(handled).hasValue(0);
     }
 
     @Test

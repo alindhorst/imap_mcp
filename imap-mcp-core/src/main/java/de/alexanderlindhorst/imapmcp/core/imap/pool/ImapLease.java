@@ -44,9 +44,12 @@ public final class ImapLease implements AutoCloseable {
         // Deferring the permit to the worker's unwind could leak it forever if the worker never unwinds.
         // Note: store.close() alone does NOT unblock a worker stuck in a socket read (LOGOUT blocks as well);
         // what unblocks it is the executor's interrupt of the virtual worker thread, which closes the socket.
+        // The hook must not block: pool invalidation can run a waiting borrower's connect synchronously
+        // (commons-pool2 reuseCapacity), so only the CAS and the permit are handled here, the invalidation
+        // runs on its own virtual thread.
         ctx.onCancel(() -> {
             broken.set(true);
-            finish(true);
+            finish(true, true);
         });
     }
 
@@ -100,7 +103,7 @@ public final class ImapLease implements AutoCloseable {
     public void close() {
         closeFolder();
         boolean discard = broken.get() || ctx.isCancelled() || Thread.currentThread().isInterrupted();
-        finish(discard);
+        finish(discard, false);
     }
 
     private void ensureUsable() {
@@ -109,12 +112,14 @@ public final class ImapLease implements AutoCloseable {
         }
     }
 
-    private void finish(boolean discard) {
+    private void finish(boolean discard, boolean asyncInvalidate) {
         if (!finished.compareAndSet(false, true)) {
             return;
         }
         try {
-            if (discard) {
+            if (discard && asyncInvalidate) {
+                Thread.ofVirtual().name("imap-lease-invalidate").start(this::invalidateQuietly);
+            } else if (discard) {
                 pool.invalidate(key, store);
             } else {
                 pool.release(key, store);
@@ -125,6 +130,14 @@ public final class ImapLease implements AutoCloseable {
             if (permit != null) {
                 permit.close();
             }
+        }
+    }
+
+    private void invalidateQuietly() {
+        try {
+            pool.invalidate(key, store);
+        } catch (Exception e) {
+            LOG.debug("invalidating store failed: {}", e.getClass().getSimpleName());
         }
     }
 }
