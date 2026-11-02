@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -20,7 +22,10 @@ import org.slf4j.LoggerFactory;
  * Generates and persists the bearer token, the handle master key and the installation salt as base64url
  * (no padding) text files with 0600 permissions in a 0700 directory. Configured values win and are never
  * written. Files are published atomically without replacing an existing one, so concurrent first starts end
- * up with the same value. Values are never logged.
+ * up with the same value. Values are never logged. Loose permissions on the state directory and on existing
+ * state files are tightened (0700/0600) with a WARN; if that is refused, the state cannot be persisted securely
+ * (the token fails startup, the handle key and salt become ephemeral). State files are opened without following
+ * symlinks and must be regular files.
  */
 public final class StateDirectory {
 
@@ -177,9 +182,18 @@ public final class StateDirectory {
         }
     }
 
-    private static String readIfPresent(Path file) throws IOException {
+    private String readIfPresent(Path file) throws IOException {
         try {
-            String v = Files.readString(file, StandardCharsets.US_ASCII).strip();
+            BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            if (!attrs.isRegularFile()) {
+                throw new StateDirectoryException("State file " + file + " is not a regular file; remove it.");
+            }
+            tighten(file, "rw-------", "0600");
+            String v;
+            try (var in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                v = new String(in.readAllBytes(), StandardCharsets.US_ASCII).strip();
+            }
             if (v.isEmpty()) {
                 throw new StateDirectoryException(
                         "State file " + file + " is empty; delete it to generate a new value.");
@@ -190,23 +204,40 @@ public final class StateDirectory {
         }
     }
 
-    private void checkDirectoryOnce() {
+    private void checkDirectoryOnce() throws IOException {
         if (dirChecked) {
             return;
         }
-        dirChecked = true;
         if (!posix) {
+            dirChecked = true;
             LOG.warn("State directory {} is on a non-POSIX file system; file permissions cannot be enforced", dir);
             return;
         }
-        try {
-            Set<PosixFilePermission> perms = Files.getPosixFilePermissions(dir);
-            if (perms.stream().anyMatch(p -> p.name().startsWith("GROUP_") || p.name().startsWith("OTHERS_"))) {
-                LOG.warn("State directory {} is accessible by group or others; restrict it to 0700", dir);
-            }
-        } catch (IOException e) {
-            LOG.warn("Cannot read the permissions of state directory {}", dir);
+        tighten(dir, "rwx------", "0700");
+        dirChecked = true; // a refused chmod throws and is retried (and fails) on the next access
+    }
+
+    /**
+     * Restricts {@code path} to {@code mode} if group or others have access. A refused chmod throws (the state
+     * cannot be persisted securely); a chmod that does not stick (some mounts) only warns. Parents are untouched.
+     */
+    private void tighten(Path path, String mode, String octal) throws IOException {
+        if (!posix) {
+            return;
         }
+        Set<PosixFilePermission> perms = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
+        if (!looserThanOwner(perms)) {
+            return;
+        }
+        LOG.warn("State path {} is accessible by group or others; restricting it to {}", path, octal);
+        Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(mode));
+        if (looserThanOwner(Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS))) {
+            LOG.warn("State path {} is still accessible by group or others after chmod {}", path, octal);
+        }
+    }
+
+    private static boolean looserThanOwner(Set<PosixFilePermission> perms) {
+        return perms.stream().anyMatch(p -> p.name().startsWith("GROUP_") || p.name().startsWith("OTHERS_"));
     }
 
     @SuppressWarnings("unchecked")
