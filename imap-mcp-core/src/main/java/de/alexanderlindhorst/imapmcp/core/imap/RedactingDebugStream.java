@@ -32,8 +32,31 @@ public final class RedactingDebugStream extends PrintStream {
         this(new LineOutput(sink));
     }
 
+    private final LineOutput lineOut;
+
     private RedactingDebugStream(LineOutput out) {
         super(out, false, StandardCharsets.UTF_8); // no autoflush: a flush would emit partial lines
+        this.lineOut = out;
+    }
+
+    /**
+     * Angus traces complete lines through {@code println}. They are handled here in one call, on the calling thread
+     * and without the shared byte buffer, so lines of concurrent connections can neither interleave nor inherit
+     * each other's redaction state. The byte path ({@code write}) stays as a fallback.
+     */
+    @Override
+    public void println(String x) {
+        lineOut.logicalLines(String.valueOf(x));
+    }
+
+    @Override
+    public void println(Object x) {
+        lineOut.logicalLines(String.valueOf(x));
+    }
+
+    @Override
+    public void println() {
+        lineOut.logicalLines("");
     }
 
     private static Consumer<String> lineSink(Logger logger) {
@@ -79,6 +102,23 @@ public final class RedactingDebugStream extends PrintStream {
         public synchronized void flush() {
             if (buf.size() > 0) {
                 emit(false);
+            }
+        }
+
+        /** Splits on {@code \n}, strips {@code \r}, decides once per line and emits it in chunks of at most MAX_LINE_BYTES. */
+        void logicalLines(String text) {
+            for (String line : text.split("\n", -1)) {
+                String l = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+                boolean redacted = decide(l);
+                int pos = 0;
+                do {
+                    int end = Math.min(l.length(), pos + MAX_LINE_BYTES);
+                    if (end < l.length() && Character.isHighSurrogate(l.charAt(end - 1))) {
+                        end--;
+                    }
+                    sink.accept(redacted ? REDACTED : l.substring(pos, end));
+                    pos = end;
+                } while (pos < l.length());
             }
         }
 
