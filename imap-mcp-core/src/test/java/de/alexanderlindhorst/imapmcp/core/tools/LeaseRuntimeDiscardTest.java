@@ -16,6 +16,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
@@ -27,6 +28,7 @@ import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,41 @@ class LeaseRuntimeDiscardTest {
             ToolCallContext ctx = new ToolCallContext(new AccountContext(SearchEnv.T1), "rid");
             assertThatThrownBy(() -> tool.handle(ctx, Map.of("account", env.handleT1)))
                     .isInstanceOf(IllegalStateException.class).hasMessage("boom");
+            assertThat(env.pool.destroyedCount()).isEqualTo(1);
+            assertThat(env.pool.numIdle(poolKey(env))).isZero();
+        }
+    }
+
+    /** #134: a command rejection (NO/BAD) is not a connection failure: UPSTREAM_ERROR, the Store goes back. */
+    @Test
+    void listFoldersRejectedCommandYieldsUpstreamErrorAndReturnsTheStore() throws Exception {
+        try (SearchEnv env = new SearchEnv()) {
+            ListFoldersTool tool = new ListFoldersTool(new AccountArgument(env.repo), env.leases, 100,
+                    (lease, c, entries) -> {
+                        throw new jakarta.mail.MessagingException("rejected",
+                                new org.eclipse.angus.mail.iap.CommandFailedException("NO LIST refused"));
+                    });
+            ToolCallContext ctx = new ToolCallContext(new AccountContext(SearchEnv.T1), "rid");
+            ToolOutcome o = tool.handle(ctx, Map.of("account", env.handleT1));
+            assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+            assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+            assertThat(env.pool.destroyedCount()).isZero();
+            assertThat(env.pool.numIdle(poolKey(env))).isEqualTo(1);
+        }
+    }
+
+    /** #134: a connection-level MessagingException during list_folders discards the Store. */
+    @Test
+    void listFoldersConnectionFailureYieldsUpstreamUnavailableAndDiscardsTheStore() throws Exception {
+        try (SearchEnv env = new SearchEnv()) {
+            ListFoldersTool tool = new ListFoldersTool(new AccountArgument(env.repo), env.leases, 100,
+                    (lease, c, entries) -> {
+                        throw new jakarta.mail.StoreClosedException(lease.store(), "reset");
+                    });
+            ToolCallContext ctx = new ToolCallContext(new AccountContext(SearchEnv.T1), "rid");
+            ToolOutcome o = tool.handle(ctx, Map.of("account", env.handleT1));
+            assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+            assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.UPSTREAM_UNAVAILABLE);
             assertThat(env.pool.destroyedCount()).isEqualTo(1);
             assertThat(env.pool.numIdle(poolKey(env))).isZero();
         }

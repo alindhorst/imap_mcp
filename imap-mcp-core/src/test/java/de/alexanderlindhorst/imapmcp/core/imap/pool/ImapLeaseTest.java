@@ -177,12 +177,29 @@ class ImapLeaseTest {
     }
 
     @Test
-    void withLeasePropagatesMessagingExceptionWithoutMarkingBroken() throws Exception {
+    void withLeaseDiscardsOnMessagingExceptionAndRethrowsUnchanged() throws Exception {
         leases(Duration.ofSeconds(10));
-        jakarta.mail.MessagingException ex = new jakarta.mail.MessagingException("tool decides");
+        jakarta.mail.MessagingException ex = new jakarta.mail.MessagingException("forgotten catch");
         assertThatThrownBy(() -> leases.withLease(key, ctx(), lease -> {
+            lease.store();
             throw ex;
         })).isSameAs(ex);
+        assertThat(pool.destroyedCount()).isEqualTo(1);
+        assertThat(pool.numIdle(key)).isZero();
+        assertThat(pool.numActive(key)).isZero();
+    }
+
+    @Test
+    void withLeaseKeepsTheStoreWhenTheToolCatchesTheMessagingExceptionInsideTheLease() throws Exception {
+        leases(Duration.ofSeconds(10));
+        String r = leases.withLease(key, ctx(), lease -> {
+            try {
+                throw new jakarta.mail.MessagingException("tool decides");
+            } catch (jakarta.mail.MessagingException e) {
+                return "mapped";
+            }
+        });
+        assertThat(r).isEqualTo("mapped");
         assertThat(pool.destroyedCount()).isZero();
         assertThat(pool.numIdle(key)).isEqualTo(1);
     }

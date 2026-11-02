@@ -49,17 +49,18 @@ public final class StoreLeases {
         this.admission = admission;
     }
 
-    /** Work executed on a lease; a {@link MessagingException} is the tool's to map and to judge. */
+    /** Work executed on a lease; a tool catches and maps the {@link MessagingException} itself, or the Store is discarded. */
     @FunctionalInterface
     public interface LeaseWork<T> {
         T apply(ImapLease lease) throws MessagingException;
     }
 
     /**
-     * The only way for tools to obtain a lease. Runs {@code work} on a lease; a {@link RuntimeException} or
-     * {@link Error} escaping the work marks the lease broken (the Store is invalidated) and is rethrown unchanged.
-     * A {@link MessagingException} is propagated as is: whether the connection survives is the tool's decision
-     * (via {@code ImapErrorMapper.discardConnection} and {@link ImapLease#markBroken()}).
+     * The only way for tools to obtain a lease. Runs {@code work} on a lease; any {@link Throwable} escaping the
+     * work, checked {@link MessagingException} included, marks the lease broken (the Store is invalidated) and is
+     * rethrown unchanged. A tool that wants the Store back after a failure that is not a connection failure (NO/BAD)
+     * must catch the exception inside the work, map it with {@code ImapErrorMapper} and call
+     * {@link ImapLease#markBroken()} only when {@code discardConnection} is set.
      *
      * @throws StoreUnavailableException see {@link #lease}
      */
@@ -68,7 +69,7 @@ public final class StoreLeases {
         try (ImapLease lease = lease(key, ctx)) {
             try {
                 return work.apply(lease);
-            } catch (RuntimeException | Error e) {
+            } catch (Throwable e) {
                 lease.markBroken();
                 throw e;
             }
