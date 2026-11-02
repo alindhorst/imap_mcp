@@ -209,6 +209,61 @@ class StateDirectoryTest {
         assertThat(warns.get(0).getFormattedMessage()).contains(dir.toString());
     }
 
+    // #147 item 3: tighten what we own
+
+    @Test
+    void widerExistingDirectoryIsTightenedTo0700() throws Exception {
+        Path dir = tmp.resolve("state");
+        Files.createDirectory(dir);
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        new StateDirectory(dir).handleKey();
+        assertThat(Files.getPosixFilePermissions(dir)).isEqualTo(PosixFilePermissions.fromString("rwx------"));
+    }
+
+    @Test
+    void widerExistingStateFileIsTightenedTo0600AndKeepsItsValue() throws Exception {
+        Path dir = tmp.resolve("state");
+        byte[] key = new StateDirectory(dir).handleKey();
+        Files.setPosixFilePermissions(dir.resolve("handle-key"), PosixFilePermissions.fromString("rw-r--r--"));
+        assertThat(new StateDirectory(dir).handleKey()).isEqualTo(key);
+        assertThat(Files.getPosixFilePermissions(dir.resolve("handle-key")))
+                .isEqualTo(PosixFilePermissions.fromString("rw-------"));
+    }
+
+    @Test
+    void stateFileThatIsASymlinkIsRejected() throws Exception {
+        Path dir = tmp.resolve("state");
+        new StateDirectory(dir).handleKey();
+        Path real = tmp.resolve("elsewhere");
+        Files.writeString(real, b64(new byte[32]));
+        Files.delete(dir.resolve("handle-key"));
+        Files.createSymbolicLink(dir.resolve("handle-key"), real);
+        assertThatThrownBy(() -> new StateDirectory(dir).handleKey()).isInstanceOf(StateDirectoryException.class);
+    }
+
+    @Test
+    void stateFileThatIsADirectoryIsRejected() throws Exception {
+        Path dir = tmp.resolve("state");
+        new StateDirectory(dir).handleKey();
+        Files.delete(dir.resolve("handle-key"));
+        Files.createDirectory(dir.resolve("handle-key"));
+        assertThatThrownBy(() -> new StateDirectory(dir).handleKey()).isInstanceOf(StateDirectoryException.class);
+    }
+
+    @Test
+    void looseDirectoryWeCannotTightenFailsTheTokenAndMakesTheHandleKeyEphemeral() throws Exception {
+        Path foreign = Path.of("/usr"); // world-readable, owned by root: chmod is refused for us
+        assumeThat(Files.isDirectory(foreign)).isTrue();
+        assumeThat(Files.getOwner(foreign).getName()).as("not the current user")
+                .isNotEqualTo(System.getProperty("user.name"));
+        StateDirectory sd = new StateDirectory(foreign);
+        assertThatThrownBy(sd::bearerToken).isInstanceOf(StateDirectoryException.class);
+        assertThat(sd.handleKey()).hasSize(32);
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("handles will be invalid after restart"));
+        assertThat(Files.exists(foreign.resolve("handle-key"))).isFalse();
+    }
+
     // AC6
 
     @Test
