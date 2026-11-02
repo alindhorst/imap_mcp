@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tools;
 
 import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
+import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.folder.FolderResolver;
 import de.alexanderlindhorst.imapmcp.core.folder.FolderRole;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
@@ -111,20 +112,28 @@ public final class ListFoldersTool implements ToolHandler {
         boolean includeCounts = !Boolean.FALSE.equals(args.get("include_counts"));
         try {
             return leases.withLease(ok.key(), ctx, lease -> {
-                Folder[] listed = lease.store().getDefaultFolder().list("*");
-                Map<String, Object> described = describe(listed, maxFolders);
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> entries = (List<Map<String, Object>>) described.get("folders");
-                if (includeCounts && counts.enrich(lease, ctx, entries)) {
-                    described.put("counts_complete", true);
+                try {
+                    Folder[] listed = lease.store().getDefaultFolder().list("*");
+                    Map<String, Object> described = describe(listed, maxFolders);
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> entries = (List<Map<String, Object>>) described.get("folders");
+                    if (includeCounts && counts.enrich(lease, ctx, entries)) {
+                        described.put("counts_complete", true);
+                    }
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    out.put("account", ok.account().handle());
+                    out.putAll(described);
+                    return new ToolOutcome.Success(out);
+                } catch (MessagingException e) {
+                    ImapErrorMapper.MappedError mapped = ImapErrorMapper.map(e, ctx.requestId());
+                    if (mapped.discardConnection()) {
+                        lease.markBroken();
+                    }
+                    return new ToolOutcome.Failure(mapped.error());
                 }
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("account", ok.account().handle());
-                out.putAll(described);
-                return new ToolOutcome.Success(out);
             });
         } catch (MessagingException e) {
-            throw new IllegalStateException("LIST failed", e); // mapped by the ToolExecutor
+            throw new IllegalStateException("unreachable: handled inside the lease", e);
         }
     }
 
