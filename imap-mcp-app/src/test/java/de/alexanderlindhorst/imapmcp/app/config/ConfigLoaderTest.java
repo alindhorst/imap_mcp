@@ -230,7 +230,8 @@ class ConfigLoaderTest {
         }
         assertThat(load(ACCOUNT.replace("mail.example.org", "imap.gmail.com.evil.example")).accounts().get(0)
                 .flavor()).isEqualTo(MailAccount.Flavor.GENERIC);
-        AppConfig forced = load(ACCOUNT + "    flavor: generic\n".replace("    ", "    "));
+        // an explicit flavor overrides the Gmail host detection (#147 item 9)
+        AppConfig forced = load(ACCOUNT.replace("mail.example.org", "imap.gmail.com") + "    flavor: generic\n");
         assertThat(forced.accounts().get(0).flavor()).isEqualTo(MailAccount.Flavor.GENERIC);
     }
 

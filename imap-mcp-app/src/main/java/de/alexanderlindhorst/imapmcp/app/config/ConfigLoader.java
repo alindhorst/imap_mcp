@@ -197,10 +197,11 @@ public final class ConfigLoader {
 
     private static String envMode(Map<String, String> env) {
         String v = set(env, ENV_MODE);
-        if (v != null && !MODES.contains(v.toLowerCase(Locale.ROOT))) {
+        // exact match, like Main's --mode switch
+        if (v != null && !MODES.contains(v)) {
             throw new ConfigException(ENV_MODE + ": must be one of stdio, http-local");
         }
-        return v == null ? null : v.toLowerCase(Locale.ROOT);
+        return v;
     }
 
     private static String envLogLevel(Map<String, String> env) {
