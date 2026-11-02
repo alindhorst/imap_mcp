@@ -5,12 +5,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** Exercises the real ProcessBuilder runner with harmless POSIX commands. */
 class ProcessCommandRunnerTest {
@@ -50,12 +54,24 @@ class ProcessCommandRunnerTest {
         assertThat(r.stderrLength()).isEqualTo(300000);
     }
 
+    /** #59 AC4 / #143: the child is really gone after the timeout, not merely abandoned. */
     @Test
-    void hangingProcessIsDestroyedOnTimeout() {
+    void hangingProcessIsDestroyedOnTimeout(@TempDir Path dir) throws Exception {
+        Path pidFile = dir.resolve("pid");
         long start = System.nanoTime();
-        assertThatThrownBy(() -> runner.run(List.of("sleep", "30"), Duration.ofMillis(300)))
+        assertThatThrownBy(() -> runner.run(
+                List.of("sh", "-c", "echo $$ > '" + pidFile + "'; exec sleep 30"), Duration.ofSeconds(1)))
                 .isInstanceOf(TimeoutException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(1).plusMillis(300));
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2).plusMillis(300));
+        long pid = Long.parseLong(Files.readString(pidFile).strip());
+        ProcessHandle.of(pid).ifPresent(h -> {
+            try {
+                h.onExit().get(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new AssertionError("process " + pid + " still alive after the timeout", e);
+            }
+        });
+        assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
     }
 
     @Test
