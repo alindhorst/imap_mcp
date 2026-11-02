@@ -142,11 +142,14 @@ class GetMessageImapErrorTest {
         long destroyed = pool.destroyedCount();
         Map<String, Object> error = error(call(tool));
         assertThat(error.get("code")).isEqualTo(ErrorCode.UPSTREAM_ERROR.name());
-        String text = (String) ((Map<String, Object>) error.get("details")).get("server_text");
-        if (serverTextSurfaces) { // Angus' fetchBodyStructure swallows the NO text, so list_attachments has none
-            assertThat(text).contains("fetch refused").contains("by policy");
+        Map<String, Object> details = (Map<String, Object>) error.get("details");
+        String text = details == null ? null : (String) details.get("server_text");
+        if (serverTextSurfaces) {
+            assertThat(text).contains("fetch refused").contains("by policy").hasSizeLessThanOrEqualTo(200)
+                    .doesNotContainPattern("[\\p{Cntrl}]");
+        } else { // Angus' fetchBodyStructure swallows the NO text; our own wording must not pose as server text
+            assertThat(text).isNull();
         }
-        assertThat(text).hasSizeLessThanOrEqualTo(200).doesNotContainPattern("[\\p{Cntrl}]");
         assertThat(pool.destroyedCount()).isEqualTo(destroyed);
         assertThat(pool.numIdle(key)).isEqualTo(1);
         assertThat(pool.numActive(key)).isZero();
