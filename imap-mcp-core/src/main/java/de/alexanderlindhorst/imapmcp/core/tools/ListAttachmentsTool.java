@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.core.tools;
 
 import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
+import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentClassifier;
 import de.alexanderlindhorst.imapmcp.core.mime.AttachmentList;
@@ -81,6 +82,10 @@ public final class ListAttachmentsTool implements ToolHandler {
                     // FETCH n (BODYSTRUCTURE) only; the sequence number is internal to this open folder.
                     int seq = found.message().getMessageNumber();
                     BODYSTRUCTURE bs = (BODYSTRUCTURE) found.folder().doCommand(p -> p.fetchBodyStructure(seq));
+                    if (bs == null) { // Angus returns null for a NO answer (and drops its text): not "no attachments"
+                        return new ToolOutcome.Failure(ToolError.upstreamError(
+                                null, ctx.requestId())); // no server text: Angus dropped it
+                    }
                     String bodyPath = BodyPartSelector.select(bs).map(SelectedPart::sectionPath).orElse(null);
                     return new ToolOutcome.Success(output(accountHandle, messageHandle,
                             AttachmentClassifier.classify(bs, bodyPath)));

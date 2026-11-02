@@ -262,6 +262,31 @@ class GetMessageToolTest {
         assertThat(out).containsEntry("attachments_total", 0).containsEntry("attachments_truncated", false);
     }
 
+    /** #137 AC4: user keywords follow the system flags, sorted. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void userKeywordsAreSortedAfterTheSystemFlags() throws Exception {
+        MimeMessage m = plain("kw", "body");
+        m.setFlags(new Flags("zeta"), true);
+        m.setFlags(new Flags("alpha"), true);
+        m.setFlag(Flags.Flag.FLAGGED, true);
+        String h = deliver(m);
+        assertThat((List<String>) ok(call(h, Map.of())).get("flags")).containsExactly("\\Flagged", "alpha", "zeta");
+    }
+
+    /** #137 AC4: no more than 50 flags are returned. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void moreThanFiftyKeywordsAreCappedAtFifty() throws Exception {
+        MimeMessage m = plain("many", "body");
+        for (int i = 0; i < 70; i++) {
+            m.setFlags(new Flags(String.format("kw%03d", i)), true);
+        }
+        String h = deliver(m);
+        List<String> flags = (List<String>) ok(call(h, Map.of())).get("flags");
+        assertThat(flags).hasSize(50).startsWith("kw000", "kw001").doesNotContain("kw069");
+    }
+
     @Test
     void htmlOnlyMessageIsConvertedToText() throws Exception {
         String h = deliver(html("<p>Hello <b>world</b></p>"));
