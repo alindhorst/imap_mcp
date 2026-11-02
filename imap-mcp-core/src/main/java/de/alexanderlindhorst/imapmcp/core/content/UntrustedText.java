@@ -52,6 +52,11 @@ public final class UntrustedText {
         return sb.toString();
     }
 
+    /** Strip-table lookup (stub until the table lands). */
+    static boolean isStripped(int cp) {
+        return false;
+    }
+
     private static boolean isBidiControl(int cp) {
         return (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2066 && cp <= 0x2069);
     }
