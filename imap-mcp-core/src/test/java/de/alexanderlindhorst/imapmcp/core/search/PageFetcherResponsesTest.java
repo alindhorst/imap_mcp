@@ -1,10 +1,13 @@
 package de.alexanderlindhorst.imapmcp.core.search;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import org.eclipse.angus.mail.iap.Response;
+import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.eclipse.angus.mail.imap.protocol.FetchResponse;
 import org.eclipse.angus.mail.imap.protocol.IMAPProtocol;
 import org.eclipse.angus.mail.imap.protocol.IMAPResponse;
@@ -91,5 +94,19 @@ class PageFetcherResponsesTest {
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).uid()).isEqualTo(20L);
         assertThat(hits.get(0).received()).isNotNull();
+    }
+
+    @Test
+    void pageIgnoresUnsolicitedFetchForOtherMessage() throws Exception {
+        IMAPFolder folder = mock(IMAPFolder.class);
+        when(folder.getMessageCount()).thenReturn(3);
+        Response[] fetched = responses("* 1 FETCH (UID 10 FLAGS (\\Seen))", full(2, 20, ""), full(3, 30, ""));
+        when(folder.doCommand(any())).thenReturn(fetched);
+
+        PageFetcher.Page page = PageFetcher.page(folder, null, 0, 2);
+
+        assertThat(page.rows()).extracting(PageFetcher.Row::uid).containsExactly(30L, 20L);
+        assertThat(page.rows().size()).isLessThanOrEqualTo(2);
+        assertThat(page.rows().get(page.rows().size() - 1).uid()).isNotEqualTo(10L);
     }
 }
