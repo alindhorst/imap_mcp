@@ -13,6 +13,10 @@ import java.util.Collections;
 /**
  * Test-only trust material. The server under test never gets a trust-all switch; the child JVM is started with a
  * PKCS12 truststore ({@code -Djavax.net.ssl.trustStore}) holding exactly the certificate of the fixture.
+ *
+ * <p>{@code dovecot/tls.key} is a committed, self-signed, test-only private key (CN=localhost). It protects
+ * nothing: it is trusted only through the scoped truststore above and ships in no main artifact.
+ * {@code TestTrustTest} fails when the certificate has less than a year left.
  */
 public final class TestTrust {
 
