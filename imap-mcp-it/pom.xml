@@ -11,6 +11,11 @@
   <artifactId>imap-mcp-it</artifactId>
   <name>IMAP MCP :: Integration tests</name>
   <!-- End-to-end tests only (Testcontainers, GreenMail, Toxiproxy, McpClient). Runs in the verify phase. -->
+  <properties>
+    <!-- Test-only module: nothing to install or deploy (it has no main artifact, see skipIfEmpty below). -->
+    <maven.install.skip>true</maven.install.skip>
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
   <dependencies>
     <!-- Test scope only for reactor ordering (the app module must be packaged first); the IT launches the shaded jar. -->
     <dependency>
@@ -63,6 +68,15 @@
   </dependencies>
   <build>
     <plugins>
+      <!-- No main classes: without this a second package phase in one invocation ("mvn package package", IDE goal
+           lists) fails with "use a classifier to attach supplemental artifacts" (#144). -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <skipIfEmpty>true</skipIfEmpty>
+        </configuration>
+      </plugin>
       <!-- Hands the shaded jar of imap-mcp-app to the ITs. Resolved from the reactor (attached artifact, classifier "all")
            under a plain "mvn verify"; no prior "install" needed (verified in #51). -->
       <plugin>

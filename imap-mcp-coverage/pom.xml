@@ -47,6 +47,7 @@
       <groupId>${project.groupId}</groupId>
       <artifactId>imap-mcp-it</artifactId>
       <version>${project.version}</version>
+      <type>pom</type> <!-- imap-mcp-it builds no main jar; the reactor GAV match is enough for the exec data -->
       <scope>test</scope>
     </dependency>
   </dependencies>
