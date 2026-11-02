@@ -1,6 +1,6 @@
 # IMAP MCP Server: Specification
 
-Status: draft v0.5 (v1 implemented; records the v1 contract as built, plus the QA hardening decisions). Audience: implementation lead and team, who break this down into work items.
+Status: draft v0.6 (v1 implemented; records the v1 contract as built, plus the QA hardening decisions; groupId final). Audience: implementation lead and team, who break this down into work items.
 
 ## 1. Purpose and scope
 
@@ -101,6 +101,8 @@ All tools require an account handle (from `list_accounts`) except `list_accounts
 
 Jetty must stay off the classpath of the stdio entry point.
 
+Maven groupId and base Java package are `de.alexanderlindhorst.imapmcp` (final).
+
 ### 5.3 Tenancy and security
 
 - `AccountContext` is derived only from the validated principal (fixed in `stdio` / `http-local`). Tools receive opaque account handles resolved via a tenant-scoped repository (`findByTenantAndHandle`; `findByTenant` lists a tenant's accounts with their handles). The repository owns handles: v1 derives them (`acc_` + 26 base32 characters from SHA-256 over the installation salt, tenant and account id); v3 stores a random value of the same format. Pool keys are internal `(tenantId, accountId)`, never client-supplied.
@@ -186,5 +188,4 @@ Jetty must stay off the classpath of the stdio entry point.
 
 ## 6. Open decisions
 
-- Final package and groupId naming (currently `de.alexanderlindhorst.imapmcp`, placeholder).
 - Which IdP for `http-public`, and whether Gmail/Microsoft 365 upstream OAuth is in the first public release.
