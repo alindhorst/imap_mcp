@@ -181,6 +181,26 @@ class ReadmeTest {
         assertThat(readme).contains("`http.token`").contains("`security.handleKey`");
     }
 
+    /** #165 AC2: the groupId is final; the README states it and does not call it a placeholder. */
+    @Test
+    void groupIdIsStatedAndNotAPlaceholder() {
+        assertThat(readme).contains("group `de.alexanderlindhorst.imapmcp`");
+        assertThat(readme).doesNotContainIgnoringCase("placeholder");
+    }
+
+    /** #165 AC3: a short Release section describes the procedure without hard-coding a version. */
+    @Test
+    void releaseSectionDescribesTheProcedure() {
+        Matcher m = Pattern.compile("(?s)\\n## Release\\R(.*?)(?=\\n## |\\z)").matcher(readme);
+        assertThat(m.find()).as("README has a '## Release' section").isTrue();
+        String section = m.group(1);
+        assertThat(section).contains("versions:set").contains("v<version>").contains("-all.jar")
+                .contains("SHA-256").contains("-SNAPSHOT").contains("gitea-pr.sh")
+                .doesNotContain("```yaml").doesNotContain("0.1.");
+        long lines = section.lines().filter(l -> !l.isBlank()).count();
+        assertThat(lines).as("non-blank lines in Release section").isBetween(5L, 10L);
+    }
+
     @Test
     void logStatementNamesTheTraceException() {
         assertThat(readme).contains(
