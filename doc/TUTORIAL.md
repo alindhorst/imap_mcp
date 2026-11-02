@@ -11,7 +11,7 @@ export JAVA_HOME=/usr/lib/jvm/java-26
 mvn -pl imap-mcp-app -am -DskipTests package
 ```
 
-The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` (all modules) also works once PR #162 is merged; it runs all tests, so it takes longer.
+The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` builds all modules as well; it also runs the unit tests, so it takes longer.
 
 ## 2. Config file
 
