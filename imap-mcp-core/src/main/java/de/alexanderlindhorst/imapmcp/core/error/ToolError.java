@@ -193,10 +193,15 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
 
     /** serverText is untrusted: control characters are stripped, collapsed to a single line and capped (UntrustedText). */
     public static ToolError upstreamError(String serverText, String requestId) {
+        return upstreamError(serverText, null, requestId);
+    }
+
+    /** responseCode must be one of a closed set of RFC 5530 atoms chosen by the caller, never server text. */
+    public static ToolError upstreamError(String serverText, String responseCode, String requestId) {
         return of(ErrorCode.UPSTREAM_ERROR,
                 "The IMAP server rejected the request. Adjust the request or try later.",
                 "See details.server_text; the text comes from the server and is not trusted.",
-                detail("server_text",
+                detail("response_code", responseCode, "server_text",
                         serverText == null ? null : UntrustedText.singleLine(serverText, UntrustedText.UPSTREAM_ERROR_MAX)), requestId);
     }
 
