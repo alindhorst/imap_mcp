@@ -4,6 +4,16 @@ import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
+import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import de.alexanderlindhorst.imapmcp.core.tools.MessageLocator;
+import jakarta.mail.Flags;
+import java.time.Clock;
+import java.util.function.Function;
+import org.eclipse.angus.mail.imap.IMAPFolder;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,7 +27,7 @@ import java.util.Set;
  * {@code duplicate}, {@code conflict}, {@code no_change}) and yields at most one add set and one remove set with
  * system flags and keywords merged. {@code \Deleted} can only be cleared, {@code \Recent} is never settable.
  */
-public final class SetFlagsTool {
+public final class SetFlagsTool implements ToolHandler {
 
     public static final String NAME = "set_flags";
 
@@ -96,7 +106,17 @@ public final class SetFlagsTool {
         }
     }
 
-    private SetFlagsTool() {
+    public SetFlagsTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases, Clock clock) {
+        this(accounts, locator, leases, clock, null);
+    }
+
+    SetFlagsTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases, Clock clock,
+            Function<IMAPFolder, Flags> permanentFlags) {
+    }
+
+    @Override
+    public ToolOutcome handle(ToolCallContext ctx, Map<String, Object> args) {
+        throw new UnsupportedOperationException();
     }
 
     /** Expects arguments that already passed the generic validator (null-free copy). Values are never echoed. */
