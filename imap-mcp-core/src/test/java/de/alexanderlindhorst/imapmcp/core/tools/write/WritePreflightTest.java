@@ -1,4 +1,4 @@
-package de.alexanderlindhorst.imapmcp.core.write;
+package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
