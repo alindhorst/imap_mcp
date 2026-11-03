@@ -286,6 +286,21 @@ class FolderGroupRunnerTest {
     }
 
     @Test
+    void budgetStopKeepsWhatThePreCheckSettledInTheInFlightGroup() throws Exception {
+        init();
+        folder("A", VALIDITY, 1);
+        folder("B", VALIDITY, 5);
+        var out = runner().run(lease, ctx, List.of(group("A", 1), group("B", 5, 6)), AbsentStatus.ALREADY_GONE,
+                (f, present, gate) -> {
+                    gate.beforeWrite();
+                    now = deadline.minusSeconds(14);
+                    return present.stream().map(i -> BulkResult.Item.okFlags(i.handle())).toList();
+                });
+        assertThat(statuses(out)).containsEntry(h("A", 1), ItemStatus.OK)
+                .containsEntry(h("B", 5), ItemStatus.NOT_ATTEMPTED).containsEntry(h("B", 6), ItemStatus.ALREADY_GONE);
+    }
+
+    @Test
     void startedStepIsNotStoppedByTheBudgetBetweenItsCommands() throws Exception {
         init();
         folder("A", VALIDITY, 1);
