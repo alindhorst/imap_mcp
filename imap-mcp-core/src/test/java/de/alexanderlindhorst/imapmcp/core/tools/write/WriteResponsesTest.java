@@ -97,11 +97,11 @@ class WriteResponsesTest {
 
     @Test
     void serverTextIsSanitizedSingleLineAndCapped() {
-        String text = "bad\u0007‮stuff " + "x".repeat(500);
+        String text = "bad\u0007\u202Estuff " + "x".repeat(500);
         ToolError e = map("A1 NO " + text);
         String st = (String) e.details().get("server_text");
         assertThat(st.codePointCount(0, st.length())).isLessThanOrEqualTo(200);
-        assertThat(st).doesNotContain("\u0007", "‮", "\n");
+        assertThat(st).doesNotContain("\u0007", "\u202E", "\n");
     }
 
     @Test
