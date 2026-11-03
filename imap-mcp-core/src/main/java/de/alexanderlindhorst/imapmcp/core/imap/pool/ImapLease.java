@@ -68,6 +68,11 @@ public final class ImapLease implements AutoCloseable {
         }
     }
 
+    /** Opens the folder READ_WRITE (SELECT). */
+    public IMAPFolder openReadWrite(String folderFullName) throws MessagingException {
+        throw new UnsupportedOperationException("not yet");
+    }
+
     /** Closes the open folder with {@code close(false)}; a failure marks the lease broken. */
     public void closeFolder() {
         IMAPFolder f = folder;
