@@ -27,6 +27,9 @@ import org.slf4j.MDC;
  * the result future wins, so a result the handler produces after the cancel is never returned. MDC (req, tool,
  * tenant hashed, acct hashed once bound) lives on the worker only and is cleared there.
  *
+ * <p>Once a write tool marked {@link ToolCallContext#markMutationStarted()}, a deadline, cancel or unchecked
+ * failure reports an unknown outcome instead (details.outcome, or OUTCOME_UNKNOWN for non-idempotent tools).
+ *
  * <p>The request id is created by the adapter and carried in the {@link ToolCallContext}.
  */
 public final class ToolExecutor {
@@ -53,16 +56,43 @@ public final class ToolExecutor {
         this.logIds = Objects.requireNonNull(logIds, "logIds");
     }
 
+    /** For handlers that never mutate (they never mark, so outcomes are the v1 ones). */
     public ToolHandler wrap(String toolName, ToolHandler delegate) {
-        Objects.requireNonNull(toolName, "toolName");
-        Objects.requireNonNull(delegate, "delegate");
-        return (ctx, args) -> execute(toolName, delegate, ctx, args);
+        return wrap(toolName, true, delegate);
     }
 
-    private ToolOutcome execute(String toolName, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args) {
+    /** The tool's idempotentHint selects the outcome-unknown code after a mutation started (SPEC 5.5). */
+    public ToolHandler wrap(ToolDefinition definition, ToolHandler delegate) {
+        Objects.requireNonNull(definition, "definition");
+        return wrap(definition.name(), definition.hints().idempotent(), delegate);
+    }
+
+    private ToolHandler wrap(String toolName, boolean idempotent, ToolHandler delegate) {
+        Objects.requireNonNull(toolName, "toolName");
+        Objects.requireNonNull(delegate, "delegate");
+        return (ctx, args) -> execute(toolName, idempotent, delegate, ctx, args);
+    }
+
+    /** A write may have been applied: OUTCOME_UNKNOWN for a non-idempotent tool, else the error plus details.outcome. */
+    private static ToolError afterMutation(ToolError error, boolean idempotent, ToolCallContext ctx) {
+        if (!ctx.mutationStarted()) {
+            return error;
+        }
+        switch (error.code()) {
+            case TIMEOUT, UPSTREAM_UNAVAILABLE, INTERNAL_ERROR -> {
+                return idempotent ? error.withOutcomeUnknown() : ToolError.outcomeUnknown(ctx.requestId());
+            }
+            default -> {
+                return error;
+            }
+        }
+    }
+
+    private ToolOutcome execute(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx,
+            Map<String, Object> args) {
         Instant start = metrics.now();
         AtomicBoolean cancelled = new AtomicBoolean();
-        ToolOutcome outcome = run(toolName, delegate, ctx, args, cancelled);
+        ToolOutcome outcome = run(toolName, idempotent, delegate, ctx, args, cancelled);
         TenantId tenant = ctx.accountContext().tenantId();
         metrics.operation(tenant, toolName, "call", Duration.between(start, metrics.now()));
         if (outcome instanceof ToolOutcome.Failure f) {
@@ -79,7 +109,7 @@ public final class ToolExecutor {
         return outcome;
     }
 
-    private ToolOutcome run(String toolName, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
+    private ToolOutcome run(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
             AtomicBoolean cancelled) {
         Instant callDeadline = Instant.now().plus(deadline);
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
@@ -98,46 +128,51 @@ public final class ToolExecutor {
         });
         // First hook: completes the result before the interrupt, so nothing the worker produces afterwards is returned.
         ctx.onCancel(() -> {
-            if (future.complete(new ToolOutcome.Failure(ToolError.timeout(ctx.requestId())))) {
+            if (future.complete(timedOut(idempotent, ctx))) {
                 cancelled.set(true);
                 LOG.info("tool {} cancelled, request_id={}", toolName, ctx.requestId());
             }
         });
         ctx.onCancel(worker::interrupt);
         if (future.isDone()) { // cancelled before start: no worker, no IMAP I/O
-            return result(future, toolName, ctx);
+            return result(future, toolName, idempotent, ctx);
         }
         worker.start();
         try {
             return future.get(deadline.toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
-            if (future.complete(new ToolOutcome.Failure(ToolError.timeout(ctx.requestId())))) {
+            if (future.complete(timedOut(idempotent, ctx))) {
                 LOG.warn("tool {} exceeded deadline, request_id={}", toolName, ctx.requestId());
             }
             ctx.cancel();
-            return result(future, toolName, ctx);
+            return result(future, toolName, idempotent, ctx);
         } catch (InterruptedException e) {
-            future.complete(new ToolOutcome.Failure(ToolError.timeout(ctx.requestId())));
+            future.complete(timedOut(idempotent, ctx));
             ctx.cancel();
             Thread.currentThread().interrupt();
-            return result(future, toolName, ctx);
+            return result(future, toolName, idempotent, ctx);
         } catch (ExecutionException e) {
-            return failed(e.getCause(), toolName, ctx);
+            return failed(e.getCause(), toolName, idempotent, ctx);
         }
     }
 
     /** The already completed future's outcome; the first completion (handler, deadline or cancel) won. */
-    private ToolOutcome result(CompletableFuture<ToolOutcome> future, String toolName, ToolCallContext ctx) {
+    private ToolOutcome result(CompletableFuture<ToolOutcome> future, String toolName, boolean idempotent,
+            ToolCallContext ctx) {
         try {
             return future.join();
         } catch (CompletionException e) {
-            return failed(e.getCause(), toolName, ctx);
+            return failed(e.getCause(), toolName, idempotent, ctx);
         }
     }
 
-    private ToolOutcome failed(Throwable cause, String toolName, ToolCallContext ctx) {
+    private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx) {
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
-        return new ToolOutcome.Failure(ImapErrorMapper.map(cause, ctx.requestId()).error());
+        return new ToolOutcome.Failure(afterMutation(ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
+    }
+
+    private static ToolOutcome timedOut(boolean idempotent, ToolCallContext ctx) {
+        return new ToolOutcome.Failure(afterMutation(ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }
