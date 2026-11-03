@@ -40,6 +40,17 @@ final class ArchitectureRules {
             .should().dependOnClassesThat().resideInAPackage("io.modelcontextprotocol..")
             .as("MCP SDK types may only be used from ..core.mcp..");
 
+    // STUB (red step): replaced by the real rules in the next commit.
+    static final ArchRule FOLDER_OPEN_ONLY_IN_LEASE = stub("a");
+    static final ArchRule READ_WRITE_OPEN_ONLY_FROM_WRITE_PACKAGE = stub("b");
+    static final ArchRule NO_MUTATION_HELPERS = stub("c");
+    static final ArchRule FOLDER_CLOSE_ONLY_IN_LEASE = stub("d");
+    static final ArchRule RAW_COMMANDS_ONLY_IN_COMMAND_CLASS = stub("e");
+
+    private static ArchRule stub(String n) {
+        return noClasses().that().haveFullyQualifiedName("nonexistent." + n).should().bePublic();
+    }
+
     private ArchitectureRules() {
     }
 }
