@@ -2,6 +2,6 @@ target/
 .idea/
 *.iml
 logs/
-.claude/worktrees/
-.claude/gitea-*token
-.claude/settings.local.json
+.claude
+CLAUDE.md
+.claudeignore
