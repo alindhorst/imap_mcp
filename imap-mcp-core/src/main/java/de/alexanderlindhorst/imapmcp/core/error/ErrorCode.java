@@ -1,6 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.error;
 
-/** v1 tool error codes. The retryable flag is fixed per code. */
+/** Tool error codes (v1 and the v2 write codes). The retryable flag is fixed per code. */
 public enum ErrorCode {
     INVALID_ARGUMENT(false),
     ACCOUNT_NOT_FOUND(false),
@@ -15,7 +15,10 @@ public enum ErrorCode {
     UPSTREAM_UNAVAILABLE(true),
     UPSTREAM_ERROR(false),
     UNSUPPORTED(false),
-    INTERNAL_ERROR(false);
+    INTERNAL_ERROR(false),
+    PERMISSION_DENIED(false),
+    QUOTA_EXCEEDED(false),
+    OUTCOME_UNKNOWN(false);
 
     private final boolean retryable;
 
