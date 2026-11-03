@@ -18,7 +18,7 @@ import java.util.regex.PatternSyntaxException;
 /**
  * Validates tool arguments against the very input schema the tool publishes, restricted to the JSON Schema
  * subset our tools use: type (string, integer, number, boolean, array, object), properties, required,
- * additionalProperties (only {@code false}), minLength/maxLength, minimum/maximum, minItems/maxItems, items,
+ * additionalProperties (only {@code false}), minLength/maxLength, minimum/maximum, minItems/maxItems, uniqueItems, items,
  * enum, pattern, format (date, date-time with offset). Any other keyword fails at construction.
  *
  * <p>Unknown properties are always rejected (object schemas default to {@code additionalProperties:false}).
@@ -29,7 +29,7 @@ import java.util.regex.PatternSyntaxException;
  * name), then {@code required} in schema order, then declared properties in the schema's {@code properties}
  * iteration order (use a LinkedHashMap when declaring a schema), recursing into nested values.
  * Mapping: unknown_property, required, type, out_of_range (bounds, items count, enum; {@code max} only for
- * an upper bound), format (pattern, format).
+ * an upper bound), format (pattern, format), duplicate (uniqueItems, reported at the second occurrence).
  */
 public final class InputValidator {
 
@@ -81,6 +81,11 @@ public final class InputValidator {
                     }
                 }
                 case "minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum", "enum" -> {
+                }
+                case "uniqueItems" -> {
+                    if (!(v instanceof Boolean)) {
+                        throw new IllegalArgumentException("uniqueItems must be a boolean at " + where);
+                    }
                 }
                 case "pattern" -> {
                     try {
@@ -255,6 +260,37 @@ public final class InputValidator {
             }
             cleaned[0] = Collections.unmodifiableList(out);
         }
+        if (Boolean.TRUE.equals(s.get("uniqueItems"))) {
+            Set<Object> seen = new java.util.HashSet<>();
+            for (int i = 0; i < list.size(); i++) {
+                if (!seen.add(canonical(list.get(i)))) {
+                    return new Violation(path + "[" + i + "]", "duplicate", null);
+                }
+            }
+        }
         return null;
+    }
+
+    /** Normalizes parsed JSON so that equal JSON values (e.g. 1 and 1.0) compare equal. */
+    private static Object canonical(Object v) {
+        if (v instanceof Number n) {
+            try {
+                BigDecimal d = new BigDecimal(n.toString()).stripTrailingZeros();
+                return d.signum() == 0 ? BigDecimal.ZERO : d;
+            } catch (NumberFormatException e) {
+                return n;
+            }
+        }
+        if (v instanceof List<?> l) {
+            List<Object> out = new ArrayList<>(l.size());
+            l.forEach(x -> out.add(canonical(x)));
+            return out;
+        }
+        if (v instanceof Map<?, ?> m) {
+            Map<Object, Object> out = new java.util.HashMap<>();
+            m.forEach((k, x) -> out.put(k, canonical(x)));
+            return out;
+        }
+        return v;
     }
 }
