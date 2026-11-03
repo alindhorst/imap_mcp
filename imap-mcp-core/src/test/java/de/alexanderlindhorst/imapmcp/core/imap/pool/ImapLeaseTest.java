@@ -191,6 +191,46 @@ class ImapLeaseTest {
     }
 
     @Test
+    void capabilitiesReadLeasedConnectionWithoutWireTraffic() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            int before = trace.list.size();
+            var caps = lease.capabilities();
+            assertThat(caps.move()).isTrue();
+            assertThat(caps.uidplus()).isTrue();
+            assertThat(trace.list.size()).isEqualTo(before);
+        }
+    }
+
+    @Test
+    void gateRefusesWithoutUidplusBeforeAnyFolderCommand() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            lease.overrideCapabilities(new WriteCapabilities(true, false));
+            int before = trace.list.size();
+            var refusal = lease.capabilities().requireUidplus("rid");
+            assertThat(refusal).isPresent();
+            assertThat(refusal.get().code()).isEqualTo(ErrorCode.UNSUPPORTED);
+            assertThat(refusal.get().toMap().toString()).contains("UIDPLUS");
+            assertThat(trace.list.size()).isEqualTo(before);
+        }
+        assertThat(count("[A-Z]+\\d+ (SELECT|EXAMINE) .*")).isZero();
+    }
+
+    @Test
+    void gateIgnoresCapabilityCacheAndPassesWithUidplus() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            // the pool filled the CapabilityCache with UIDPLUS=true at connect; the gate must not look at it
+            lease.overrideCapabilities(new WriteCapabilities(false, false));
+            assertThat(lease.capabilities().requireUidplus("rid")).isPresent();
+        }
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            assertThat(lease.capabilities().requireUidplus("rid")).isEmpty();
+        }
+    }
+
+    @Test
     void openReadOnlyNeverSelects() throws Exception {
         leases(Duration.ofSeconds(10));
         try (ImapLease lease = leases.lease(key, ctx())) {

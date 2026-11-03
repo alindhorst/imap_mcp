@@ -66,4 +66,21 @@ class ToolCallContextTest {
         ToolCallContext c = new ToolCallContext(new AccountContext(new TenantId("t1")), "r", d);
         assertThat(c.deadline()).contains(d);
     }
+
+    @Test
+    void mutationStartedIsFalseUntilMarkedAndMarkIsIdempotent() {
+        ToolCallContext c = ctx();
+        assertThat(c.mutationStarted()).isFalse();
+        c.markMutationStarted();
+        c.markMutationStarted();
+        assertThat(c.mutationStarted()).isTrue();
+    }
+
+    @Test
+    void mutationMarkSetOnOneThreadIsVisibleOnAnother() throws Exception {
+        ToolCallContext c = ctx();
+        Thread t = Thread.ofVirtual().start(c::markMutationStarted);
+        t.join();
+        assertThat(c.mutationStarted()).isTrue();
+    }
 }
