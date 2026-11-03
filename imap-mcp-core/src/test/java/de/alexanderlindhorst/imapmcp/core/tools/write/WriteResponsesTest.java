@@ -6,7 +6,6 @@ import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import jakarta.mail.MessagingException;
 import jakarta.mail.ReadOnlyFolderException;
-import java.util.Map;
 import java.util.Optional;
 import org.eclipse.angus.mail.iap.CommandFailedException;
 import org.eclipse.angus.mail.iap.Response;
@@ -118,9 +117,8 @@ class WriteResponsesTest {
     void exceptionTextNeverEndsUpInThePayloadUnlessItIsServerText() {
         Optional<ToolError> e = WriteResponses.map(new RuntimeException("secret-marker"), "X", RID);
         assertThat(e).isEmpty();
-        ToolError n = WriteResponses.map(new CommandFailedException(new Response("A1 NO [NOPERM] denied")), "X", RID)
-                .orElseThrow();
-        assertThat(n.toMap().toString()).doesNotContain("denied");
-        assertThat(Map.of()).isEmpty();
+        ToolError n = WriteResponses.map(new CommandFailedException(new Response("A1 NO [NOPERM] srvtext-marker")),
+                "X", RID).orElseThrow();
+        assertThat(n.toMap().toString()).doesNotContain("srvtext-marker");
     }
 }
