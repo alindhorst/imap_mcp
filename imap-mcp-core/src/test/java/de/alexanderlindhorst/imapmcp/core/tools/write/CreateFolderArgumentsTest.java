@@ -88,13 +88,13 @@ class CreateFolderArgumentsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {" a", "a ", " a", "a　", ".", "..", "a  b"})
+    @ValueSource(strings = {" a", "a ", "\u00A0a", "a\u3000", ".", "..", "a  b"})
     void whitespaceAndDotNamesAreFormat(String name) {
         assertDetail(error(null, name), "name", "format", null);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"a‮b", "a​b", "a­b", "a⁦b", "a﻿b"})
+    @ValueSource(strings = {"a\u202Eb", "a\u200Bb", "a\u00ADb", "a\u2066b", "a\uFEFFb"})
     void sanitizerChangedNamesAreFormat(String name) {
         assertDetail(error(null, name), "name", "format", null);
     }
@@ -115,9 +115,9 @@ class CreateFolderArgumentsTest {
 
     @Test
     void parentLongerThan1000Utf8BytesIsOutOfRange() {
-        String parent = "ä".repeat(501); // 501 characters, 1002 bytes
+        String parent = "\u00E4".repeat(501); // 501 characters, 1002 bytes
         assertDetail(error(parent, "n"), "parent", "out_of_range", 1000);
-        assertThat(CreateFolderTool.parse(args("ä".repeat(500), "n"), "rid").error()).isNull();
+        assertThat(CreateFolderTool.parse(args("\u00E4".repeat(500), "n"), "rid").error()).isNull();
     }
 
     @Test
