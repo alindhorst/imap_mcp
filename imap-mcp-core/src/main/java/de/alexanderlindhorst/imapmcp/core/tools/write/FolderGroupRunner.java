@@ -23,8 +23,8 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
  * selects the target folder and an empty present set never reaches the step, so no empty UID set is sent.
  *
  * <p>The step calls {@link Gate#beforeWrite()} before every mutating command. For the first command of a group the
- * gate checks the fixed 15 s budget against the call deadline (less remaining: that group and all later ones are
- * {@code not_attempted}, a normal result); for the first command of the call it then marks
+ * gate checks the fixed 15 s budget against the call deadline (less remaining: the rest of that group (items the pre-check
+ * already settled keep their status) and all later groups are {@code not_attempted}, a normal result); for the first command of the call it then marks
  * {@link ToolCallContext#markMutationStarted()}, so the mark is never set by the pre-check. A started step is never
  * interrupted by the budget.
  *
@@ -130,7 +130,7 @@ public final class FolderGroupRunner {
                 }
                 out.addAll(runGroup(lease, ctx, group, absent, step, st));
             } catch (BudgetExhausted e) {
-                group.items().forEach(i -> out.add(BulkResult.Item.notAttempted(i.handle())));
+                fill(out, group, st, i -> BulkResult.Item.notAttempted(i.handle()));
                 stopped = true;
             } catch (MessagingException e) {
                 Optional<ToolError> mapped = WriteResponses.map(e, null, ctx.requestId());
