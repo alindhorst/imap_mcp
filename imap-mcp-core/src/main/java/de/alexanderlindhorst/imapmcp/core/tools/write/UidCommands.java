@@ -59,8 +59,9 @@ public final class UidCommands {
     }
 
     private static final long MAX_UINT32 = 4_294_967_295L;
-    /** Flag keyword: ASCII atom characters only, so a keyword can never break out of the parenthesized list. */
-    private static final Pattern KEYWORD = Pattern.compile("[A-Za-z0-9_$.-]{1,255}");
+    /** Same atom set as set_flags (anchored), so a keyword can never break out of the parenthesized list. */
+    private static final Pattern KEYWORD = Pattern.compile(SetFlagsTool.KEYWORD_PATTERN);
+    private static final int MAX_KEYWORD = 64;
 
     private UidCommands() {
     }
@@ -155,7 +156,7 @@ public final class UidCommands {
             out.add(systemFlag(f));
         }
         for (String k : flags.getUserFlags()) {
-            if (!KEYWORD.matcher(k).matches()) {
+            if (k.length() > MAX_KEYWORD || !KEYWORD.matcher(k).matches()) {
                 throw new IllegalArgumentException("keyword");
             }
             out.add(k);
