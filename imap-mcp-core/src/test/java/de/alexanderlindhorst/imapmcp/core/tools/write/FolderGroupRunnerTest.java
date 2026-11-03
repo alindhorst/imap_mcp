@@ -307,7 +307,7 @@ class FolderGroupRunnerTest {
                 (f, present, gate) -> {
                     if (present.get(0).ref().folder().equals("A")) {
                         gate.beforeWrite();
-                        throw new MessagingException("NO", new CommandFailedException("NO [NOPERM] denied"));
+                        throw new MessagingException("NO", new CommandFailedException(new org.eclipse.angus.mail.iap.Response("A1 NO [NOPERM] denied")));
                     }
                     return present.stream().map(i -> BulkResult.Item.okFlags(i.handle())).toList();
                 });
