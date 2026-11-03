@@ -121,4 +121,11 @@ class WriteResponsesTest {
                 "X", RID).orElseThrow();
         assertThat(n.toMap().toString()).doesNotContain("srvtext-marker");
     }
+
+    @Test
+    void protocolExceptionWithoutResponseIsNotHandledAndItsMessageIsNotUsed() {
+        assertThat(WriteResponses.map(new org.eclipse.angus.mail.iap.ProtocolException("[NOPERM] secret detail"),
+                "X", RID)).isEmpty();
+        assertThat(WriteResponses.map(new CommandFailedException("[OVERQUOTA] secret detail"), "X", RID)).isEmpty();
+    }
 }
