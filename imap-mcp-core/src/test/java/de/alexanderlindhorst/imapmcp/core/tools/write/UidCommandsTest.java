@@ -258,4 +258,23 @@ class UidCommandsTest {
         assertThat(r.tagged().isNO()).isTrue();
         assertThat(r.copyUid()).isEmpty();
     }
+
+    @Test
+    void storeAcceptsEveryRfc3501AtomKeywordTheToolAccepts() throws Exception {
+        for (String k : List.of("Proj+1", "#tag", "a&b", "~x")) {
+            assertThat(UidCommands.uidStore(inbox, List.of(uids.get(0)), FlagMode.ADD, new Flags(k)).ok())
+                    .as(k).isTrue();
+            assertThat(wire()).contains("+FLAGS.SILENT (" + k + ")");
+        }
+    }
+
+    @Test
+    void storeRejectsNonAtomKeywordsBeforeAnythingIsWritten() {
+        int before = wire().length();
+        for (String k : List.of("a b", "a(b", "a]b", "a\"b", "x".repeat(65), "abc\n")) {
+            assertThatThrownBy(() -> UidCommands.uidStore(inbox, List.of(1L), FlagMode.ADD, new Flags(k)))
+                    .as(k).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(wire().length()).isEqualTo(before);
+    }
 }
