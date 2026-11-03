@@ -202,7 +202,8 @@ class ToolErrorTest {
             assertThat(m.getParameterCount()).as(name).isEqualTo(1);
         }
         // every other public factory may only take the documented non-handle values
-        Set<Class<?>> allowed = Set.of(String.class, int.class, Integer.class, ToolError.StaleReason.class);
+        Set<Class<?>> allowed = Set.of(String.class, int.class, Integer.class, ToolError.StaleReason.class,
+                ToolError.PermissionReason.class);
         for (Method m : ToolError.class.getDeclaredMethods()) {
             if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers())
                     && m.getReturnType() == ToolError.class) {
@@ -224,7 +225,8 @@ class ToolErrorTest {
         assertThat(ErrorCode.values()).extracting(Enum::name).containsExactlyInAnyOrder(
                 "INVALID_ARGUMENT", "ACCOUNT_NOT_FOUND", "INVALID_HANDLE", "INVALID_CURSOR", "STALE_REFERENCE",
                 "MESSAGE_NOT_FOUND", "FOLDER_NOT_FOUND", "AUTH_FAILED", "SERVER_BUSY", "TIMEOUT",
-                "UPSTREAM_UNAVAILABLE", "UPSTREAM_ERROR", "UNSUPPORTED", "INTERNAL_ERROR");
+                "UPSTREAM_UNAVAILABLE", "UPSTREAM_ERROR", "UNSUPPORTED", "INTERNAL_ERROR",
+                "PERMISSION_DENIED", "QUOTA_EXCEEDED", "OUTCOME_UNKNOWN");
     }
 
     @Test
@@ -257,5 +259,107 @@ class ToolErrorTest {
                 ToolError.timeout(RID), ToolError.authFailed(RID), ToolError.serverBusy(RID), mapped}) {
             assertThat(json(e)).doesNotContain("marker-host", "UnknownHostException", "java.", "\\tat ", "Exception");
         }
+    }
+
+    // v2 write error codes
+
+    @Test
+    void v2CodesAreNotRetryable() {
+        assertThat(ErrorCode.PERMISSION_DENIED.retryable()).isFalse();
+        assertThat(ErrorCode.QUOTA_EXCEEDED.retryable()).isFalse();
+        assertThat(ErrorCode.OUTCOME_UNKNOWN.retryable()).isFalse();
+    }
+
+    @Test
+    void goldenPermissionDenied() {
+        assertThat(json(ToolError.permissionDenied(ToolError.PermissionReason.ACCOUNT_READ_ONLY, RID))).isEqualTo(
+                "{\"error\":{\"code\":\"PERMISSION_DENIED\","
+                        + "\"message\":\"The change is not permitted. Do not retry.\","
+                        + "\"retryable\":false,"
+                        + "\"hint\":\"The change was refused by configuration or by the server; do not retry. "
+                        + "See details.reason.\","
+                        + "\"details\":{\"reason\":\"account_read_only\"},\"request_id\":\"req-1\"}}");
+        assertThat(json(ToolError.permissionDenied(ToolError.PermissionReason.FOLDER_READ_ONLY, RID)))
+                .contains("\"details\":{\"reason\":\"folder_read_only\"}");
+        assertThat(json(ToolError.permissionDenied(ToolError.PermissionReason.SERVER_DENIED, RID)))
+                .contains("\"details\":{\"reason\":\"server_denied\"}");
+        assertThat(ToolError.PermissionReason.values()).hasSize(3);
+    }
+
+    @Test
+    void goldenQuotaExceeded() {
+        assertThat(json(ToolError.quotaExceeded(RID))).isEqualTo(
+                "{\"error\":{\"code\":\"QUOTA_EXCEEDED\","
+                        + "\"message\":\"The mailbox quota is exceeded. Ask the user to free space; do not retry.\","
+                        + "\"retryable\":false,"
+                        + "\"hint\":\"Ask the user to free space in the mailbox; do not retry.\","
+                        + "\"request_id\":\"req-1\"}}");
+    }
+
+    @Test
+    void goldenOutcomeUnknown() {
+        assertThat(json(ToolError.outcomeUnknown(RID))).isEqualTo(
+                "{\"error\":{\"code\":\"OUTCOME_UNKNOWN\","
+                        + "\"message\":\"The outcome of the copy is unknown. Search the target folder before repeating.\","
+                        + "\"retryable\":false,"
+                        + "\"hint\":\"Search the target folder before repeating the call; otherwise the copies are "
+                        + "duplicated.\","
+                        + "\"request_id\":\"req-1\"}}");
+    }
+
+    @Test
+    void invalidHandleWithFieldAddsOnlyDetailsField() {
+        String v1 = json(ToolError.invalidHandle(RID));
+        String v2 = json(ToolError.invalidHandle("handles[3]", RID));
+        assertThat(v2).isEqualTo(v1.replace("\"request_id\"",
+                "\"details\":{\"field\":\"handles[3]\"},\"request_id\""));
+        ToolError e = ToolError.invalidHandle("handles[3]", RID);
+        assertThat(e.code()).isEqualTo(ErrorCode.INVALID_HANDLE);
+        assertThat(e.message()).isEqualTo(ToolError.invalidHandle(RID).message());
+        assertThat(e.hint()).isEqualTo(ToolError.invalidHandle(RID).hint());
+    }
+
+    @Test
+    void withOutcomeUnknownAppendsDetailOutcome() {
+        assertThat(json(ToolError.timeout(RID).withOutcomeUnknown()))
+                .contains("\"details\":{\"outcome\":\"unknown\"},\"request_id\":\"req-1\"");
+        assertThat(ToolError.upstreamUnavailable(RID).withOutcomeUnknown().details())
+                .containsEntry("outcome", "unknown");
+        assertThat(ToolError.internalError(RID).withOutcomeUnknown().details()).containsEntry("outcome", "unknown");
+        // existing details are kept, outcome appended last
+        ToolError withDetails = new ToolError(ErrorCode.TIMEOUT, "m", "h", null,
+                Map.of("reason", "x"), RID).withOutcomeUnknown();
+        assertThat(withDetails.details().keySet()).containsExactly("reason", "outcome");
+        // the original is unchanged
+        ToolError plain = ToolError.timeout(RID);
+        plain.withOutcomeUnknown();
+        assertThat(plain.details()).isNull();
+    }
+
+    @Test
+    void withOutcomeUnknownRejectsOtherCodes() {
+        for (ToolError e : new ToolError[] {ToolError.authFailed(RID), ToolError.serverBusy(RID),
+                ToolError.quotaExceeded(RID), ToolError.outcomeUnknown(RID), ToolError.messageNotFound(RID),
+                ToolError.upstreamError("NO", RID)}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(e::withOutcomeUnknown)
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    void toItemMapIsErrorObjectWithoutRequestId() {
+        assertThat(JSON.writeValueAsString(ToolError.quotaExceeded(RID).toItemMap())).isEqualTo(
+                "{\"code\":\"QUOTA_EXCEEDED\","
+                        + "\"message\":\"The mailbox quota is exceeded. Ask the user to free space; do not retry.\","
+                        + "\"retryable\":false,"
+                        + "\"hint\":\"Ask the user to free space in the mailbox; do not retry.\"}");
+        assertThat(JSON.writeValueAsString(
+                ToolError.permissionDenied(ToolError.PermissionReason.SERVER_DENIED, RID).toItemMap()))
+                .contains("\"details\":{\"reason\":\"server_denied\"}").doesNotContain("request_id");
+        Map<String, Object> inner = (Map<String, Object>) ToolError.serverBusy(RID).toMap().get("error");
+        Map<String, Object> item = new java.util.LinkedHashMap<>(inner);
+        item.remove("request_id");
+        assertThat(ToolError.serverBusy(RID).toItemMap()).isEqualTo(item);
+        assertThat(ToolError.serverBusy(RID).toItemMap().keySet()).containsExactlyElementsOf(item.keySet());
     }
 }

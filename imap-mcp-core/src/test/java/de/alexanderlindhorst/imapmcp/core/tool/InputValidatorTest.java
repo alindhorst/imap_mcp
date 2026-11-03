@@ -161,6 +161,40 @@ class InputValidatorTest {
     }
 
     @Test
+    void uniqueItemsRejectsDuplicateAtSecondOccurrence() {
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("handles", Map.of("type", "array", "maxItems", 3, "uniqueItems", true, "items", Map.of("type", "string")));
+        props.put("loose", Map.of("type", "array", "uniqueItems", false));
+        props.put("plain", Map.of("type", "array"));
+        props.put("later", Map.of("type", "string", "maxLength", 1));
+        InputValidator iv = new InputValidator(Map.of("type", "object", "properties", props, "additionalProperties", false));
+        assertThat(iv.validate(Map.of("handles", List.of("a", "b", "c")), "r").valid()).isTrue();
+        assertThat(iv.validate(Map.of("handles", List.of("a", "b", "a")), "r").error().details())
+                .containsEntry("field", "handles[2]").containsEntry("reason", "duplicate");
+        assertThat(iv.validate(Map.of("handles", List.of("a", "a", "a")), "r").error().details())
+                .containsEntry("field", "handles[1]");
+        // bounds and per-item checks of the property come first
+        assertThat(iv.validate(Map.of("handles", List.of("a", "a", "a", "a")), "r").error().details())
+                .containsEntry("reason", "out_of_range");
+        assertThat(iv.validate(Map.of("handles", List.of("a", 1, 1)), "r").error().details())
+                .containsEntry("field", "handles[1]").containsEntry("reason", "type");
+        // before later properties
+        assertThat(iv.validate(Map.of("handles", List.of("a", "a"), "later", "xx"), "r").error().details())
+                .containsEntry("reason", "duplicate");
+        // false and absent behave as before
+        assertThat(iv.validate(Map.of("loose", List.of(1, 1), "plain", List.of(1, 1)), "r").valid()).isTrue();
+        // exact JSON equality, also for numbers and nested values
+        Map<String, Object> nums = Map.of("type", "object", "properties",
+                Map.of("n", Map.of("type", "array", "uniqueItems", true)), "additionalProperties", false);
+        InputValidator ni = new InputValidator(nums);
+        assertThat(ni.validate(Map.of("n", List.of(1, 2)), "r").valid()).isTrue();
+        assertThat(ni.validate(Map.of("n", List.of(1, 1.0)), "r").error().details()).containsEntry("field", "n[1]");
+        assertThat(ni.validate(Map.of("n", List.of(Map.of("a", 1), Map.of("a", 1))), "r").error().details())
+                .containsEntry("field", "n[1]");
+        assertThat(ni.validate(Map.of("n", List.of(List.of(1), List.of(2))), "r").valid()).isTrue();
+    }
+
+    @Test
     void unsupportedKeywordsFailAtDefinitionTime() {
         for (String kw : new String[] {"oneOf", "anyOf", "allOf", "$ref", "not", "patternProperties", "const", "multipleOf", "uniqueItems"}) {
             Map<String, Object> s = new LinkedHashMap<>(sample());
