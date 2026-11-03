@@ -1,11 +1,11 @@
-package de.alexanderlindhorst.imapmcp.core.write;
+package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
-import de.alexanderlindhorst.imapmcp.core.write.BulkResult.Item;
-import de.alexanderlindhorst.imapmcp.core.write.BulkResult.Kind;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkResult.Item;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkResult.Kind;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;

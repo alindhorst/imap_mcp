@@ -1,4 +1,4 @@
-package de.alexanderlindhorst.imapmcp.core.write;
+package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import java.util.ArrayList;

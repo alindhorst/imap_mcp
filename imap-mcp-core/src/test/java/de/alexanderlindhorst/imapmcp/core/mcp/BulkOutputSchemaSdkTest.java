@@ -3,10 +3,10 @@ package de.alexanderlindhorst.imapmcp.core.mcp;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
-import de.alexanderlindhorst.imapmcp.core.write.BulkOutputSchema;
-import de.alexanderlindhorst.imapmcp.core.write.BulkResult;
-import de.alexanderlindhorst.imapmcp.core.write.BulkResult.Item;
-import de.alexanderlindhorst.imapmcp.core.write.BulkResult.Kind;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkOutputSchema;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkResult;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkResult.Item;
+import de.alexanderlindhorst.imapmcp.core.tools.write.BulkResult.Kind;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import java.util.List;
 import java.util.Map;
