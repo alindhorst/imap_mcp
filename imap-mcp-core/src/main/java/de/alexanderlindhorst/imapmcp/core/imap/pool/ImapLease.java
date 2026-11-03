@@ -3,9 +3,14 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import jakarta.mail.Folder;
+import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
+import jakarta.mail.ReadOnlyFolderException;
+import jakarta.mail.StoreClosedException;
+import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.eclipse.angus.mail.iap.CommandFailedException;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.eclipse.angus.mail.imap.IMAPStore;
 import org.slf4j.Logger;
@@ -13,8 +18,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Exclusive lease of one {@link IMAPStore} for one tool call (SPEC 5.4, 5.5). Used by the worker thread of the
- * call only. At most one folder is open at a time, always READ_ONLY (EXAMINE) and always closed with
- * {@code close(false)}. Store-level commands (LIST/STATUS) use {@link #store()}, which refuses while a folder is
+ * call only. At most one folder is open at a time, READ_ONLY (EXAMINE) for read tools or READ_WRITE (SELECT)
+ * for write tools, and always closed with {@code close(false)}. Store-level commands (LIST/STATUS) use {@link #store()}, which refuses while a folder is
  * open so the lease never needs a second socket. {@code close()} returns the Store to the pool only after a clean
  * run; any failure seen by the lease, {@link #markBroken()}, cancellation or interrupt invalidates it instead.
  * No {@code Message} objects may outlive the lease.
@@ -66,6 +71,49 @@ public final class ImapLease implements AutoCloseable {
             markBroken();
             throw e;
         }
+    }
+
+    /**
+     * Opens the folder READ_WRITE (SELECT) for write tools; a previously opened folder is closed first. A connection-level
+     * failure marks the lease broken; a NO / {@code [NOPERM]} or a {@code [READ-ONLY]} answer is rethrown with the
+     * lease intact, so the caller can go on with its next folder group (SPEC 5.4).
+     */
+    public IMAPFolder openReadWrite(String folderFullName) throws MessagingException {
+        closeFolder();
+        ensureUsable();
+        try {
+            IMAPFolder f = (IMAPFolder) store.getFolder(folderFullName);
+            f.open(Folder.READ_WRITE);
+            folder = f;
+            return f;
+        } catch (MessagingException | RuntimeException e) {
+            if (!isCommandLevelRefusal(e)) {
+                markBroken();
+            }
+            throw e;
+        }
+    }
+
+    /** True for an answer of the server to the SELECT itself (NO, [READ-ONLY]); the connection is still sound. */
+    private static boolean isCommandLevelRefusal(Exception e) {
+        if (e instanceof FolderClosedException || e instanceof StoreClosedException) {
+            return false;
+        }
+        if (e instanceof ReadOnlyFolderException) {
+            return true;
+        }
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof IOException) {
+                return false;
+            }
+            if (t instanceof CommandFailedException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /** Closes the open folder with {@code close(false)}; a failure marks the lease broken. */
