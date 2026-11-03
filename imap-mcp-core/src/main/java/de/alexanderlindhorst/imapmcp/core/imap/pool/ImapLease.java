@@ -2,7 +2,6 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
-import de.alexanderlindhorst.imapmcp.core.tools.write.WriteCapabilities;
 import jakarta.mail.Folder;
 import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;

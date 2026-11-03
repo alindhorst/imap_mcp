@@ -4,7 +4,6 @@ import static org.mockito.Mockito.mock;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
-import de.alexanderlindhorst.imapmcp.core.tools.write.WriteCapabilities;
 import org.eclipse.angus.mail.imap.IMAPStore;
 
 /** Test-only access to package-private lease internals; lives in test sources, so production cannot reach it. */

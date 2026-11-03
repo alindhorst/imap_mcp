@@ -1,4 +1,4 @@
-package de.alexanderlindhorst.imapmcp.core.tools.write;
+package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import java.util.Optional;

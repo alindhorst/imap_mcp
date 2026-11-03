@@ -206,7 +206,7 @@ class ImapLeaseTest {
     void gateRefusesWithoutUidplusBeforeAnyFolderCommand() throws Exception {
         leases(Duration.ofSeconds(10));
         try (ImapLease lease = leases.lease(key, ctx())) {
-            lease.overrideCapabilities(new de.alexanderlindhorst.imapmcp.core.tools.write.WriteCapabilities(true, false));
+            lease.overrideCapabilities(new WriteCapabilities(true, false));
             int before = trace.list.size();
             var refusal = lease.capabilities().requireUidplus("rid");
             assertThat(refusal).isPresent();
@@ -222,7 +222,7 @@ class ImapLeaseTest {
         leases(Duration.ofSeconds(10));
         try (ImapLease lease = leases.lease(key, ctx())) {
             // the pool filled the CapabilityCache with UIDPLUS=true at connect; the gate must not look at it
-            lease.overrideCapabilities(new de.alexanderlindhorst.imapmcp.core.tools.write.WriteCapabilities(false, false));
+            lease.overrideCapabilities(new WriteCapabilities(false, false));
             assertThat(lease.capabilities().requireUidplus("rid")).isPresent();
         }
         try (ImapLease lease = leases.lease(key, ctx())) {

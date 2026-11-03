@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.LeaseTestSeams;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.WriteCapabilities;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
