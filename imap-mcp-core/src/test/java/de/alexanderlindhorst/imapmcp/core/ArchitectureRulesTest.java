@@ -4,12 +4,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.Test;
 
-@AnalyzeClasses(packages = "de.alexanderlindhorst.imapmcp.core", importOptions = ExcludeFixtures.class)
+@AnalyzeClasses(packages = "de.alexanderlindhorst.imapmcp.core", importOptions = {ImportOption.DoNotIncludeTests.class, ExcludeFixtures.class})
 class ArchitectureRulesTest {
 
     @ArchTest
@@ -33,6 +34,9 @@ class ArchitectureRulesTest {
     @ArchTest
     static final ArchRule rawCommandsOnlyInCommandClass = ArchitectureRules.RAW_COMMANDS_ONLY_IN_COMMAND_CLASS;
 
+    @ArchTest
+    static final ArchRule readClassesNeverWrite = ArchitectureRules.READ_CLASSES_NEVER_WRITE;
+
     /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
     @Test
     void rulesFailOnAnEmptyClassSet() {
@@ -40,7 +44,7 @@ class ArchitectureRulesTest {
         assertThatThrownBy(() -> coreHasNoForbiddenDependencies.check(none)).isInstanceOf(AssertionError.class);
         assertThatThrownBy(() -> sdkOnlyInCoreMcp.check(none)).isInstanceOf(AssertionError.class);
         for (ArchRule rule : new ArchRule[] {folderOpenOnlyInLease, readWriteOpenOnlyFromWritePackage, noMutationHelpers,
-                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass}) {
+                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass, readClassesNeverWrite}) {
             assertThatThrownBy(() -> rule.check(none)).isInstanceOf(AssertionError.class);
         }
     }
