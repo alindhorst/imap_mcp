@@ -115,6 +115,7 @@ class ToxiproxyFaultIT {
                         port: %d
                         username: %s
                         password: "env:IT_PW"
+                        readOnly: true
                     imap:
                       readTimeout: 30s
                     pool:

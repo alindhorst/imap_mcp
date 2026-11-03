@@ -165,6 +165,54 @@ class ConfigLoaderTest {
         assertThat(c.tools().maxBodyPartBytes()).isEqualTo(64L * 1024 * 1024);
     }
 
+    private static final String READ_ONLY_ACCOUNT = ACCOUNT + "    readOnly: true\n";
+
+    @Test
+    void readOnlyDefaultsToFalseAndIsMappedToMailAccount() throws IOException {
+        AppConfig c = load(ACCOUNT);
+        assertThat(c.accounts().get(0).readOnly()).isFalse();
+        assertThat(c.accounts().get(0).toMailAccount().readOnly()).isFalse();
+        assertThat(c.writeToolsUsable()).isTrue();
+
+        AppConfig ro = load(READ_ONLY_ACCOUNT);
+        assertThat(ro.accounts().get(0).readOnly()).isTrue();
+        assertThat(ro.accounts().get(0).toMailAccount().readOnly()).isTrue();
+        assertThat(ro.writeToolsUsable()).isFalse();
+    }
+
+    @Test
+    void readOnlyMustBeBoolean() {
+        assertThatThrownBy(() -> load(ACCOUNT + "    readOnly: maybe\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].readOnly");
+    }
+
+    @Test
+    void writeToolsUsableIsTrueIfAnyAccountIsWritable() throws IOException {
+        AppConfig c = load(READ_ONLY_ACCOUNT
+                + "  - id: second\n    host: h\n    username: u\n    password: env:P\n");
+        assertThat(c.writeToolsUsable()).isTrue();
+    }
+
+    @Test
+    void toolsWriteToolsKeyIsAnUnknownKey() {
+        assertThatThrownBy(() -> load(ACCOUNT + "tools:\n  writeTools: [set_flags]\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("tools.writeTools")
+                .hasMessageContaining("unknown key");
+    }
+
+    @Test
+    void deadlineGuardAppliesOnlyWhenAnAccountIsWritable() throws IOException {
+        assertThat(load(ACCOUNT + "tools: {deadline: 30s}\n").tools().deadline()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(load(ACCOUNT + "tools: {deadline: 90s}\n").tools().deadline()).isEqualTo(Duration.ofSeconds(90));
+        assertThat(load(READ_ONLY_ACCOUNT + "tools: {deadline: 10s}\n").tools().deadline())
+                .isEqualTo(Duration.ofSeconds(10));
+        assertThatThrownBy(() -> load(ACCOUNT + "tools: {deadline: 29999ms}\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("tools.deadline")
+                .message().doesNotContain("MAIL_PW", "mail.example.org");
+        assertThatThrownBy(() -> load(READ_ONLY_ACCOUNT + "tools: {deadline: 11m}\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("tools.deadline");
+    }
+
     @Test
     void literalPasswordMessageExplainsRefSyntax() throws IOException {
         assertThatThrownBy(() -> load(ACCOUNT.replace("env:MAIL_PW", "hunter2-secret")))
