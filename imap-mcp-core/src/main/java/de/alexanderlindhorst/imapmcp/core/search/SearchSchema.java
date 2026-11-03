@@ -11,7 +11,7 @@ import java.util.Map;
 public final class SearchSchema {
 
     /** IMAP atom characters only (no atom-specials, controls or non-ASCII); this also excludes a leading backslash. */
-    public static final String KEYWORD_PATTERN = "^[^\\x00-\\x20(){%*\"\\\\\\]\\x7f-\\uffff]+$";
+    static final String KEYWORD_PATTERN = "^[^\\x00-\\x20(){%*\"\\\\\\]\\x7f-\\uffff]+$";
 
     public static final List<String> FOLDER_ROLES =
             List.of("inbox", "sent", "drafts", "trash", "junk", "archive", "all", "flagged", "important");

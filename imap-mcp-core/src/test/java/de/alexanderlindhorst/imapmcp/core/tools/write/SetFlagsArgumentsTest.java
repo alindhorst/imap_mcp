@@ -77,7 +77,7 @@ class SetFlagsArgumentsTest {
             assertThat(kw).containsEntry("maxItems", 10).containsEntry("uniqueItems", true);
             Map<String, Object> item = (Map<String, Object>) kw.get("items");
             assertThat(item).containsEntry("minLength", 1).containsEntry("maxLength", 64)
-                    .containsEntry("pattern", de.alexanderlindhorst.imapmcp.core.search.SearchSchema.KEYWORD_PATTERN);
+                    .containsEntry("pattern", SetFlagsTool.KEYWORD_PATTERN);
         }
     }
 
