@@ -14,12 +14,21 @@ import java.util.List;
 public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tools, Secrets secrets, Http http,
         Security security, String mode, String logLevel) {
 
+    /**
+     * True iff at least one account is not read-only. Single source for the deadline guard (ConfigLoader) and
+     * for write-tool registration (SPEC 5.7).
+     */
+    public boolean writeToolsUsable() {
+        return accounts.stream().anyMatch(a -> !a.readOnly());
+    }
+
     public record Account(String id, String label, String address, String host, int port,
-            MailAccount.Security security, MailAccount.Flavor flavor, String username, SecretRef password) {
+            MailAccount.Security security, MailAccount.Flavor flavor, String username, SecretRef password,
+            boolean readOnly) {
 
         public MailAccount toMailAccount() {
             return new MailAccount(new AccountId(id), label, address, host, port, security, flavor, username,
-                    password);
+                    password, readOnly);
         }
 
         @Override

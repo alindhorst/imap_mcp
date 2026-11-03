@@ -19,6 +19,17 @@ class MailAccountTest {
     }
 
     @Test
+    void readOnlyDefaultsToFalseAndToStringStaysCleanWhenSet() {
+        MailAccount writable = new MailAccount(new AccountId("work"), "Work", ADDRESS, "imap.example.org", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, USER, new SecretRef(SECRET));
+        MailAccount readOnly = new MailAccount(new AccountId("work"), "Work", ADDRESS, "imap.example.org", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, USER, new SecretRef(SECRET), true);
+        assertThat(writable.readOnly()).isFalse();
+        assertThat(readOnly.readOnly()).isTrue();
+        assertThat(readOnly.toString()).doesNotContain(USER, ADDRESS, SECRET, "9f3", "Work");
+    }
+
+    @Test
     void secretRefToStringHidesValue() {
         assertThat(new SecretRef(SECRET).toString()).doesNotContain(SECRET, "9f3");
     }
