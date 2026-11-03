@@ -58,7 +58,7 @@ class ListAccountsSdkTest {
         MailAccount ok = new MailAccount(new AccountId("ok"), "Ok", "ok@example.org", "127.0.0.1", port,
                 Security.IMPLICIT_TLS, Flavor.GENERIC, "ok", new SecretRef("env:A"));
         MailAccount bad = new MailAccount(new AccountId("bad"), "Bad", null, "127.0.0.1", port,
-                Security.IMPLICIT_TLS, Flavor.GMAIL, "bad", new SecretRef("env:B"));
+                Security.IMPLICIT_TLS, Flavor.GMAIL, "bad", new SecretRef("env:B"), true);
         InMemoryAccountRepository repo = new InMemoryAccountRepository(Map.of(T, List.of(ok, bad)));
         pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), new CapabilityCache(),
                 k -> k.accountId().value().equals("ok") ? ok : bad, PoolSettings.DEFAULTS);
@@ -103,5 +103,14 @@ class ListAccountsSdkTest {
         McpSchema.CallToolResult r = mcp.call("list_accounts", Map.of(), McpTransportContext.EMPTY);
         assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
         assertThat(((Map<?, ?>) r.structuredContent()).get("accounts")).asList().hasSize(2);
+    }
+
+    @Test
+    void structuredContentCarriesReadOnlyPerAccount() {
+        McpSchema.CallToolResult r = mcp.call("list_accounts", Map.of(), McpTransportContext.EMPTY);
+        assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
+        assertThat((List<?>) ((Map<?, ?>) r.structuredContent()).get("accounts")).extracting(
+                m -> ((Map<?, ?>) m).get("label") + ":" + ((Map<?, ?>) m).get("read_only"))
+                .containsExactlyInAnyOrder("Ok:false", "Bad:true");
     }
 }
