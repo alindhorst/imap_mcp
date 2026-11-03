@@ -44,6 +44,7 @@ public final class ConfigLoader {
     private static final Set<String> GMAIL_HOSTS = Set.of("imap.gmail.com", "imap.googlemail.com");
     private static final Set<String> MODES = Set.of("stdio", "http-local");
     private static final Set<String> LOG_LEVELS = Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR");
+    private static final Duration WRITE_MIN_DEADLINE = Duration.ofSeconds(30);
     private static final YAMLMapper YAML = YAMLMapper.builder().build();
 
     private ConfigLoader() {
@@ -80,7 +81,12 @@ public final class ConfigLoader {
         AppConfig.Security security = new AppConfig.Security(top.section("security").optionalRef("handleKey"));
         top.finish();
         http = envHttp(http, env);
-        return new AppConfig(accounts, imap, pool, tools, secrets, http, security, envMode(env), envLogLevel(env));
+        AppConfig config = new AppConfig(accounts, imap, pool, tools, secrets, http, security, envMode(env),
+                envLogLevel(env));
+        if (config.writeToolsUsable() && tools.deadline().compareTo(WRITE_MIN_DEADLINE) < 0) {
+            throw new ConfigException("tools.deadline: must be at least 30s while any account is not readOnly");
+        }
+        return config;
     }
 
     // ---- sections ----
@@ -120,8 +126,10 @@ public final class ConfigLoader {
             }
             String username = s.string("username", null);
             SecretRef password = s.requiredRef("password");
+            boolean readOnly = s.bool("readOnly", false);
             s.finish();
-            result.add(new AppConfig.Account(id, label, address, host, port, security, flavor, username, password));
+            result.add(new AppConfig.Account(id, label, address, host, port, security, flavor, username, password,
+                    readOnly));
         }
         return List.copyOf(result);
     }
