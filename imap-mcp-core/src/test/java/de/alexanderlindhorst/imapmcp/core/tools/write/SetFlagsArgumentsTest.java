@@ -168,6 +168,12 @@ class SetFlagsArgumentsTest {
     }
 
     @Test
+    void trailingLineTerminatorInKeywordIsRejected() {
+        assertInvalid(args("add_keywords", List.of("abc\n")), "add_keywords[0]", "format");
+        assertInvalid(args("remove_keywords", List.of("abc\r\n")), "remove_keywords[0]", "format");
+    }
+
+    @Test
     void keywordsAreKeptAsGiven() {
         SetFlagsTool.Parsed p = run(args("add_keywords", Arrays.asList("MixedCase")));
         assertThat(p.add()).containsExactly("MixedCase");
