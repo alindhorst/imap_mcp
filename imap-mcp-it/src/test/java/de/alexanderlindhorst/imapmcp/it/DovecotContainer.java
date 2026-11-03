@@ -21,7 +21,36 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
     /** Host name of the container on a shared Network (for Toxiproxy upstreams). */
     public static final String NETWORK_ALIAS = "dovecot";
 
+    /**
+     * The advertised capability set (SPEC 5.8, v2 write tests), set by an {@code imap_capability} fixture copied to
+     * {@code conf.d/98-*.conf}. SPECIAL-USE stays advertised in all of them.
+     */
+    public enum Profile {
+        FULL(null, true, true),
+        NO_MOVE("dovecot/98-no-move.conf", false, true),
+        NO_MOVE_NO_UIDPLUS("dovecot/98-no-move-no-uidplus.conf", false, false);
+
+        private final String fixture;
+        private final boolean move;
+        private final boolean uidplus;
+
+        Profile(String fixture, boolean move, boolean uidplus) {
+            this.fixture = fixture;
+            this.move = move;
+            this.uidplus = uidplus;
+        }
+
+        public boolean move() {
+            return move;
+        }
+
+        public boolean uidplus() {
+            return uidplus;
+        }
+    }
+
     private final String password;
+    private final Profile profile;
 
     public DovecotContainer() {
         this(PASSWORD);
@@ -29,8 +58,17 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
 
     /** With a non-default password (e.g. a marker string a test asserts never shows up in logs). */
     public DovecotContainer(String password) {
+        this(password, Profile.FULL);
+    }
+
+    public DovecotContainer(Profile profile) {
+        this(PASSWORD, profile);
+    }
+
+    public DovecotContainer(String password, Profile profile) {
         super(DockerImageName.parse(ItImages.DOVECOT));
         this.password = password;
+        this.profile = profile;
         withEnv("USER_PASSWORD", "{PLAIN}" + password);
         withExposedPorts(IMAPS_PORT, STARTTLS_PORT);
         withNetworkAliases(NETWORK_ALIAS);
@@ -39,7 +77,15 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
         withCopyFileToContainer(MountableFile.forClasspathResource("dovecot/tls.key", 0644), "/etc/dovecot/ssl/tls.key");
         withCopyFileToContainer(MountableFile.forClasspathResource("dovecot/99-it.conf", 0644),
                 "/etc/dovecot/conf.d/99-it.conf");
+        if (profile.fixture != null) {
+            withCopyFileToContainer(MountableFile.forClasspathResource(profile.fixture, 0644),
+                    "/etc/dovecot/conf.d/" + profile.fixture.substring("dovecot/".length()));
+        }
         waitingFor(Wait.forLogMessage(".*starting up for imap.*", 1));
+    }
+
+    public Profile profile() {
+        return profile;
     }
 
     public int imapsPort() {
