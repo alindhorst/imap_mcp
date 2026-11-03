@@ -98,7 +98,7 @@ public final class McpToolAdapter {
      * on unvalidated input or outside the deadline.
      */
     private ToolHandler validating(ToolDefinition def, ToolHandler handler) {
-        return executor.wrap(def.name(), new ValidatingToolHandler(def, handler));
+        return executor.wrap(def, new ValidatingToolHandler(def, handler));
     }
 
     private McpSchema.CallToolResult call(ToolHandler handler, McpTransportContext transportContext,
