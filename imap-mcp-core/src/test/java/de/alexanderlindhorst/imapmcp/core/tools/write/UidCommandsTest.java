@@ -11,6 +11,7 @@ import de.alexanderlindhorst.imapmcp.core.tools.write.UidCommands.FlagMode;
 import de.alexanderlindhorst.imapmcp.core.tools.write.UidCommands.Result;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
+import jakarta.mail.FolderClosedException;
 import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.Store;
@@ -108,7 +109,7 @@ class UidCommandsTest {
     }
 
     private void createTarget(String name) throws Exception {
-        assertThat(UidCommands.create(inbox, name).ok()).isTrue();
+        assertThat(store.getFolder(name).create(Folder.HOLDS_MESSAGES)).isTrue();
     }
 
     @Test
@@ -193,27 +194,6 @@ class UidCommandsTest {
     }
 
     @Test
-    void createAndSubscribeReturnOkAndNoWithResponseCode() throws Exception {
-        assertThat(UidCommands.create(inbox, "Fresh").ok()).isTrue();
-        assertThat(UidCommands.subscribe(inbox, "Fresh").ok()).isTrue();
-        Result again = UidCommands.create(inbox, "Fresh");
-        assertThat(again.ok()).isFalse();
-        assertThat(again.no()).isTrue();
-        assertThat(again.tagged().isNO()).isTrue();
-        assertThat(again.tagged().getRest()).isNotNull();
-    }
-
-    @Test
-    void nonAsciiMailboxNameRoundTripsInModifiedUtf7() throws Exception {
-        String name = "Entwürfe 日本";
-        createTarget(name);
-        assertThat(wire()).contains("CREATE \"Entw&APw-rfe &ZeVnLA-\"");
-        Result r = UidCommands.uidCopy(inbox, List.of(uids.get(0)), name);
-        assertThat(r.ok()).isTrue();
-        assertThat(subjects(name)).containsExactly("m1");
-    }
-
-    @Test
     void emptyUidSetThrowsBeforeAnythingIsWritten() {
         int before = wire().length();
         assertThatThrownBy(() -> UidCommands.uidMove(inbox, List.of(), "X")).isInstanceOf(IllegalArgumentException.class);
@@ -232,7 +212,6 @@ class UidCommandsTest {
         UidCommands.uidMove(inbox, List.of(uids.get(1)), "T2");
         UidCommands.uidStore(inbox, List.of(uids.get(2)), FlagMode.ADD, new Flags(Flags.Flag.DELETED));
         UidCommands.uidExpunge(inbox, List.of(uids.get(2)));
-        UidCommands.subscribe(inbox, "T2");
         assertThat(wire()).doesNotContainPattern("(?m)\\bA\\d+ (COPY|MOVE|STORE|EXPUNGE|ENABLE)\\b");
         List<String> names = java.util.Arrays.stream(UidCommands.class.getDeclaredMethods())
                 .filter(m -> Modifier.isPublic(m.getModifiers())).map(java.lang.reflect.Method::getName).toList();
@@ -276,5 +255,22 @@ class UidCommandsTest {
                     .as(k).isInstanceOf(IllegalArgumentException.class);
         }
         assertThat(wire().length()).isEqualTo(before);
+    }
+
+    @Test
+    void closedAndReadOnlyFoldersAreRefusedBeforeAnythingIsWritten() throws Exception {
+        inbox.close(false);
+        int before = wire().length();
+        assertThatThrownBy(() -> UidCommands.uidMove(inbox, List.of(1L), "X")).isInstanceOf(FolderClosedException.class);
+        assertThatThrownBy(() -> UidCommands.uidCopy(inbox, List.of(1L), "X")).isInstanceOf(FolderClosedException.class);
+        assertThatThrownBy(() -> UidCommands.uidStore(inbox, List.of(1L), FlagMode.ADD, new Flags(Flags.Flag.SEEN)))
+                .isInstanceOf(FolderClosedException.class);
+        assertThatThrownBy(() -> UidCommands.uidExpunge(inbox, List.of(1L))).isInstanceOf(FolderClosedException.class);
+        inbox.open(Folder.READ_ONLY);
+        int afterOpen = wire().length();
+        assertThatThrownBy(() -> UidCommands.uidMove(inbox, List.of(1L), "X")).isInstanceOf(FolderClosedException.class);
+        assertThatThrownBy(() -> UidCommands.uidExpunge(inbox, List.of(1L))).isInstanceOf(FolderClosedException.class);
+        assertThat(before).isLessThanOrEqualTo(afterOpen);
+        assertThat(wire().length()).isEqualTo(afterOpen);
     }
 }

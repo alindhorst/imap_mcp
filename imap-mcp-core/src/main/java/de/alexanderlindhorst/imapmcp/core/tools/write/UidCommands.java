@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.tools.write;
 
+import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import jakarta.mail.Flags;
 import jakarta.mail.MessagingException;
 import java.util.ArrayList;
@@ -86,12 +87,12 @@ public final class UidCommands {
         return send(folder, "UID EXPUNGE " + uidSet(uids), null);
     }
 
-    public static Result create(IMAPFolder folder, String name) throws MessagingException {
-        return send(folder, "CREATE ", mailbox(name));
+    public static Result create(ImapLease lease, String name) throws MessagingException {
+        throw new UnsupportedOperationException(); // stub, red
     }
 
-    public static Result subscribe(IMAPFolder folder, String name) throws MessagingException {
-        return send(folder, "SUBSCRIBE ", mailbox(name));
+    public static Result subscribe(ImapLease lease, String name) throws MessagingException {
+        throw new UnsupportedOperationException(); // stub, red
     }
 
     private static Argument mailbox(String name) {
