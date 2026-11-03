@@ -2,7 +2,10 @@ package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import jakarta.mail.Flags;
+import jakarta.mail.Folder;
+import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -13,6 +16,7 @@ import org.eclipse.angus.mail.iap.Argument;
 import org.eclipse.angus.mail.iap.Response;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.eclipse.angus.mail.imap.protocol.BASE64MailboxEncoder;
+import org.eclipse.angus.mail.imap.protocol.IMAPProtocol;
 
 /**
  * The one class that sends write commands (SPEC 5.4): a closed verb set (UID MOVE, UID COPY, UID STORE
@@ -69,46 +73,78 @@ public final class UidCommands {
 
     public static Result uidMove(IMAPFolder folder, Collection<Long> uids, String targetFolder)
             throws MessagingException {
-        return send(folder, "UID MOVE " + uidSet(uids) + " ", mailbox(targetFolder));
+        String set = uidSet(uids);
+        requireWritable(folder);
+        return send(folder, "UID MOVE " + set, requireName(targetFolder));
     }
 
     public static Result uidCopy(IMAPFolder folder, Collection<Long> uids, String targetFolder)
             throws MessagingException {
-        return send(folder, "UID COPY " + uidSet(uids) + " ", mailbox(targetFolder));
+        String set = uidSet(uids);
+        requireWritable(folder);
+        return send(folder, "UID COPY " + set, requireName(targetFolder));
     }
 
     public static Result uidStore(IMAPFolder folder, Collection<Long> uids, FlagMode mode, Flags flags)
             throws MessagingException {
         String set = uidSet(uids);
-        return send(folder, "UID STORE " + set + " " + mode.item + " " + flagList(flags), null);
+        String list = flagList(flags);
+        requireWritable(folder);
+        return send(folder, "UID STORE " + set + " " + mode.item + " " + list, null);
     }
 
     public static Result uidExpunge(IMAPFolder folder, Collection<Long> uids) throws MessagingException {
-        return send(folder, "UID EXPUNGE " + uidSet(uids), null);
+        String set = uidSet(uids);
+        requireWritable(folder);
+        return send(folder, "UID EXPUNGE " + set, null);
     }
 
+    /**
+     * CREATE on the lease's own connection. Only while no folder is open on the lease ({@code lease.store()}
+     * refuses otherwise with IllegalStateException): with a folder open, Angus would log in a second connection.
+     */
     public static Result create(ImapLease lease, String name) throws MessagingException {
-        throw new UnsupportedOperationException(); // stub, red
+        return send(storeFolder(lease), "CREATE", requireName(name));
     }
 
+    /** SUBSCRIBE; same lease rules as {@link #create}. */
     public static Result subscribe(ImapLease lease, String name) throws MessagingException {
-        throw new UnsupportedOperationException(); // stub, red
+        return send(storeFolder(lease), "SUBSCRIBE", requireName(name));
     }
 
-    private static Argument mailbox(String name) {
+    private static IMAPFolder storeFolder(ImapLease lease) throws MessagingException {
+        return (IMAPFolder) lease.store().getDefaultFolder();
+    }
+
+    private static String requireName(String name) {
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("mailbox name");
         }
+        return name;
+    }
+
+    /** Like Angus writeMailboxName: raw UTF-8 once UTF8=ACCEPT is enabled on the connection, else modified UTF-7. */
+    private static Argument mailbox(IMAPProtocol p, String name) {
         Argument a = new Argument();
-        a.writeString(BASE64MailboxEncoder.encode(name));
+        if (p.supportsUtf8()) {
+            a.writeString(name, StandardCharsets.UTF_8);
+        } else {
+            a.writeString(BASE64MailboxEncoder.encode(name));
+        }
         return a;
     }
 
-    private static Result send(IMAPFolder folder, String command, Argument args) throws MessagingException {
-        // trailing space of the command is the separator before the argument
-        String cmd = args == null ? command : command.stripTrailing();
+    private static void requireWritable(IMAPFolder folder) throws MessagingException {
+        if (!folder.isOpen() || folder.getMode() != Folder.READ_WRITE) {
+            // a closed folder would silently run the command on the store connection
+            throw new FolderClosedException(folder, "folder is not open read-write");
+        }
+    }
+
+    private static Result send(IMAPFolder folder, String command, String mailboxName) throws MessagingException {
         return (Result) folder.doCommand(p -> {
-            Response[] r = p.command(cmd, args);
+            Argument args = mailboxName == null ? null : mailbox(p, mailboxName);
+            Response[] r = p.command(command, args);
             p.notifyResponseHandlers(r);
             Response tagged = r[r.length - 1];
             if (tagged.isBYE()) {

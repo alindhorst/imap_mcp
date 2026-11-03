@@ -43,9 +43,12 @@ class UidCommandsUtf8Test {
         verify(p).command(eq("UID COPY 1"), arg.capture());
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         DataOutputStream out = new DataOutputStream(bytes);
-        // getOutputStream() is protected: answer it by name
-        Protocol sink = mock(Protocol.class,
-                inv -> "getOutputStream".equals(inv.getMethod().getName()) ? out : Mockito.RETURNS_DEFAULTS.answer(inv));
+        // getOutputStream() is protected: answer it by name; non-synchronizing literals need no continuation
+        Protocol sink = mock(Protocol.class, inv -> switch (inv.getMethod().getName()) {
+            case "getOutputStream" -> out;
+            case "supportsNonSyncLiterals" -> true;
+            default -> Mockito.RETURNS_DEFAULTS.answer(inv);
+        });
         arg.getValue().write(sink);
         return bytes.toByteArray();
     }
