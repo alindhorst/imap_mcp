@@ -36,6 +36,7 @@ public final class ImapLease implements AutoCloseable {
     private final AtomicBoolean finished = new AtomicBoolean();
     private final Admission.Permit permit; // nullable
     private IMAPFolder folder; // worker thread only
+    private WriteCapabilities forcedCapabilities; // test seam, package-private setter only
 
     ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx, Admission.Permit permit) {
         this.pool = pool;
@@ -140,6 +141,20 @@ public final class ImapLease implements AutoCloseable {
         }
         ensureUsable();
         return store;
+    }
+
+    /**
+     * The leased connection's write capabilities (no I/O, never the CapabilityCache); see {@link WriteCapabilities}.
+     * Usable while a folder is open or not.
+     */
+    public WriteCapabilities capabilities() throws MessagingException {
+        ensureUsable();
+        return forcedCapabilities != null ? forcedCapabilities : WriteCapabilities.from(store);
+    }
+
+    /** Test seam: forces what {@link #capabilities()} reports. Not reachable from production wiring. */
+    void overrideCapabilities(WriteCapabilities forced) {
+        this.forcedCapabilities = forced;
     }
 
     /** The lease must not return its Store to the pool (error, timeout, discard-worthy condition). */

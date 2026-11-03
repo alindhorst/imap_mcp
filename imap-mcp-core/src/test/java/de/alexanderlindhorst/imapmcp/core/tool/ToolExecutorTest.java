@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
+import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -199,5 +200,140 @@ class ToolExecutorTest {
         java.time.Instant after = java.time.Instant.now();
         assertThat(seen.get()).isPresent();
         assertThat(seen.get().get()).isBetween(before.plusMillis(200), after.plusMillis(200));
+    }
+
+    // --- v2 mutationStarted (SPEC 5.5 Write calls) ---
+
+    static ToolDefinition def(ToolHints hints) {
+        Map<String, Object> schema = Map.of("type", "object");
+        return new ToolDefinition("w", "W", "d", schema, schema, hints);
+    }
+
+    static ToolHandler sleepingAfter(boolean mark, CountDownLatch started) {
+        return (cx, a) -> {
+            if (mark) {
+                cx.markMutationStarted();
+            }
+            started.countDown();
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException e) {
+                // interrupted by the executor
+            }
+            return ok();
+        };
+    }
+
+    static ToolError errorOf(ToolOutcome o) {
+        return ((ToolOutcome.Failure) o).error();
+    }
+
+    @Test
+    void deadlineBeforeMarkIsTheV1TimeoutPayload() {
+        ToolOutcome o = executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT),
+                sleepingAfter(false, new CountDownLatch(1))).handle(ctx("r"), Map.of());
+        assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r"));
+        assertThat(errorOf(o).details()).isNull();
+    }
+
+    @Test
+    void deadlineAfterMarkOnIdempotentToolIsRetryableTimeoutWithOutcomeUnknown() {
+        ToolOutcome o = executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT),
+                sleepingAfter(true, new CountDownLatch(1))).handle(ctx("r"), Map.of());
+        assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r").withOutcomeUnknown());
+        assertThat(errorOf(o).retryable()).isTrue();
+        assertThat(errorOf(o).details()).containsEntry("outcome", "unknown");
+    }
+
+    @Test
+    void deadlineAfterMarkOnCopyToolIsOutcomeUnknownNotRetryable() {
+        ToolOutcome o = executor.wrap(def(ToolHints.WRITE_ADDITIVE), sleepingAfter(true, new CountDownLatch(1)))
+                .handle(ctx("r"), Map.of());
+        assertThat(errorOf(o)).isEqualTo(ToolError.outcomeUnknown("r"));
+        assertThat(errorOf(o).retryable()).isFalse();
+    }
+
+    @Test
+    void externalCancelAfterMarkMapsLikeTheDeadlineAndIsNotCountedAsTimeout() throws Exception {
+        ToolExecutor ex = new ToolExecutor(Duration.ofSeconds(5), logIds);
+        for (boolean idempotent : new boolean[] {true, false}) {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<ToolOutcome> outcome = new AtomicReference<>();
+            ToolCallContext c = ctx("r");
+            ToolHandler h = ex.wrap(def(idempotent ? ToolHints.WRITE_ADDITIVE_IDEMPOTENT : ToolHints.WRITE_ADDITIVE),
+                    sleepingAfter(true, started));
+            Thread caller = Thread.ofPlatform().start(() -> outcome.set(h.handle(c, Map.of())));
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            c.cancel();
+            caller.join(2000);
+            assertThat(errorOf(outcome.get())).isEqualTo(idempotent ? ToolError.timeout("r").withOutcomeUnknown()
+                    : ToolError.outcomeUnknown("r"));
+        }
+    }
+
+    @Test
+    void externalCancelBeforeMarkIsTheV1Timeout() throws Exception {
+        ToolExecutor ex = new ToolExecutor(Duration.ofSeconds(5), logIds);
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicReference<ToolOutcome> outcome = new AtomicReference<>();
+        ToolCallContext c = ctx("r");
+        ToolHandler h = ex.wrap(def(ToolHints.WRITE_ADDITIVE), sleepingAfter(false, started));
+        Thread caller = Thread.ofPlatform().start(() -> outcome.set(h.handle(c, Map.of())));
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        c.cancel();
+        caller.join(2000);
+        assertThat(errorOf(outcome.get())).isEqualTo(ToolError.timeout("r"));
+    }
+
+    @Test
+    void uncheckedExceptionAfterMarkAddsOutcomeUnknown() {
+        ToolHandler boom = (cx, a) -> {
+            cx.markMutationStarted();
+            throw new IllegalStateException("marker-secret");
+        };
+        ToolError idem = errorOf(executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), boom).handle(ctx("r"), Map.of()));
+        assertThat(idem.code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
+        assertThat(idem.details()).containsEntry("outcome", "unknown");
+        assertThat(idem.toMap().toString()).doesNotContain("marker-secret");
+        assertThat(errorOf(executor.wrap(def(ToolHints.WRITE_ADDITIVE), boom).handle(ctx("r"), Map.of())))
+                .isEqualTo(ToolError.outcomeUnknown("r"));
+    }
+
+    @Test
+    void connectionFailureAfterMarkKeepsUpstreamUnavailableCodeWithOutcomeUnknown() {
+        ToolHandler down = (cx, a) -> {
+            cx.markMutationStarted();
+            throw new RuntimeException(new java.net.ConnectException("x"));
+        };
+        ToolError e = errorOf(executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), down).handle(ctx("r"), Map.of()));
+        assertThat(e.code()).isEqualTo(ErrorCode.UPSTREAM_UNAVAILABLE);
+        assertThat(e.details()).containsEntry("outcome", "unknown");
+    }
+
+    @Test
+    void uncheckedExceptionBeforeMarkIsTheV1Backstop() {
+        ToolError e = errorOf(executor.wrap(def(ToolHints.WRITE_ADDITIVE), (cx, a) -> {
+            throw new IllegalStateException("x");
+        }).handle(ctx("r"), Map.of()));
+        assertThat(e).isEqualTo(ToolError.internalError("r"));
+    }
+
+    @Test
+    void resultProducedAfterDeadlineIsNeverReturnedForWriteTools() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ToolOutcome o = executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.markMutationStarted();
+            return stubborn(started, release, new AtomicInteger()).handle(cx, a);
+        }).handle(ctx("r"), Map.of());
+        release.countDown();
+        assertThat(errorOf(o).code()).isEqualTo(ErrorCode.TIMEOUT);
+    }
+
+    @Test
+    void readToolsNeverMarkAndKeepV1Outcomes() {
+        ToolOutcome o = executor.wrap(def(ToolHints.READ_ONLY_OPEN_WORLD), sleepingAfter(false, new CountDownLatch(1)))
+                .handle(ctx("r"), Map.of());
+        assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r"));
     }
 }
