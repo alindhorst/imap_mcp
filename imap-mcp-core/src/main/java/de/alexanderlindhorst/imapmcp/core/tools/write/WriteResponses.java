@@ -73,8 +73,6 @@ public final class WriteResponses {
                     if (m.isPresent() || r.isNO() || r.isBAD()) {
                         return m;
                     }
-                } else if (pe.getMessage() != null) {
-                    return mapFailure(pe.getMessage().stripLeading(), targetFolder, requestId);
                 }
             }
             if (cur.getCause() != null) {
