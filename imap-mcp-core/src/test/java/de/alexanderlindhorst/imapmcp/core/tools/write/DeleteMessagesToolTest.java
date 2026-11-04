@@ -310,6 +310,60 @@ class DeleteMessagesToolTest {
     }
 
     @Test
+    void withoutMoveTheFallbackCopiesStoresDeletedAndUidExpungesExactlyTheCopiedUids() throws Exception {
+        // the default wiring (no Mover seam), as AppComponents builds it
+        tool = new DeleteMessagesTool(preflight, leases, handles, Clock.systemUTC(), trashStub, null);
+        var inbox = greenMail.getManagers().getImapHostManager().getFolder(user, "INBOX");
+        List<Long> uids = new ArrayList<>(snapshot("INBOX").keySet());
+        inbox.setFlags(new Flags(Flags.Flag.DELETED), true, uids.get(2), null, false);
+        List<String> hs = List.of(handle(T1, "INBOX", uids.get(0)), handle(T1, "INBOX", uids.get(1)));
+        ListAppender<ILoggingEvent> callLog = new ListAppender<>();
+        Logger callLogger = (Logger) LoggerFactory.getLogger(WriteCallLog.class);
+        callLogger.setLevel(Level.INFO);
+        callLogger.addAppender(callLog);
+        callLog.start();
+        String w;
+        Map<String, Object> out;
+        try {
+            ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-" + (++counter));
+            var ok = (WritePreflight.Result.Ok) preflight.check(ctx, accountHandle1, hs, null);
+            var key = de.alexanderlindhorst.imapmcp.core.account.PoolKey.of(new AccountContext(T1),
+                    new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(T1, account, accountHandle1));
+            IMAPStore s = (IMAPStore) sessions.sessionFor(key, account).getStore("imaps"); // traced session
+            s.connect("127.0.0.1", greenMail.getImaps().getPort(), USER, "pw");
+            try {
+                trace.list.clear();
+                var lease = LeaseTestSeams.lease(s, ctx);
+                LeaseTestSeams.forceCapabilities(lease, false, true);
+                out = ok(tool.onLease(lease, ctx, ok, accountHandle1, hs));
+                w = wire();
+            } finally {
+                s.close();
+            }
+        } finally {
+            callLogger.detachAppender(callLog);
+        }
+
+        assertThat(results(out)).extracting(r -> r.get("status")).containsOnly("ok");
+        Map<Long, String> inboxAfter = snapshot("INBOX");
+        assertThat(inboxAfter.keySet()).containsExactly(uids.get(2));
+        assertThat(inboxAfter.get(uids.get(2))).contains("\\Deleted");
+        assertThat(snapshot("Trash")).hasSize(2);
+        int copy = w.indexOf("UID COPY");
+        int store = w.indexOf("UID STORE");
+        int expunge = w.indexOf("UID EXPUNGE");
+        assertThat(copy).isNotNegative();
+        assertThat(store).isGreaterThan(copy);
+        assertThat(expunge).isGreaterThan(store);
+        assertThat(w).contains("+FLAGS.SILENT (\\Deleted)").doesNotContain("UID MOVE")
+                .doesNotContainPattern("(?m)^\\S+ EXPUNGE");
+        String expungeLine = w.lines().filter(l -> l.contains("UID EXPUNGE")).findFirst().orElseThrow();
+        assertThat(expungeLine).containsAnyOf("UID EXPUNGE " + uids.get(0) + "," + uids.get(1),
+                "UID EXPUNGE " + uids.get(0) + ":" + uids.get(1));
+        assertThat(callLog.list.get(callLog.list.size() - 1).getFormattedMessage()).contains("path=copy_fallback");
+    }
+
+    @Test
     void overquotaOnTrashFailsTheGroupLeavesTheSourceAndExpungesNothing() throws Exception {
         mover = (folder, uids, target) -> {
             Response r = new Response("A1 NO [OVERQUOTA] full");
