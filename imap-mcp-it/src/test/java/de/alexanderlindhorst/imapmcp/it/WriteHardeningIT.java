@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,6 +33,7 @@ class WriteHardeningIT {
     private static DovecotContainer full;
     private static DovecotContainer noMove;
     private static DovecotContainer noMoveNoUidplus;
+    private static DovecotContainer noUtf8Accept;
 
     @TempDir
     Path dir;
@@ -47,13 +47,16 @@ class WriteHardeningIT {
         full = new DovecotContainer(DovecotContainer.Profile.FULL);
         noMove = new DovecotContainer(DovecotContainer.Profile.NO_MOVE);
         noMoveNoUidplus = new DovecotContainer(DovecotContainer.Profile.NO_MOVE_NO_UIDPLUS);
+        noUtf8Accept = new DovecotContainer(DovecotContainer.Profile.NO_UTF8_ACCEPT);
         full.start();
         noMove.start();
         noMoveNoUidplus.start();
+        noUtf8Accept.start();
     }
 
     @AfterAll
     static void stop() {
+        noUtf8Accept.stop();
         noMoveNoUidplus.stop();
         noMove.stop();
         full.stop();
@@ -218,7 +221,7 @@ class WriteHardeningIT {
     void wireAuditGreenMail() throws Exception {
         WriteHarness h = open(greenMailBackend());
         List<WriteSlice> slices = runEveryWriteTool(h);
-        auditWholeTrace(true); // GreenMail does not advertise UTF8=ACCEPT: no ENABLE at all
+        auditWholeTrace(true); // GreenMail does not advertise UTF8=ACCEPT: Angus sends no ENABLE at all
         auditTargets(slices);
     }
 
@@ -228,6 +231,7 @@ class WriteHardeningIT {
         List<WriteSlice> slices = runEveryWriteTool(h);
         assertThat(tap.all()).anyMatch(c -> c.startsWith("UID MOVE"));
         auditWholeTrace(false);
+        assertTheOnlyEnableIsUtf8AcceptDuringLogin(tap.all());
         auditTargets(slices);
     }
 
@@ -251,16 +255,31 @@ class WriteHardeningIT {
     }
 
     /**
-     * SPEC 5.4 "Never ENABLE ... UTF8=ACCEPT" cannot be met on Dovecot with Angus 2.0.5, which enables UTF8=ACCEPT by
-     * itself when the server advertises it (owner decision pending, #179). The relaxed rule above (nothing but
-     * UTF8=ACCEPT, never CONDSTORE/QRESYNC) is what holds; this is the strict SPEC check.
+     * SPEC 5.4 (v0.9): the client code never sends ENABLE; on a server that advertises UTF8=ACCEPT Angus 2.0.5 does so
+     * itself. Against the profile without UTF8=ACCEPT the strict rule therefore holds: no ENABLE at all (#179).
      */
     @Test
-    @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
-    void wireAuditDovecotStrictNoEnable() throws Exception {
-        WriteHarness h = open(dovecotBackend(full));
-        runEveryWriteTool(h);
+    void wireAuditDovecotWithoutUtf8AcceptHasNoEnableAtAll() throws Exception {
+        WriteHarness h = open(dovecotBackend(noUtf8Accept));
+        List<WriteSlice> slices = runEveryWriteTool(h);
+        assertThat(tap.all()).anyMatch(c -> c.startsWith("UID MOVE"));
         assertThat(ImapWireAudit.enableViolations(tap.all(), true)).isEmpty();
+        auditWholeTrace(true);
+        auditTargets(slices);
+    }
+
+    /**
+     * On the full set the relaxed rule is exact: the only ENABLE is {@code UTF8=ACCEPT} (never CONDSTORE/QRESYNC), and
+     * it is sent during login, before any folder command.
+     */
+    private static void assertTheOnlyEnableIsUtf8AcceptDuringLogin(List<String> all) {
+        List<String> enables = all.stream().filter(c -> c.startsWith("ENABLE")).toList();
+        assertThat(enables).isNotEmpty().allMatch(c -> c.strip().equals("ENABLE UTF8=ACCEPT"));
+        int firstEnable = all.indexOf(enables.get(0));
+        int firstFolderCommand = all.indexOf(ImapWireAudit.firstFolderCommand(all).orElseThrow());
+        // The login itself is not a traced command: the connection's first traced command is the ENABLE.
+        assertThat(firstEnable).isZero();
+        assertThat(firstEnable).isLessThan(firstFolderCommand);
     }
 
     // ---- pool reuse after SELECT ----
