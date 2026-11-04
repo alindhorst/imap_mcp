@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.folder.FolderResolver;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
+import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.WriteCapabilities;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * {@code delete_messages} (SPEC 4 v2 write contract, 5.4): a move of up to 100 handles to the {@code \Trash} role
@@ -72,9 +74,16 @@ public final class DeleteMessagesTool implements ToolHandler {
     private final MoveStep.Mover mover;
 
     public DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock) {
-        this(preflight, leases, handles, clock, TargetResolver::resolveTrash, UidCommands::uidMove);
+        this(preflight, leases, handles, clock, TargetResolver::resolveTrash);
     }
 
+    /** Default wiring with a substituted Trash resolution (tests). */
+    DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock,
+            TrashResolver trash) {
+        this(preflight, leases, handles, clock, trash, null);
+    }
+
+    /** {@code mover} is a test seam that replaces the whole wire (no fallback verbs); null is the live wire. */
     DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock,
             TrashResolver trash, MoveStep.Mover mover) {
         this.preflight = Objects.requireNonNull(preflight, "preflight");
@@ -82,7 +91,7 @@ public final class DeleteMessagesTool implements ToolHandler {
         this.handles = Objects.requireNonNull(handles, "handles");
         this.runner = new FolderGroupRunner(Objects.requireNonNull(clock, "clock"));
         this.trash = Objects.requireNonNull(trash, "trash");
-        this.mover = Objects.requireNonNull(mover, "mover");
+        this.mover = mover;
     }
 
     @Override
@@ -113,6 +122,12 @@ public final class DeleteMessagesTool implements ToolHandler {
         }
     }
 
+    /** Steps 7 to 9 on a leased connection; package-private so tests can force the connection's capabilities. */
+    ToolOutcome onLease(ImapLease lease, ToolCallContext ctx, WritePreflight.Result.Ok ok, String account,
+            List<String> handleList) throws MessagingException {
+        return run(lease, ctx, ok, account, handleList, System.nanoTime());
+    }
+
     private ToolOutcome run(ImapLease lease, ToolCallContext ctx, WritePreflight.Result.Ok ok, String account,
             List<String> handleList, long start) throws MessagingException {
         String rid = ctx.requestId();
@@ -137,11 +152,12 @@ public final class DeleteMessagesTool implements ToolHandler {
                 toRun.add(g);
             }
         }
-        MoveStep step = new MoveStep(trashName, caps.move(), ref -> handles.encode(tenant, accountId, ref), rid,
-                mover);
+        Function<MessageRef, String> mint = ref -> handles.encode(tenant, accountId, ref);
+        MoveStep step = mover == null ? new MoveStep(trashName, caps.move(), mint, rid)
+                : new MoveStep(trashName, caps.move(), mint, rid, mover);
         items.addAll(runner.run(lease, ctx, toRun, FolderGroupRunner.AbsentStatus.ALREADY_GONE, step));
         BulkResult result = BulkResult.inInputOrder(BulkResult.Kind.DELETE, account, trashName, handleList, items);
-        WriteCallLog.bulk(NAME, result, ok.groups().size(), false, Duration.ofNanos(System.nanoTime() - start));
+        WriteCallLog.bulk(NAME, result, ok.groups().size(), step.usedFallback(), Duration.ofNanos(System.nanoTime() - start));
         return new ToolOutcome.Success(result.toMap());
     }
 
