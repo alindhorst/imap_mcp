@@ -29,6 +29,7 @@ import org.junit.jupiter.api.io.TempDir;
 class TutorialTest {
 
     private static final String WRONG_ID_ERROR = "accounts[0].id: must match [a-z0-9-]{1,32}";
+    private static final String WRONG_DEADLINE_ERROR = "tools.deadline: must be at least 30s while any account is not readOnly";
 
     private static String tutorial;
     private static String readme;
@@ -40,12 +41,18 @@ class TutorialTest {
         readme = Files.readString(Path.of("..", "README.md"));
     }
 
-    /** YAML blocks; a block fenced as {@code yaml invalid-id} is the deliberately wrong example. */
+    /** Valid YAML blocks, i.e. those without an {@code invalid-*} marker on the fence. */
     private static List<String> yamlBlocks(boolean invalid) {
+        return invalid ? yamlBlocks("invalid-id") : yamlBlocks(null);
+    }
+
+    /** YAML blocks fenced as {@code yaml <marker>} (the deliberately wrong examples), or unmarked ones if null. */
+    private static List<String> yamlBlocks(String marker) {
         List<String> blocks = new ArrayList<>();
-        Matcher m = Pattern.compile("(?s)```yaml( invalid-id)?\\R(.*?)```").matcher(tutorial);
+        Matcher m = Pattern.compile("(?s)```yaml( invalid-[a-z]+)?\\R(.*?)```").matcher(tutorial);
         while (m.find()) {
-            if ((m.group(1) != null) == invalid) {
+            String found = m.group(1) == null ? null : m.group(1).trim();
+            if (java.util.Objects.equals(found, marker)) {
                 blocks.add(m.group(2));
             }
         }
@@ -76,6 +83,43 @@ class TutorialTest {
         assertThatThrownBy(() -> ConfigLoader.load(f, Map.of())).isInstanceOf(ConfigException.class)
                 .hasMessageContaining(WRONG_ID_ERROR);
         assertThat(tutorial).contains(WRONG_ID_ERROR);
+    }
+
+    @Test
+    void writeToolsSectionIsDocumentedAndItsYamlLoads(@TempDir Path dir) throws IOException {
+        assertThat(tutorial).contains("## 7. Write tools and read-only accounts");
+        assertThat(tutorial.indexOf("## 7. Write tools")).isGreaterThan(tutorial.indexOf("## 6. After adding"))
+                .isLessThan(tutorial.indexOf("## 8. Pitfalls at a glance"));
+        assertThat(tutorial).contains("set_flags", "move_messages", "copy_messages", "delete_messages",
+                "create_folder", "tools/list", "list_accounts", "read_only", "PERMISSION_DENIED", "account_read_only",
+                "move back with the returned handles",
+                "delete moves to Trash; nothing is permanently deleted in this version");
+        List<String> withReadOnly = yamlBlocks(false).stream().filter(b -> b.contains("readOnly: true")).toList();
+        assertThat(withReadOnly).hasSize(1);
+        Path f = dir.resolve("two.yaml");
+        Files.writeString(f, withReadOnly.getFirst());
+        List<AppConfig.Account> accounts = ConfigLoader.load(f, Map.of()).accounts();
+        assertThat(accounts).hasSize(2);
+        assertThat(accounts).filteredOn(AppConfig.Account::readOnly).hasSize(1);
+    }
+
+    @Test
+    void wrongDeadlineVariantFailsWithTheDocumentedError(@TempDir Path dir) throws IOException {
+        List<String> wrong = yamlBlocks("invalid-deadline");
+        assertThat(wrong).hasSize(1);
+        assertThat(wrong.getFirst()).contains("deadline: 20s");
+        Path f = dir.resolve("deadline.yaml");
+        Files.writeString(f, wrong.getFirst());
+        assertThatThrownBy(() -> ConfigLoader.load(f, Map.of())).isInstanceOf(ConfigException.class)
+                .hasMessageContaining(WRONG_DEADLINE_ERROR);
+        assertThat(tutorial).contains(WRONG_DEADLINE_ERROR);
+    }
+
+    @Test
+    void pitfallsListTheWriteToolLines() {
+        String pitfalls = tutorial.substring(tutorial.indexOf("## 8. Pitfalls at a glance"));
+        assertThat(pitfalls).contains("active on every account without `readOnly: true`")
+                .contains("no per-tool selection").contains("`UNSUPPORTED`");
     }
 
     /** Every keyring: reference passes the store rules and is looked up with the documented attributes. */
