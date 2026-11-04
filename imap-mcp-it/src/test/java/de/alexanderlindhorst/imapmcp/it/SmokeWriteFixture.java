@@ -24,6 +24,9 @@ import org.eclipse.angus.mail.imap.IMAPStore;
  */
 final class SmokeWriteFixture implements AutoCloseable {
 
+    /** Sender and recipient of the test messages: never a real address, and always with a domain. */
+    private static final String TEST_ADDRESS = "imap-mcp-smoke@example.invalid";
+
     final SmokeClient client;
     final String runId = SmokeEnv.runLabel();
     /** Full names of the two test folders. */
@@ -54,10 +57,9 @@ final class SmokeWriteFixture implements AutoCloseable {
     /** Appends a new message into {@link #label} and returns its handle. */
     String seed(String tag) throws Exception {
         try (IMAPStore store = connect()) {
-            Session session = store.getFolder("INBOX") == null ? null : Session.getInstance(new Properties());
-            MimeMessage m = new MimeMessage(session);
-            m.setFrom(new InternetAddress(settings.user()));
-            m.setRecipient(Message.RecipientType.TO, new InternetAddress(settings.user()));
+            MimeMessage m = new MimeMessage(Session.getInstance(new Properties()));
+            m.setFrom(new InternetAddress(TEST_ADDRESS));
+            m.setRecipient(Message.RecipientType.TO, new InternetAddress(TEST_ADDRESS));
             m.setSubject(subject(tag));
             m.setText("imap-mcp smoke test message, safe to delete");
             Folder f = store.getFolder(label);
