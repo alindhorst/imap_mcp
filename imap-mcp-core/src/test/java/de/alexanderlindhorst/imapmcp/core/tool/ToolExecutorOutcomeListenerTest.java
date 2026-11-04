@@ -129,4 +129,25 @@ class ToolExecutorOutcomeListenerTest {
         assertThat(returned).hasSize(2);
         assertThat(seen).isEmpty();
     }
+
+    @Test
+    void listenerRunsWithTheWorkerMdcIncludingHashedTenantAndAccount() {
+        java.util.concurrent.atomic.AtomicReference<Map<String, String>> mdc = new java.util.concurrent.atomic.AtomicReference<>();
+        ToolExecutor ex = new ToolExecutor(Duration.ofMillis(200), logIds, MetricsRecorder.NOOP,
+                (tool, rid, code, d) -> mdc.set(org.slf4j.MDC.getCopyOfContextMap()));
+        ex.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("raw-acct"));
+            cx.markMutationStarted();
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException e) {
+                // interrupted by the executor
+            }
+            return new ToolOutcome.Success(Map.of());
+        }).handle(ctx(), Map.of());
+        assertThat(mdc.get()).containsEntry("req", "r1").containsEntry("tool", "move_messages")
+                .containsEntry("tenant", logIds.tenant("t")).containsEntry("acct", logIds.account("raw-acct"));
+        assertThat(mdc.get().values()).doesNotContain("raw-acct", "t");
+        assertThat(org.slf4j.MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
 }
