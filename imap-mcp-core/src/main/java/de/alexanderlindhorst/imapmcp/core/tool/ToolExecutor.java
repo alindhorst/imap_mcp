@@ -122,7 +122,7 @@ public final class ToolExecutor {
         Duration elapsed = Duration.between(start, metrics.now());
         metrics.operation(tenant, toolName, "call", elapsed);
         if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
-            listener.executorOutcome(toolName, ctx.requestId(), f.error().code(), elapsed);
+            reportExecutorOutcome(toolName, ctx, f.error().code(), elapsed);
         }
         if (outcome instanceof ToolOutcome.Failure f) {
             switch (f.error().code()) {
@@ -136,6 +136,27 @@ public final class ToolExecutor {
             }
         }
         return outcome;
+    }
+
+    /** The listener runs on the caller thread: bind the keys the worker had (req, tool, hashed tenant and account). */
+    private void reportExecutorOutcome(String toolName, ToolCallContext ctx, ErrorCode code, Duration elapsed) {
+        Map<String, String> previous = MDC.getCopyOfContextMap();
+        try {
+            MDC.put("req", ctx.requestId());
+            MDC.put("tool", toolName);
+            MDC.put("tenant", logIds.tenant(ctx.accountContext().tenantId().value()));
+            String acct = ctx.boundAccountHash();
+            if (acct != null) {
+                MDC.put("acct", acct);
+            }
+            listener.executorOutcome(toolName, ctx.requestId(), code, elapsed);
+        } finally {
+            if (previous == null) {
+                MDC.clear();
+            } else {
+                MDC.setContextMap(previous);
+            }
+        }
     }
 
     private ToolOutcome run(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,

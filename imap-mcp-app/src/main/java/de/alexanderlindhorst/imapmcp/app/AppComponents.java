@@ -65,7 +65,6 @@ import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 
 /**
  * Manual wiring (SPEC 5.1) of config, secret store, pool, metrics and the tools: the five v1 tools and, unless every account is read-only
@@ -207,16 +206,11 @@ public final class AppComponents implements AutoCloseable {
 
     /**
      * The write-call INFO line (SPEC 5.6) for an outcome the executor produced (deadline, cancel, unchecked
-     * failure): the handler never got to log it. Runs on the caller thread, so the request id is bound here.
+     * failure): the handler never got to log it. The executor binds the MDC (req, tool, tenant, acct) around it.
      */
     private static void logExecutorOutcome(String tool, String requestId,
             de.alexanderlindhorst.imapmcp.core.error.ErrorCode code, Duration duration) {
-        MDC.put("req", requestId);
-        try {
-            WriteCallLog.error(tool, code, duration);
-        } finally {
-            MDC.remove("req");
-        }
+        WriteCallLog.error(tool, code, duration);
     }
 
     private static char[] resolveChars(RefCredentialStore store, SecretRef ref, String key) {
