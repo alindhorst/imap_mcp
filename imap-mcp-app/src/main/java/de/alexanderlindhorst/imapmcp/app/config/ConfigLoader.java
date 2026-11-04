@@ -78,7 +78,7 @@ public final class ConfigLoader {
         AppConfig.Tools tools = tools(top.section("tools"));
         AppConfig.Secrets secrets = new AppConfig.Secrets(top.section("secrets").duration("keyringTimeout", Duration.ofSeconds(5)));
         AppConfig.Http http = http(top.section("http"));
-        AppConfig.Security security = new AppConfig.Security(top.section("security").optionalRef("handleKey"));
+        AppConfig.Security security = security(top.section("security"));
         top.finish();
         http = envHttp(http, env);
         AppConfig config = new AppConfig(accounts, imap, pool, tools, secrets, http, security, envMode(env),
@@ -132,6 +132,32 @@ public final class ConfigLoader {
                     readOnly));
         }
         return List.copyOf(result);
+    }
+
+    private static AppConfig.Security security(Section s) {
+        SecretRef handleKey = s.optionalRef("handleKey");
+        List<AppConfig.HandleKey> keys = new ArrayList<>();
+        JsonNode list = s.take("handleKeys");
+        if (list != null && !list.isArray()) {
+            throw new ConfigException(s.path("handleKeys") + ": must be a list");
+        }
+        Set<Integer> ids = new HashSet<>();
+        for (int i = 0; list != null && i < list.size(); i++) {
+            Section e = new Section(list.get(i), s.path("handleKeys") + "[" + i + "]");
+            int id = e.integer("id", null, 0, 255);
+            if (!ids.add(id)) {
+                throw new ConfigException(e.path("id") + ": duplicate key id");
+            }
+            if (id == 1 && handleKey != null) {
+                throw new ConfigException(e.path("id") + ": id 1 is already set by security.handleKey");
+            }
+            SecretRef key = e.requiredRef("key");
+            e.finish();
+            keys.add(new AppConfig.HandleKey(id, key));
+        }
+        int signing = s.integer("signingKeyId", 1, 0, 255);
+        s.finish();
+        return new AppConfig.Security(handleKey, List.copyOf(keys), signing);
     }
 
     private static AppConfig.Imap imap(Section s) {
@@ -330,9 +356,13 @@ public final class ConfigLoader {
             return n.booleanValue();
         }
 
-        int integer(String key, int def, int min, int max) {
+        /** A null default makes the key required. */
+        int integer(String key, Integer def, int min, int max) {
             JsonNode n = take(key);
             if (n == null) {
+                if (def == null) {
+                    throw new ConfigException(path(key) + ": required");
+                }
                 return def;
             }
             if (!n.isIntegralNumber() || !n.canConvertToInt()) {
