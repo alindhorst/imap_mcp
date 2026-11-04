@@ -36,7 +36,8 @@ class DockerImageIT {
             .toAbsolutePath().normalize();
     private static final String TOOLS_LIST = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
     private static final List<String> TOOLS =
-            List.of("list_accounts", "list_folders", "search_messages", "get_message", "list_attachments");
+            List.of("list_accounts", "list_folders", "search_messages", "get_message", "list_attachments", "set_flags",
+                    "move_messages", "copy_messages", "delete_messages", "create_folder");
 
     private static Network network;
     private static DovecotContainer dovecot;
@@ -141,7 +142,7 @@ class DockerImageIT {
         for (String tool : TOOLS) {
             assertThat(ok.body()).contains("\"" + tool + "\"");
         }
-        assertThat(ok.body().split("\"inputSchema\"", -1)).as("five tools").hasSize(6);
+        assertThat(ok.body().split("\"inputSchema\"", -1)).as("ten tools").hasSize(11);
 
         assertThat(post(null).statusCode()).isEqualTo(401);
         assertThat(post("not-the-token").statusCode()).isEqualTo(401);

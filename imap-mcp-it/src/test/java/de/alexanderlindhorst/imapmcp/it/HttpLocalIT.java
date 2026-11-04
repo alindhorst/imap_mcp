@@ -75,13 +75,14 @@ class HttpLocalIT {
     // ---- AC1 ----
 
     @Test
-    void sdkClientWithTheGeneratedTokenInitializesListsFiveToolsAndCallsEachOnce() throws Exception {
+    void sdkClientWithTheGeneratedTokenInitializesListsTenToolsAndCallsEachOnce() throws Exception {
         try (McpSyncClient client = client(port, token)) {
             McpSchema.InitializeResult init = client.initialize();
             assertThat(init.serverInfo().name()).isNotBlank();
 
             assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name).containsExactlyInAnyOrder(
-                    "list_accounts", "list_folders", "search_messages", "get_message", "list_attachments");
+                    "list_accounts", "list_folders", "search_messages", "get_message", "list_attachments", "set_flags",
+                    "move_messages", "copy_messages", "delete_messages", "create_folder");
 
             Map<String, Object> accounts = call(client, "list_accounts", Map.of());
             String account = (String) ((Map<?, ?>) ((List<?>) accounts.get("accounts")).get(0)).get("account");

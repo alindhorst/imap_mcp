@@ -148,7 +148,8 @@ class StdioMainTest {
             client.initialize();
             Map<String, Object> tools = client.call("tools/list", Map.of());
             assertThat(toolNames(tools)).containsExactlyInAnyOrder("list_accounts", "list_folders",
-                    "search_messages", "get_message", "list_attachments");
+                    "search_messages", "get_message", "list_attachments", "set_flags", "move_messages", "copy_messages",
+                    "delete_messages", "create_folder");
 
             Map<String, Object> accounts = client.call("tools/call", Map.of("name", "list_accounts", "arguments", Map.of()));
             assertThat(accounts).containsKey("result");
