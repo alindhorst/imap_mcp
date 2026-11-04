@@ -95,9 +95,15 @@ class LoggingBootstrapTest {
         Run r = fork("rotate", dir, Map.of(), List.of("-Dimapmcp.log.maxFileSize=2KB"));
         assertThat(r.exit()).as(r.stderr()).isZero();
         assertThat(r.stdout()).isEmpty();
+        // one rollover: the active file plus one archive that was rolled because it reached the size limit
         try (Stream<Path> files = Files.list(dir)) {
-            assertThat(files.map(f -> f.getFileName().toString()).toList())
-                    .contains("imap-mcp.log").hasSizeGreaterThan(2);
+            List<Path> all = files.toList();
+            assertThat(all).extracting(p -> p.getFileName().toString()).as(r.stderr())
+                    .contains("imap-mcp.log").hasSize(2);
+            Path archive = all.stream().filter(p -> !p.getFileName().toString().equals("imap-mcp.log")).findFirst()
+                    .orElseThrow();
+            assertThat(archive.getFileName().toString()).matches("imap-mcp\\.\\d{4}-\\d{2}-\\d{2}\\.0\\.log");
+            assertThat(Files.size(archive)).isGreaterThanOrEqualTo(2048);
         }
     }
 

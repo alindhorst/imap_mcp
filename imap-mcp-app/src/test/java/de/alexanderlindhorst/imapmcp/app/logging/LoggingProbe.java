@@ -69,15 +69,20 @@ public final class LoggingProbe {
      * periods is not: once the active file is over the limit, a check (and with it a rollover) happens within 65536
      * lines, so three files exist well before the budget is spent. Bounded by lines, not by time.
      */
+    /**
+     * Logs until the first size rollover has happened and stops there. Logback cleans archives asynchronously after
+     * every rollover, and its cleaner tasks share one non-thread-safe RollingCalendar (a GregorianCalendar): with
+     * several rollovers in a few milliseconds (tiny size limit) overlapping tasks compute wrong periods and delete
+     * the current day's archives (#45). One rollover means one cleaner task, so nothing overlaps.
+     */
     private static void rotate(Path dir) throws Exception {
         var log = LoggerFactory.getLogger("imapmcp.probe");
-        for (int n = 0; n < 400_000; n++) {
+        for (int n = 0; n < 10_000; n++) {
             log.info("ROTATE-LINE-{} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", n);
-            if (n % 1000 == 999) {
-                try (var files = java.nio.file.Files.list(dir)) {
-                    if (files.count() > 2) {
-                        return;
-                    }
+            // the rename in the rollover happens synchronously inside the logging call above
+            try (var files = java.nio.file.Files.list(dir)) {
+                if (files.count() > 1) {
+                    return;
                 }
             }
         }
