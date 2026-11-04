@@ -23,7 +23,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.Container;
@@ -31,7 +30,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * {@code create_folder} against a real Dovecot 2.4.5, FULL profile (SPEC 4 "v2 write contract", 5.4, 5.8): hierarchy and
- * delimiter, subscription, idempotence, modified UTF-7 on the wire, the delimiter and missing-parent errors, INBOX, the
+ * delimiter, subscription, idempotence, the name encoding on the wire (UTF-8 once Angus enabled UTF8=ACCEPT, modified UTF-7 against a server without it), the delimiter and missing-parent errors, INBOX, the
  * read-only account and the set of IMAP commands the tool sends.
  *
  * <p>The tool is driven through the stdio client against the shaded jar with {@code imap.trace: true} (logger
@@ -51,6 +50,10 @@ class CreateFolderDovecotIT {
     @Container
     static final DovecotContainer DOVECOT = new DovecotContainer();
 
+    /** Without UTF8=ACCEPT: Angus sends no ENABLE and names travel in modified UTF-7 (SPEC 5.4, 5.8). */
+    @Container
+    static final DovecotContainer NO_UTF8 = new DovecotContainer(DovecotContainer.Profile.NO_UTF8_ACCEPT);
+
     @TempDir
     static Path dir;
 
@@ -63,7 +66,7 @@ class CreateFolderDovecotIT {
     static void start() throws Exception {
         ServerConfigWriter writer = new ServerConfigWriter(dir).trustStore(TestTrust.writeTruststore(dir))
                 .extraYaml("imap:\n  trace: true\n");
-        for (String id : List.of("basic", "nested", "errors", "inbox", "wire", "ro")) {
+        for (String id : List.of("basic", "nested", "cross", "errors", "inbox", "wire", "ro")) {
             writer.account(id, DOVECOT.getHost(), DOVECOT.imapsPort(), MailAccount.Security.IMPLICIT_TLS,
                     "cf-" + id, DovecotContainer.PASSWORD);
         }
@@ -192,9 +195,9 @@ class CreateFolderDovecotIT {
         assertThat(commands).anyMatch(c -> verb(c, "SUBSCRIBE")).noneMatch(c -> verb(c, "CREATE"));
     }
 
-    /** The name encoding follows the connection state (Angus itself enables UTF8=ACCEPT, see the disabled test). */
+    /** The full set advertises UTF8=ACCEPT: Angus enabled it at login, so the name travels as UTF-8 (SPEC 5.4). */
     @Test
-    void aNestedNonAsciiFolderRoundTripsAndTheWireNameFollowsTheConnectionState() throws Exception {
+    void aNestedNonAsciiFolderRoundTripsAndTravelsAsUtf8() throws Exception {
         ok("create_folder", args("account", account("nested"), "name", "Projekte"));
         long before = logSize();
         Result r = ok("create_folder",
@@ -205,11 +208,9 @@ class CreateFolderDovecotIT {
                 .containsEntry("subscribed", true);
         List<String> commands = commandsSince(before);
         String create = commands.stream().filter(c -> verb(c, "CREATE")).findFirst().orElseThrow();
-        if (utf8Enabled()) {
-            assertThat(create).contains("\u00dcbersicht 2026");
-        } else {
-            assertThat(create).contains("&ANw-bersicht 2026").doesNotContain("\u00dc");
-        }
+        assertThat(create).contains("\u00dcbersicht 2026").doesNotContain("&ANw-");
+        assertThat(Files.readString(config.logFile(), StandardCharsets.UTF_8).lines()
+                .anyMatch(l -> l.contains(TRACE_LOGGER) && l.contains("ENABLE UTF8=ACCEPT"))).isTrue();
         assertThat(folders("nested")).contains(full);
         Result again = ok("create_folder",
                 args("account", account("nested"), "parent", "Projekte", "name", "\u00dcbersicht 2026"));
@@ -217,20 +218,41 @@ class CreateFolderDovecotIT {
                 .containsEntry("subscribed", true);
     }
 
+    /** The same mailbox seen from a connection without ENABLE: created via UTF-8, listed in modified UTF-7. */
     @Test
-    @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
-    void strictSpecNonAsciiNameIsModifiedUtf7AndUtf8IsNeverEnabled() throws Exception {
-        long before = logSize();
-        ok("create_folder", args("account", account("basic"), "name", "\u00dcbersicht Strikt"));
-        List<String> commands = commandsSince(before);
-        assertThat(commands).anyMatch(c -> verb(c, "CREATE") && c.contains("&ANw-bersicht Strikt"))
-                .noneMatch(c -> c.contains("\u00dc"));
-        assertThat(utf8Enabled()).isFalse();
+    void aFolderCreatedInTheUtf8StateIsTheSameMailboxSeenWithoutEnable() throws Exception {
+        ok("create_folder", args("account", account("cross"), "name", "\u00dcbersicht Kreuz"));
+        try (RawImap raw = new RawImap(DOVECOT.getHost(), DOVECOT.imapsPort())) {
+            raw.login("cf-cross", DovecotContainer.PASSWORD); // no ENABLE: modified UTF-7 state
+            assertThat(raw.listNames()).contains("&ANw-bersicht Kreuz").noneMatch(n -> n.contains("\u00dc"));
+        }
     }
 
-    private static boolean utf8Enabled() throws IOException {
-        return Files.readString(config.logFile(), StandardCharsets.UTF_8).lines()
-                .anyMatch(l -> l.contains(TRACE_LOGGER) && l.contains("ENABLE UTF8=ACCEPT"));
+    /**
+     * SPEC 5.4 on a server without UTF8=ACCEPT: Angus sends no ENABLE (whole wire of a server process that only talks
+     * to this container), CREATE carries modified UTF-7 and no raw U+00DC, and the verbatim name is returned and listed.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void withoutUtf8AcceptNoEnableIsSentAndTheNameTravelsAsModifiedUtf7AndRoundTrips() throws Exception {
+        String name = "\u00dcbersicht Strikt";
+        try (MailSeeder s = NO_UTF8.seeder("cf-strict")) {
+            s.store().getDefaultFolder(); // the user exists; nothing else to seed
+        }
+        java.nio.file.Path strictDir = Files.createDirectories(dir.resolve("strict"));
+        try (TracedServer server = new TracedServer(NO_UTF8, strictDir, "cf-strict")) {
+            long before = server.logSize();
+            Map<String, Object> r = server.ok("create_folder", "cf-strict", "name", name);
+            assertThat(server.commandsSince(0)).as("whole wire of this server").isNotEmpty()
+                    .noneMatch(c -> c.startsWith("ENABLE"));
+            assertThat(server.commandsSince(before))
+                    .anyMatch(c -> verb(c, "CREATE") && c.contains("&ANw-bersicht Strikt"))
+                    .noneMatch(c -> c.contains("\u00dc"));
+            assertThat(r).containsEntry("folder", name).containsEntry("created", true);
+            List<String> listed = ((List<Map<String, Object>>) server.ok("list_folders", "cf-strict").get("folders"))
+                    .stream().map(f -> (String) f.get("folder")).toList();
+            assertThat(listed).contains(name);
+        }
     }
 
     @Test
