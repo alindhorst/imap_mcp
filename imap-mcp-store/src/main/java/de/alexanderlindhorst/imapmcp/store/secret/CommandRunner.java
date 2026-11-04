@@ -17,14 +17,24 @@ public interface CommandRunner {
     Result run(List<String> argv, Duration timeout) throws IOException, TimeoutException;
 
     /**
-     * Outcome of a finished command. {@code stdout} is owned by the receiver, who must wipe it; stderr content is
-     * deliberately not exposed, only its length.
+     * Outcome of a finished command. {@code stdout} and {@code stderr} are owned by the receiver, who must wipe them.
+     * stderr may carry secrets (macOS {@code security -g}); it is only ever parsed, never logged: only its length
+     * appears in {@link #toString()}.
      */
-    record Result(int exitCode, byte[] stdout, int stderrLength) {
+    record Result(int exitCode, byte[] stdout, byte[] stderr) {
+
+        /** Output-less stderr of a given length (callers that only care about the size). */
+        public Result(int exitCode, byte[] stdout, int stderrLength) {
+            this(exitCode, stdout, new byte[stderrLength]);
+        }
+
+        public int stderrLength() {
+            return stderr.length;
+        }
 
         @Override
         public String toString() {
-            return "Result[exitCode=" + exitCode + ", stderrLength=" + stderrLength + "]";
+            return "Result[exitCode=" + exitCode + ", stderrLength=" + stderr.length + "]";
         }
     }
 }
