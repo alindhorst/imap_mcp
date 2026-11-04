@@ -517,6 +517,35 @@ class SearchMessagesToolTest {
         assertThat(e.details()).containsEntry("capability", "X-GM-EXT-1");
     }
 
+    // #25 rework: a keyword with a trailing line terminator never reaches the wire
+    @Test
+    void keywordWithTrailingLineTerminatorIsInvalidArgumentWithoutImapIo() throws Exception {
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r"}) {
+            List<String> cmds = commands(() -> {
+                ToolError e = env.error(SearchEnv.T1, args("keywords", List.of(bad)));
+                assertThat(e.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
+                assertThat(e.details()).containsEntry("field", "keywords[0]").containsEntry("reason", "format");
+                assertThat(e.toString()).doesNotContain("abc");
+            });
+            assertThat(cmds).isEmpty();
+        }
+    }
+
+    // #25 audit: free-text criteria with CR/LF go out as a non-synchronizing literal, so they cannot split the command.
+    // GreenMail may answer BAD to the literal (no LITERAL+ in SEARCH); only the shape of the sent commands is asserted.
+    @Test
+    void freeTextWithLineBreaksIsSentAsLiteralAndDoesNotSplitTheCommand() throws Exception {
+        env.deliver(1);
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        for (String field : new String[] {"from", "to", "subject", "text"}) {
+            List<String> cmds = commands(() -> env.call(SearchEnv.T1, args(field, "a\r\nb\r\n")));
+            assertThat(cmds).hasSize(3);
+            assertThat(cmds.get(1)).containsPattern("SEARCH \\w+ \\{\\d+\\+\\}$");
+            assertThat(cmds).noneMatch(c -> c.contains("\n") || c.contains("\r"));
+        }
+    }
+
     // #29 AC1
     @Test
     void gmailRawOnAServerWithoutXGmExt1IsUnsupportedAndNoSearchIsSent() throws Exception {
