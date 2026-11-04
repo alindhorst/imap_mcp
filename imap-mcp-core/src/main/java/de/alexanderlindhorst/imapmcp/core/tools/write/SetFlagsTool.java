@@ -4,6 +4,23 @@ import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
+import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import de.alexanderlindhorst.imapmcp.core.tools.MessageLocator;
+import jakarta.mail.Flags;
+import java.time.Clock;
+import java.util.function.Function;
+import org.eclipse.angus.mail.imap.IMAPFolder;
+import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
+import jakarta.mail.MessagingException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,12 +29,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * {@code set_flags} (SPEC 4, v2 write contract): definition and argument parsing. Execution is added separately.
+ * {@code set_flags} (SPEC 4, v2 write contract): definition, argument parsing and execution.
  * {@link #parse} is the second validation step after {@code InputValidator} (code checks {@code reserved},
  * {@code duplicate}, {@code conflict}, {@code no_change}) and yields at most one add set and one remove set with
  * system flags and keywords merged. {@code \Deleted} can only be cleared, {@code \Recent} is never settable.
  */
-public final class SetFlagsTool {
+public final class SetFlagsTool implements ToolHandler {
 
     public static final String NAME = "set_flags";
 
@@ -66,25 +83,12 @@ public final class SetFlagsTool {
                 "additionalProperties", false);
     }
 
-    private static final Map<String, Object> RESULT_ITEM = schema("type", "object",
-            "properties", schema("handle", schema("type", "string"), "status", schema("type", "string"),
-                    "reason", schema("type", List.of("string", "null")),
-                    "error", schema("type", List.of("object", "null"))),
-            "required", List.of("handle", "status", "reason", "error"));
-
-    private static final Map<String, Object> OUTPUT_SCHEMA = schema("type", "object",
-            "properties", schema("account", schema("type", "string"),
-                    "summary", schema("type", "object"),
-                    "results", schema("type", "array", "items", RESULT_ITEM),
-                    "notes", schema("type", "array", "items", schema("type", "string"))),
-            "required", List.of("account", "summary", "results", "notes"));
-
     public static final ToolDefinition DEFINITION = new ToolDefinition(NAME, "Set message flags",
             "Add or remove flags (seen, flagged, answered, draft) and keywords on up to 100 messages by handle; "
                     + "deleted can only be cleared. Undo by calling set_flags again with the opposite value. "
                     + "On Gmail, flags apply to the message across all labels. "
                     + DescriptionRules.WRITE_SENTENCE + ".",
-            inputSchema(), OUTPUT_SCHEMA, ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT);
+            inputSchema(), BulkOutputSchema.of(BulkResult.Kind.SET_FLAGS), ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT);
 
     /**
      * Valid: {@code add} and {@code remove} are the flag/keyword atoms to store (system flags as {@code \Seen}
@@ -96,7 +100,129 @@ public final class SetFlagsTool {
         }
     }
 
-    private SetFlagsTool() {
+    private final WritePreflight preflight;
+    private final StoreLeases leases;
+    private final Clock clock;
+    private final FolderGroupRunner runner;
+    private final Function<IMAPFolder, Flags> permanentFlags;
+
+    public SetFlagsTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases, Clock clock) {
+        this(accounts, locator, leases, clock, IMAPFolder::getPermanentFlags);
+    }
+
+    /** {@code permanentFlags} is the test seam for a server whose PERMANENTFLAGS lacks {@code \*}. */
+    SetFlagsTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases, Clock clock,
+            Function<IMAPFolder, Flags> permanentFlags) {
+        this.preflight = new WritePreflight(accounts, locator);
+        this.leases = Objects.requireNonNull(leases, "leases");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.runner = new FolderGroupRunner(clock);
+        this.permanentFlags = Objects.requireNonNull(permanentFlags, "permanentFlags");
+    }
+
+    @Override
+    public ToolOutcome handle(ToolCallContext ctx, Map<String, Object> args) {
+        Instant start = clock.instant();
+        String account = (String) args.get("account");
+        Parsed parsed = parse(args, ctx.requestId());
+        if (!parsed.valid()) {
+            return fail(parsed.error(), start);
+        }
+        WritePreflight.Result.Ok checked;
+        switch (preflight.check(ctx, account, parsed.handles(), null)) {
+            case WritePreflight.Result.Failed f -> {
+                return fail(f.error(), start);
+            }
+            case WritePreflight.Result.Ok ok -> checked = ok;
+        }
+        Flags add = flags(parsed.add());
+        Flags remove = flags(parsed.remove());
+        boolean needsKeywords = add.getUserFlags().length > 0;
+        String rid = ctx.requestId();
+        try {
+            List<BulkResult.Item> items = leases.withLease(PoolKey.of(ctx.accountContext(), checked.account()), ctx,
+                    lease -> runner.run(lease, ctx, checked.groups(), FolderGroupRunner.AbsentStatus.NOT_FOUND,
+                            (folder, present, gate) -> store(folder, present, gate, add, remove, needsKeywords, rid)));
+            BulkResult result = BulkResult.inInputOrder(BulkResult.Kind.SET_FLAGS, account, null, parsed.handles(),
+                    items);
+            WriteCallLog.bulk(NAME, result, checked.groups().size(), false, Duration.between(start, clock.instant()));
+            return new ToolOutcome.Success(result.toMap());
+        } catch (MessagingException | RuntimeException e) {
+            if (ctx.mutationStarted() && e instanceof RuntimeException re) {
+                throw re; // the executor reports the unknown outcome (SPEC 5.5)
+            }
+            return fail(ImapErrorMapper.map(e, rid).error(), start);
+        }
+    }
+
+    private static ToolOutcome fail(ToolError error, Instant start) {
+        WriteCallLog.error(NAME, error.code(), Duration.between(start, Instant.now()));
+        return new ToolOutcome.Failure(error);
+    }
+
+    /** At most one add and one remove STORE (+FLAGS.SILENT / -FLAGS.SILENT) for the present UIDs of a group. */
+    private List<BulkResult.Item> store(IMAPFolder folder, List<WritePreflight.Item> present,
+            FolderGroupRunner.Gate gate, Flags add, Flags remove, boolean needsKeywords, String rid)
+            throws MessagingException {
+        if (needsKeywords && !keywordsAllowed(folder, add)) {
+            return failAll(present, ToolError.unsupported("keywords", rid));
+        }
+        List<Long> uids = present.stream().map(i -> i.ref().uid()).toList();
+        for (var step : List.of(Map.entry(UidCommands.FlagMode.ADD, add), Map.entry(UidCommands.FlagMode.REMOVE, remove))) {
+            if (isEmpty(step.getValue())) {
+                continue;
+            }
+            gate.beforeWrite();
+            UidCommands.Result r = UidCommands.uidStore(folder, uids, step.getKey(), step.getValue());
+            Optional<ToolError> refused = WriteResponses.map(r.tagged(), null, rid);
+            if (refused.isPresent()) {
+                return failAll(present, refused.get());
+            }
+        }
+        return present.stream().map(i -> BulkResult.Item.okFlags(i.handle())).toList();
+    }
+
+    private boolean keywordsAllowed(IMAPFolder folder, Flags add) {
+        Flags permanent = permanentFlags.apply(folder);
+        if (permanent == null) {
+            return false;
+        }
+        if (permanent.contains(Flags.Flag.USER)) { // PERMANENTFLAGS \*
+            return true;
+        }
+        Set<String> listed = new java.util.HashSet<>();
+        for (String k : permanent.getUserFlags()) {
+            listed.add(k.toLowerCase(Locale.ROOT));
+        }
+        for (String k : add.getUserFlags()) {
+            if (!listed.contains(k.toLowerCase(Locale.ROOT))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<BulkResult.Item> failAll(List<WritePreflight.Item> present, ToolError error) {
+        return present.stream().map(i -> BulkResult.Item.failed(i.handle(), error)).toList();
+    }
+
+    private static boolean isEmpty(Flags f) {
+        return f.getSystemFlags().length == 0 && f.getUserFlags().length == 0;
+    }
+
+    private static Flags flags(List<String> atoms) {
+        Flags f = new Flags();
+        for (String a : atoms) {
+            switch (a) {
+                case "\\Seen" -> f.add(Flags.Flag.SEEN);
+                case "\\Flagged" -> f.add(Flags.Flag.FLAGGED);
+                case "\\Answered" -> f.add(Flags.Flag.ANSWERED);
+                case "\\Draft" -> f.add(Flags.Flag.DRAFT);
+                case "\\Deleted" -> f.add(Flags.Flag.DELETED);
+                default -> f.add(a); // keyword
+            }
+        }
+        return f;
     }
 
     /** Expects arguments that already passed the generic validator (null-free copy). Values are never echoed. */

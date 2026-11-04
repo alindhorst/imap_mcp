@@ -175,4 +175,12 @@ class FolderResolverTest {
         }
         verify(lease, never()).openReadOnly(anyString());
     }
+
+    @Test
+    void mutuallyExclusiveFieldNameIsConfigurable() throws Exception {
+        FolderResolver.Resolution res = FolderResolver.resolve(lease, "X", FolderRole.SENT, "rid", "target_folder_role");
+        assertThat(res.error().details())
+                .isEqualTo(ToolError.invalidArgument("target_folder_role", "mutually_exclusive", null, "rid").details());
+        verify(lease, never()).store();
+    }
 }
