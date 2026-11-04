@@ -56,8 +56,14 @@ public final class FolderResolver {
 
     public static Resolution resolve(ImapLease lease, String folder, FolderRole role, String requestId)
             throws MessagingException {
+        return resolve(lease, folder, role, requestId, "folder_role");
+    }
+
+    /** As above; {@code exclusiveField} is the field named in the {@code mutually_exclusive} error (v2: {@code target_folder_role}). */
+    public static Resolution resolve(ImapLease lease, String folder, FolderRole role, String requestId,
+            String exclusiveField) throws MessagingException {
         if (folder != null && role != null) {
-            return fail(ToolError.invalidArgument("folder_role", "mutually_exclusive", null, requestId));
+            return fail(ToolError.invalidArgument(exclusiveField, "mutually_exclusive", null, requestId));
         }
         if (folder != null) {
             return resolveName(lease.store(), folder, requestId);
