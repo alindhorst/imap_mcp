@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
+import de.alexanderlindhorst.imapmcp.core.tool.ImapAtoms;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
 import jakarta.mail.FolderClosedException;
@@ -66,7 +67,7 @@ public final class UidCommands {
 
     private static final long MAX_UINT32 = 4_294_967_295L;
     /** Same atom set as set_flags (ATOM-CHAR), so a keyword can never break out of the parenthesized list. */
-    private static final Pattern KEYWORD = Pattern.compile(SetFlagsTool.KEYWORD_PATTERN);
+    private static final Pattern KEYWORD = Pattern.compile(ImapAtoms.KEYWORD_PATTERN);
     private static final int MAX_KEYWORD = 64;
 
     private UidCommands() {

@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -26,7 +25,7 @@ class EcmaPatternTest {
 
     @Test
     void acceptsTheKeywordConstant() {
-        assertThatCode(() -> EcmaPattern.check(SetFlagsTool.KEYWORD_PATTERN)).doesNotThrowAnyException();
+        assertThatCode(() -> EcmaPattern.check(ImapAtoms.KEYWORD_PATTERN)).doesNotThrowAnyException();
     }
 
     @ParameterizedTest

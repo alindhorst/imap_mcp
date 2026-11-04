@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * Validates tool arguments against the very input schema the tool publishes, restricted to the JSON Schema
@@ -91,7 +90,7 @@ public final class InputValidator {
                     try {
                         EcmaPattern.check((String) v);
                         Pattern.compile((String) v);
-                    } catch (PatternSyntaxException | ClassCastException ex) {
+                    } catch (IllegalArgumentException | ClassCastException ex) {
                         throw new IllegalArgumentException("invalid pattern at " + where);
                     }
                 }
