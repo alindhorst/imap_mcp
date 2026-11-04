@@ -84,6 +84,17 @@ class McpToolAdapterTest {
     }
 
     @Test
+    void errorResultHasNoStructuredContentAndExactlyOneTextBlockWithErrorObject() throws Exception {
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.timeout(c.requestId())))
+                .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isNull();
+        assertThat(r.content()).hasSize(1);
+        assertThat(r.content().get(0)).isInstanceOf(McpSchema.TextContent.class);
+        assertThat(MAPPER.readValue(textOf(r), Map.class)).isEqualTo(ToolError.timeout("req-1").toMap());
+    }
+
+    @Test
     void handlerExceptionBecomesInternalErrorWithoutLeakingMessage() {
         McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> {
             throw new IllegalStateException("secret subject line");
