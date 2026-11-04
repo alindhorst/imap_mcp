@@ -24,7 +24,7 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
  * +FLAGS.SILENT (\Deleted)} and {@code UID EXPUNGE} of exactly the copied UIDs (the COPYUID source set, or the
  * present set if COPYUID is absent); other {@code \Deleted} messages are never expunged, never a plain EXPUNGE. The
  * gate is called before each of the three commands. A refused COPY fails the group and sends nothing more; a
- * refused STORE skips the EXPUNGE; either way the copied items are failed ({@link #copiedButNotMoved}). Nothing is
+ * refused STORE skips the EXPUNGE; either way the copied items are failed ({@link #copiedButNotMoved}: failed, keeping the copy's new handle). Nothing is
  * logged.
  */
 public final class MoveStep implements FolderGroupRunner.MutationStep {
@@ -138,20 +138,20 @@ public final class MoveStep implements FolderGroupRunner.MutationStep {
             if (stored.ok()) {
                 gate.beforeWrite();
                 UidCommands.Result expunged = wire.expunge(folder, copied);
-                notMoved = expunged.ok() ? null : refusal(expunged);
+                notMoved = expunged.ok() ? null : notRemoved(expunged);
             } else {
-                notMoved = refusal(stored);
+                notMoved = notRemoved(stored);
             }
         }
         List<BulkResult.Item> out = new ArrayList<>(present.size());
         for (WritePreflight.Item i : present) {
             if (copyUid.isEmpty()) {
-                out.add(notMoved != null ? copiedButNotMoved(i, notMoved) : BulkResult.Item.okNewUidUnknown(i.handle()));
+                out.add(notMoved != null ? copiedButNotMoved(i, notMoved, copyUid) : BulkResult.Item.okNewUidUnknown(i.handle()));
                 continue;
             }
             OptionalLong dst = copyUid.get().destinationOf(i.ref().uid());
             out.add(dst.isEmpty() ? BulkResult.Item.alreadyGone(i.handle())
-                    : notMoved != null ? copiedButNotMoved(i, notMoved)
+                    : notMoved != null ? copiedButNotMoved(i, notMoved, copyUid)
                     : BulkResult.Item.ok(i.handle(),
                             mint.apply(new MessageRef(target, copyUid.get().uidValidity(), dst.getAsLong()))));
         }
@@ -164,8 +164,16 @@ public final class MoveStep implements FolderGroupRunner.MutationStep {
     }
 
     /** The one place deciding what an item is whose COPY succeeded but whose STORE or UID EXPUNGE was refused. */
-    private static BulkResult.Item copiedButNotMoved(WritePreflight.Item i, ToolError e) {
-        return BulkResult.Item.failed(i.handle(), e);
+    private BulkResult.Item copiedButNotMoved(WritePreflight.Item i, ToolError e,
+            Optional<CopyUidParser.CopyUid> copyUid) {
+        OptionalLong dst = copyUid.map(c -> c.destinationOf(i.ref().uid())).orElse(OptionalLong.empty());
+        return dst.isEmpty() ? BulkResult.Item.failed(i.handle(), e)
+                : BulkResult.Item.failedCopied(i.handle(),
+                        mint.apply(new MessageRef(target, copyUid.get().uidValidity(), dst.getAsLong())), e);
+    }
+
+    private ToolError notRemoved(UidCommands.Result r) {
+        return refusal(r).copiedNotRemoved(WriteResponses.responseCode(r.tagged()));
     }
 
     private ToolError refusal(UidCommands.Result r) {

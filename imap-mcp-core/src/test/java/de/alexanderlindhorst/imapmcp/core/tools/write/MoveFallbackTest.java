@@ -108,6 +108,7 @@ class MoveFallbackTest {
         tool = new MoveMessagesTool(preflight, leases, handles, Clock.systemUTC(),
                 new FolderGroupRunner(Clock.systemUTC(), (p, g, c) -> hook.at(p, g, c)));
         callLogger = (Logger) LoggerFactory.getLogger(WriteCallLog.class);
+        callLogger.setLevel(Level.INFO);
         callLogger.addAppender(callLog);
         callLog.start();
         traceLogger = (Logger) LoggerFactory.getLogger("imapmcp.imap.trace");
@@ -267,7 +268,9 @@ class MoveFallbackTest {
         assertThat(store).isGreaterThan(copy);
         assertThat(expunge).isGreaterThan(store);
         assertThat(w).contains("+FLAGS.SILENT (\\Deleted)").doesNotContain("UID MOVE")
-                .doesNotContainPattern("(?m)^\\S+ EXPUNGE").doesNotContainPattern("(?m)^\\S+ CLOSE");
+                .doesNotContainPattern("(?m)^\\S+ EXPUNGE");
+        // close(false) re-selects read-only (EXAMINE) before CLOSE, so nothing is expunged by it
+        assertThat(w.indexOf(" CLOSE")).isGreaterThan(w.indexOf(" EXAMINE")).isGreaterThan(expunge);
         assertThat(callLine()).contains("path=copy_fallback");
     }
 
