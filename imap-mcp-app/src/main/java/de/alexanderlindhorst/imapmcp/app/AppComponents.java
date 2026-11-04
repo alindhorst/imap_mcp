@@ -33,6 +33,14 @@ import de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListFoldersTool;
 import de.alexanderlindhorst.imapmcp.core.tools.MessageLocator;
 import de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
+import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.WriteCallLog;
+import de.alexanderlindhorst.imapmcp.core.tools.write.WritePreflight;
 import de.alexanderlindhorst.imapmcp.store.file.ConfiguredAccountRepository;
 import de.alexanderlindhorst.imapmcp.store.secret.BinaryProbe;
 import de.alexanderlindhorst.imapmcp.store.secret.CommandRunner;
@@ -56,9 +64,12 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 /**
- * Manual wiring (SPEC 5.1) of config, secret store, pool, metrics and the five v1 tools. Transport-agnostic: it
+ * Manual wiring (SPEC 5.1) of config, secret store, pool, metrics and the tools: the five v1 tools and, unless every account is read-only
+ * ({@link AppConfig#writeToolsUsable()}), the five v2 write tools. Transport-agnostic: it
  * never starts a server and never references the HTTP transport; the HTTP launcher passes its account resolver to
  * {@link #statelessToolSpecs}. Single-tenant modes use the fixed tenant {@link #TENANT}, but every component is
  * built against {@link AccountContext} and the repository seam.
@@ -149,7 +160,7 @@ public final class AppComponents implements AutoCloseable {
             Admission admission = new Admission(settings, Admission.recording(metrics));
             StoreLeases leases = new StoreLeases(pool, settings.acquireTimeout(), admission, metrics);
             AppConfig.Tools t = config.tools();
-            ToolExecutor executor = new ToolExecutor(t.deadline(), logIds, metrics);
+            ToolExecutor executor = new ToolExecutor(t.deadline(), logIds, metrics, AppComponents::logExecutorOutcome);
 
             AccountArgument account = new AccountArgument(repository);
             MessageLocator locator = new MessageLocator(new MessageHandles(keys));
@@ -164,6 +175,21 @@ public final class AppComponents implements AutoCloseable {
                     new BodyWindowReader(t.maxBodyPartBytes()), t.maxCharsCap()));
             tools.put(ListAttachmentsTool.DEFINITION, new ListAttachmentsTool(account, locator, leases));
 
+            boolean writeTools = config.writeToolsUsable();
+            long readOnlyAccounts = config.accounts().stream().filter(AppConfig.Account::readOnly).count();
+            LoggerFactory.getLogger("imapmcp.app").info("write tools registered={}, read-only accounts={} of {}",
+                    writeTools, readOnlyAccounts, config.accounts().size());
+            if (writeTools) {
+                WritePreflight preflight = new WritePreflight(account, locator);
+                MessageHandles handles = new MessageHandles(keys);
+                tools.put(SetFlagsTool.DEFINITION, new SetFlagsTool(account, locator, leases, clock));
+                tools.put(MoveMessagesTool.DEFINITION, new MoveMessagesTool(preflight, leases, handles, clock));
+                tools.put(CopyMessagesTool.DEFINITION,
+                        new CopyMessagesTool(preflight, leases, handles, new FolderGroupRunner(clock)));
+                tools.put(DeleteMessagesTool.DEFINITION, new DeleteMessagesTool(preflight, leases, handles, clock));
+                tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
+            }
+
             metrics.start();
             return new AppComponents(sessions, pool, admission, metrics, executor, state,
                     java.util.Collections.unmodifiableMap(tools));
@@ -176,6 +202,20 @@ public final class AppComponents implements AutoCloseable {
             }
             sessions.close();
             throw e;
+        }
+    }
+
+    /**
+     * The write-call INFO line (SPEC 5.6) for an outcome the executor produced (deadline, cancel, unchecked
+     * failure): the handler never got to log it. Runs on the caller thread, so the request id is bound here.
+     */
+    private static void logExecutorOutcome(String tool, String requestId,
+            de.alexanderlindhorst.imapmcp.core.error.ErrorCode code, Duration duration) {
+        MDC.put("req", requestId);
+        try {
+            WriteCallLog.error(tool, code, duration);
+        } finally {
+            MDC.remove("req");
         }
     }
 
@@ -221,6 +261,14 @@ public final class AppComponents implements AutoCloseable {
     /** The bearer token for http-local: the configured {@code http.token}, else the persisted one. */
     public char[] httpToken() {
         return state.bearerToken();
+    }
+
+    ToolExecutor executor() {
+        return executor;
+    }
+
+    List<ToolDefinition> definitions() {
+        return List.copyOf(tools.keySet());
     }
 
     StorePool pool() {
