@@ -107,7 +107,7 @@ accounts:
     readOnly: true
 ```
 
-Deadline guard: while at least one account is not read-only, `tools.deadline` must be at least 30 s, otherwise the server refuses to start. If every account is read-only, any deadline is accepted. The bulk cap of the write tools (100 handles per call, 10 folders) is fixed and not configurable.
+Deadline guard: while at least one account is not read-only, `tools.deadline` must be at least 30 s, otherwise the server refuses to start. If every account is read-only, the 30 s minimum does not apply; the normal bounds of `tools.deadline` still do. The bulk cap of the write tools (100 handles per call, 10 folders) is fixed and not configurable.
 
 Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`; sizes: a number plus `B`, `KiB`, `MiB` or `GiB`):
 
@@ -270,7 +270,7 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 ### Safety and upgrading
 
 - Email content is untrusted input (possible prompt injection) and is returned as labeled data.
-- Write tools are enabled by default and make only reversible changes: `delete_messages` moves to Trash, nothing is expunged.
+- Write tools are enabled by default and make only reversible changes: nothing is permanently deleted. `delete_messages` moves to Trash; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
 - Set `readOnly: true` on every account the agent must never change.
 - MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
 - Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
