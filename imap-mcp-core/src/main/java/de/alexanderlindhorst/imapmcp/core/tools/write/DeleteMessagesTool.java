@@ -113,6 +113,12 @@ public final class DeleteMessagesTool implements ToolHandler {
         }
     }
 
+    /** Steps 7 to 9 on a leased connection; package-private so tests can force the connection's capabilities. */
+    ToolOutcome onLease(ImapLease lease, ToolCallContext ctx, WritePreflight.Result.Ok ok, String account,
+            List<String> handleList) throws MessagingException {
+        return run(lease, ctx, ok, account, handleList, System.nanoTime());
+    }
+
     private ToolOutcome run(ImapLease lease, ToolCallContext ctx, WritePreflight.Result.Ok ok, String account,
             List<String> handleList, long start) throws MessagingException {
         String rid = ctx.requestId();
