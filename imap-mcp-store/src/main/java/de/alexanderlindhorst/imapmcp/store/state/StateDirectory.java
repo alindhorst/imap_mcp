@@ -14,6 +14,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,6 +113,26 @@ public final class StateDirectory {
             }
         }
         return handleKey.clone();
+    }
+
+    /**
+     * The persisted {@code handle-key} without creating anything (key ring id 1 while another id signs). Absent,
+     * corrupt, not a regular file, or unusable securely (chmod refused, unreadable): empty, with a WARN that never
+     * contains the value. A configured {@code security.handleKey} is not consulted here.
+     */
+    public synchronized Optional<byte[]> existingHandleKey() {
+        Path file = dir.resolve("handle-key");
+        try {
+            if (Files.isDirectory(dir)) {
+                checkDirectoryOnce();
+            }
+            String v = readIfPresent(file);
+            return v == null ? Optional.empty() : Optional.of(decodeExact(v, KEY_BYTES, "corrupt"));
+        } catch (IOException | StateDirectoryException e) {
+            LOG.warn("Ignoring the persisted handle key at {}: it cannot be used securely or is corrupt; key id 1 is"
+                    + " left out of the key ring", file);
+            return Optional.empty();
+        }
     }
 
     /** 16-byte salt for account handles. Ephemeral (with a WARN) if it cannot be persisted. */
