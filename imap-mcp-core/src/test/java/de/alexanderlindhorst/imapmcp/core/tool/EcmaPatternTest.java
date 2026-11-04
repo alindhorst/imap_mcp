@@ -48,6 +48,14 @@ class EcmaPatternTest {
     }
 
     @Test
+    void nonPortablePatternMessageNamesTheLocationButNotThePattern() {
+        Map<String, Object> schema = Map.of("type", "object", "properties",
+                Map.of("p", Map.of("type", "string", "pattern", "\\Asecret\\z")));
+        assertThatThrownBy(() -> new InputValidator(schema)).hasMessageStartingWith("invalid pattern at ")
+                .hasMessageContaining("p").hasMessageNotContaining("secret");
+    }
+
+    @Test
     void validatorMatchesTheWholeValue() {
         Map<String, Object> schema = Map.of("type", "object", "properties",
                 Map.of("p", Map.of("type", "string", "pattern", "^[a-z]+$")));
