@@ -32,9 +32,7 @@ public final class ProcessCommandRunner implements CommandRunner {
             }
             byte[] stdout = out.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
             byte[] stderr = err.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
-            int stderrLength = stderr.length;
-            java.util.Arrays.fill(stderr, (byte) 0);
-            return new Result(process.exitValue(), stdout, stderrLength);
+            return new Result(process.exitValue(), stdout, stderr);
         } catch (InterruptedException e) {
             process.destroyForcibly();
             Thread.currentThread().interrupt();
