@@ -171,6 +171,10 @@ class SetFlagsArgumentsTest {
     void trailingLineTerminatorInKeywordIsRejected() {
         assertInvalid(args("add_keywords", List.of("abc\n")), "add_keywords[0]", "format");
         assertInvalid(args("remove_keywords", List.of("abc\r\n")), "remove_keywords[0]", "format");
+        for (String bad : new String[] {"abc\r", "abc\u0085", "abc\u2028", "abc\u2029", "a\ud83d\ude00", "a\ud800"}) {
+            assertInvalid(args("add_keywords", List.of(bad)), "add_keywords[0]", "format");
+            assertInvalid(args("remove_keywords", List.of(bad)), "remove_keywords[0]", "format");
+        }
     }
 
     @Test

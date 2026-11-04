@@ -172,6 +172,15 @@ class UidCommandsTest {
     }
 
     @Test
+    void storeRejectsKeywordsWithTrailingTerminatorsOrNonAtomCharacters() {
+        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc\u2028", "abc\u2029",
+                "a\ud83d\ude00", "a\ud800"}) {
+            assertThatThrownBy(() -> UidCommands.uidStore(inbox, List.of(1L), FlagMode.ADD, new Flags(bad)))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
     void storeAcceptsKeywords() throws Exception {
         assertThat(UidCommands.uidStore(inbox, List.of(uids.get(0)), FlagMode.ADD, new Flags("$Todo")).ok()).isTrue();
         assertThat(wire()).contains("+FLAGS.SILENT ($Todo)");
