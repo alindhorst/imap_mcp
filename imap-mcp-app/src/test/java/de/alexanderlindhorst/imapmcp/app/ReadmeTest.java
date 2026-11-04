@@ -148,6 +148,15 @@ class ReadmeTest {
                 .contains("claude mcp add").contains("--transport http").contains("Authorization: Bearer")
                 .contains("flavor: auto").contains("gimaps").contains("secret-tool store")
                 .contains("security add-generic-password").contains("within 5 minutes");
+        assertThat(readme).contains("phase v2").contains("reversible write tools")
+                .contains("enabled by default").contains("`readOnly`")
+                .contains("`http-public` and the later phases are not implemented")
+                .contains("moves to Trash, not a permanent delete")
+                .contains("`read_only`").contains("account_read_only")
+                .contains("at least 30 s").contains("100 handles").contains("10 folders")
+                .contains("upgrading from 0.1.0").contains("`destructiveHint`")
+                .contains("set_flags, move_messages, copy_messages, delete_messages and create_folder")
+                .doesNotContain("phase v1");
     }
 
     /**
@@ -205,5 +214,46 @@ class ReadmeTest {
     void logStatementNamesTheTraceException() {
         assertThat(readme).contains(
                 "not logged (except in the opt-in IMAP protocol trace below; credentials stay redacted there too)");
+    }
+
+    /** #204: the Tools section lists exactly the registered tool names; v2 tools are marked as write tools. */
+    @Test
+    void toolsSectionListsExactlyTheRegisteredTools() {
+        Matcher m = Pattern.compile("(?s)\\n## Tools\\R(.*?)(?=\\n## |\\z)").matcher(readme);
+        assertThat(m.find()).as("README has a '## Tools' section").isTrue();
+        String section = m.group(1);
+        List<String> listed = new ArrayList<>();
+        Matcher l = Pattern.compile("(?m)^- `([a-z_]+)`: (.*)$").matcher(section);
+        java.util.Map<String, String> lines = new java.util.LinkedHashMap<>();
+        while (l.find()) {
+            listed.add(l.group(1));
+            lines.put(l.group(1), l.group(2));
+        }
+        List<de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition> defs = List.of(
+                de.alexanderlindhorst.imapmcp.core.tools.ListAccountsTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.ListFoldersTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.GetMessageTool.definition(100_000),
+                de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool.DEFINITION);
+        assertThat(listed).containsExactlyInAnyOrderElementsOf(defs.stream().map(d -> d.name()).toList());
+        for (var d : defs) {
+            if (d.hints().readOnly()) {
+                assertThat(lines.get(d.name())).as(d.name()).doesNotContain("write;");
+            } else {
+                assertThat(lines.get(d.name())).as(d.name()).contains("write; refused on `readOnly` accounts");
+            }
+        }
+        assertThat(lines.get("delete_messages")).contains("moves to Trash, not a permanent delete");
+    }
+
+    /** #204: SPEC v0.8 has no write-tools switch; the only switch is accounts[].readOnly. */
+    @Test
+    void doesNotMentionAWriteToolsSwitch() {
+        assertThat(readme).doesNotContain("writeTools");
     }
 }
