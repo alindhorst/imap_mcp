@@ -213,10 +213,17 @@ public final class GetMessageTool implements ToolHandler {
     private static Fetched fetch(org.eclipse.angus.mail.imap.IMAPFolder folder, int seq, boolean allHeaders)
             throws MessagingException {
         String section = allHeaders ? "HEADER" : "HEADER.FIELDS (DATE)";
-        String what = "ENVELOPE FLAGS INTERNALDATE RFC822.SIZE BODYSTRUCTURE BODY.PEEK[" + section + "]";
+        String what = "FLAGS INTERNALDATE RFC822.SIZE BODYSTRUCTURE BODY.PEEK[" + section + "]";
         return (Fetched) folder.doCommand(p -> {
-            Response[] r = p.fetch(seq, what);
+            Response[] r = p.fetch(seq, "ENVELOPE " + what);
             p.notifyResponseHandlers(r);
+            if (java.util.Arrays.stream(r).noneMatch(x -> x instanceof FetchResponse f && f.getNumber() == seq)) {
+                // Angus drops the whole FETCH when ENVELOPE does not parse (e.g. a domain-less address) and it never
+                // reaches us: ask again without it, the envelope fields then degrade to null instead of the
+                // message looking empty.
+                r = p.fetch(seq, what);
+                p.notifyResponseHandlers(r);
+            }
             Response last = r[r.length - 1];
             if (!last.isOK()) {
                 p.handleResult(last);
