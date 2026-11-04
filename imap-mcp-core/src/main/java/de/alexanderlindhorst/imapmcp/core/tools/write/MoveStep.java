@@ -14,7 +14,7 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
 
 /**
  * The mutating step of one source-folder group of a move (SPEC 5.4), run by {@link FolderGroupRunner} with the
- * present UIDs only: one {@code UID MOVE} to the target (never selected). New handles come from COPYUID (destination
+ * present UIDs only: one {@code UID MOVE} to the target (never selected). New handles come from the COPYUID codes of the command, merged (destination
  * UIDVALIDITY and UID, paired by position); a present UID missing from the COPYUID source set is
  * {@code already_gone}; without COPYUID every present UID went and is {@code ok} with {@code new_uid_unknown}. A
  * refused command fails the group's items with the mapped error ({@code [TRYCREATE]}, {@code [OVERQUOTA]}, ...).
@@ -68,7 +68,7 @@ public final class MoveStep implements FolderGroupRunner.MutationStep {
                     .orElseGet(() -> ToolError.upstreamError(r.tagged().getRest(), requestId));
             return failAll(present, e);
         }
-        Optional<CopyUidParser.CopyUid> copyUid = r.copyUid();
+        Optional<CopyUidParser.CopyUid> copyUid = CopyUidParser.parseAll(r.responses());
         List<BulkResult.Item> out = new ArrayList<>(present.size());
         for (WritePreflight.Item i : present) {
             if (copyUid.isEmpty()) {
