@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
+import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
@@ -30,6 +31,10 @@ import org.slf4j.MDC;
  * <p>Once a write tool marked {@link ToolCallContext#markMutationStarted()}, a deadline, cancel or unchecked
  * failure reports an unknown outcome instead (details.outcome, or OUTCOME_UNKNOWN for non-idempotent tools).
  *
+ * <p>An optional {@link OutcomeListener} is told about every outcome of a write tool (readOnlyHint=false) that the
+ * executor produced itself (deadline, cancel, unchecked failure), so the caller can log it; outcomes the handler
+ * returns are never reported. This keeps the write-call logging out of this package.
+ *
  * <p>The request id is created by the adapter and carried in the {@link ToolCallContext}.
  */
 public final class ToolExecutor {
@@ -41,6 +46,21 @@ public final class ToolExecutor {
     private final Duration deadline;
     private final LogIds logIds;
     private final MetricsRecorder metrics;
+    private final OutcomeListener listener;
+
+    /** Told about an executor-produced failure of a write tool; {@code code} is the final code on the wire. */
+    @FunctionalInterface
+    public interface OutcomeListener {
+        OutcomeListener NONE = (tool, requestId, code, duration) -> { };
+
+        void executorOutcome(String tool, String requestId, ErrorCode code, Duration duration);
+    }
+
+    /** Per-call flags: an external cancel (not a timeout), and an outcome produced here instead of by the handler. */
+    private static final class CallState {
+        final AtomicBoolean cancelled = new AtomicBoolean();
+        final AtomicBoolean executorProduced = new AtomicBoolean();
+    }
 
     public ToolExecutor(Duration deadline, LogIds logIds) {
         this(deadline, logIds, MetricsRecorder.NOOP);
@@ -51,6 +71,11 @@ public final class ToolExecutor {
      * AUTH_FAILED and TIMEOUT outcome. The pool key is not known here, so these are tenant-level counters.
      */
     public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics) {
+        this(deadline, logIds, metrics, OutcomeListener.NONE);
+    }
+
+    public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics, OutcomeListener listener) {
+        this.listener = Objects.requireNonNull(listener, "listener");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.deadline = Objects.requireNonNull(deadline, "deadline");
         this.logIds = Objects.requireNonNull(logIds, "logIds");
@@ -58,19 +83,19 @@ public final class ToolExecutor {
 
     /** For handlers that never mutate (they never mark, so outcomes are the v1 ones). */
     public ToolHandler wrap(String toolName, ToolHandler delegate) {
-        return wrap(toolName, true, delegate);
+        return wrap(toolName, true, false, delegate);
     }
 
     /** The tool's idempotentHint selects the outcome-unknown code after a mutation started (SPEC 5.5). */
     public ToolHandler wrap(ToolDefinition definition, ToolHandler delegate) {
         Objects.requireNonNull(definition, "definition");
-        return wrap(definition.name(), definition.hints().idempotent(), delegate);
+        return wrap(definition.name(), definition.hints().idempotent(), !definition.hints().readOnly(), delegate);
     }
 
-    private ToolHandler wrap(String toolName, boolean idempotent, ToolHandler delegate) {
+    private ToolHandler wrap(String toolName, boolean idempotent, boolean write, ToolHandler delegate) {
         Objects.requireNonNull(toolName, "toolName");
         Objects.requireNonNull(delegate, "delegate");
-        return (ctx, args) -> execute(toolName, idempotent, delegate, ctx, args);
+        return (ctx, args) -> execute(toolName, idempotent, write, delegate, ctx, args);
     }
 
     /** A write may have been applied: OUTCOME_UNKNOWN for a non-idempotent tool, else the error plus details.outcome. */
@@ -88,18 +113,22 @@ public final class ToolExecutor {
         }
     }
 
-    private ToolOutcome execute(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx,
-            Map<String, Object> args) {
+    private ToolOutcome execute(String toolName, boolean idempotent, boolean write, ToolHandler delegate,
+            ToolCallContext ctx, Map<String, Object> args) {
         Instant start = metrics.now();
-        AtomicBoolean cancelled = new AtomicBoolean();
-        ToolOutcome outcome = run(toolName, idempotent, delegate, ctx, args, cancelled);
+        CallState state = new CallState();
+        ToolOutcome outcome = run(toolName, idempotent, delegate, ctx, args, state);
         TenantId tenant = ctx.accountContext().tenantId();
-        metrics.operation(tenant, toolName, "call", Duration.between(start, metrics.now()));
+        Duration elapsed = Duration.between(start, metrics.now());
+        metrics.operation(tenant, toolName, "call", elapsed);
+        if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
+            listener.executorOutcome(toolName, ctx.requestId(), f.error().code(), elapsed);
+        }
         if (outcome instanceof ToolOutcome.Failure f) {
             switch (f.error().code()) {
                 case AUTH_FAILED -> metrics.authFailure(tenant);
                 case TIMEOUT -> {
-                    if (!cancelled.get()) { // an external cancel is not a timeout
+                    if (!state.cancelled.get()) { // an external cancel is not a timeout
                         metrics.timeout(tenant);
                     }
                 }
@@ -110,7 +139,7 @@ public final class ToolExecutor {
     }
 
     private ToolOutcome run(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
-            AtomicBoolean cancelled) {
+            CallState state) {
         Instant callDeadline = Instant.now().plus(deadline);
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
         Thread worker = Thread.ofVirtual().name("tool-" + toolName).unstarted(() -> {
@@ -129,44 +158,50 @@ public final class ToolExecutor {
         // First hook: completes the result before the interrupt, so nothing the worker produces afterwards is returned.
         ctx.onCancel(() -> {
             if (future.complete(timedOut(idempotent, ctx))) {
-                cancelled.set(true);
+                state.executorProduced.set(true);
+                state.cancelled.set(true);
                 LOG.info("tool {} cancelled, request_id={}", toolName, ctx.requestId());
             }
         });
         ctx.onCancel(worker::interrupt);
         if (future.isDone()) { // cancelled before start: no worker, no IMAP I/O
-            return result(future, toolName, idempotent, ctx);
+            return result(future, toolName, idempotent, ctx, state);
         }
         worker.start();
         try {
             return future.get(deadline.toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             if (future.complete(timedOut(idempotent, ctx))) {
+                state.executorProduced.set(true);
                 LOG.warn("tool {} exceeded deadline, request_id={}", toolName, ctx.requestId());
             }
             ctx.cancel();
-            return result(future, toolName, idempotent, ctx);
+            return result(future, toolName, idempotent, ctx, state);
         } catch (InterruptedException e) {
-            future.complete(timedOut(idempotent, ctx));
+            if (future.complete(timedOut(idempotent, ctx))) {
+                state.executorProduced.set(true);
+            }
             ctx.cancel();
             Thread.currentThread().interrupt();
-            return result(future, toolName, idempotent, ctx);
+            return result(future, toolName, idempotent, ctx, state);
         } catch (ExecutionException e) {
-            return failed(e.getCause(), toolName, idempotent, ctx);
+            return failed(e.getCause(), toolName, idempotent, ctx, state);
         }
     }
 
     /** The already completed future's outcome; the first completion (handler, deadline or cancel) won. */
     private ToolOutcome result(CompletableFuture<ToolOutcome> future, String toolName, boolean idempotent,
-            ToolCallContext ctx) {
+            ToolCallContext ctx, CallState state) {
         try {
             return future.join();
         } catch (CompletionException e) {
-            return failed(e.getCause(), toolName, idempotent, ctx);
+            return failed(e.getCause(), toolName, idempotent, ctx, state);
         }
     }
 
-    private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx) {
+    private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx,
+            CallState state) {
+        state.executorProduced.set(true);
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
         return new ToolOutcome.Failure(afterMutation(ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
