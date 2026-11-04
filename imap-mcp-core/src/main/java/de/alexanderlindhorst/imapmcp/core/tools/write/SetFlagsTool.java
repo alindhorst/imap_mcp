@@ -86,7 +86,7 @@ public final class SetFlagsTool implements ToolHandler {
     public static final ToolDefinition DEFINITION = new ToolDefinition(NAME, "Set message flags",
             "Add or remove flags (seen, flagged, answered, draft) and keywords on up to 100 messages by handle; "
                     + "deleted can only be cleared. Undo by calling set_flags again with the opposite value. "
-                    + "On Gmail, flags apply to the message across all labels. "
+                    + "On Gmail, flags apply to the message across labels. "
                     + DescriptionRules.WRITE_SENTENCE + ".",
             inputSchema(), BulkOutputSchema.of(BulkResult.Kind.SET_FLAGS), ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT);
 

@@ -256,4 +256,22 @@ class ReadmeTest {
     void doesNotMentionAWriteToolsSwitch() {
         assertThat(readme).doesNotContain("writeTools");
     }
+
+    /** #206: Gmail write behaviour comes from the server; the README says so and lists the manual smoke checks. */
+    @Test
+    void gmailSectionHasWriteToolsParagraphAndSmokeChecklist() {
+        Matcher m = Pattern.compile("(?s)\\n### Gmail\\R(.*?)(?=\\n##+ |\\z)").matcher(readme);
+        assertThat(m.find()).as("README has a '### Gmail' section").isTrue();
+        String section = m.group(1);
+        assertThat(section).contains("Write tools on Gmail")
+                .contains("tested against GreenMail and Dovecot only, not against real Gmail")
+                .contains("adds a label").contains("replaces the source label").contains("All Mail")
+                .contains("UTF8=ACCEPT").doesNotContain("writeTools").doesNotContain("modified UTF-7");
+        for (String heading : List.of("COPYUID on labels", "Copy into a label the message already has",
+                "Move into and out of All Mail", "Move out of Trash", "Junk, Starred and Important",
+                "Delete from a label", "Trash role under a localized UI", "Keyword persistence",
+                "Move into Drafts or Sent refused")) {
+            assertThat(section).as("checklist item").contains(heading);
+        }
+    }
 }
