@@ -1,8 +1,23 @@
 # IMAP MCP
 
-An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search and read (later also organize) mail in IMAP mailboxes. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
+An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize (reversible changes only) mail in IMAP mailboxes. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
-> **Status:** phase v1 (read-only tools; `stdio` and `http-local`). `http-public` and the later phases are not implemented; see "Scope by phase".
+> **Status:** phase v2: read-only tools plus reversible write tools (enabled by default, turned off per account by `readOnly`), with `stdio` and `http-local`. `http-public` and the later phases are not implemented; see "Scope by phase".
+
+## Tools
+
+Ten tools; the five v2 tools are write tools and are not listed when every account is read-only.
+
+- `list_accounts`: lists the configured accounts with label, provider, status and `read_only`; read-only.
+- `list_folders`: lists the folders of one account with role and attributes; read-only.
+- `search_messages`: searches one folder and returns a page of message summaries with handles; read-only.
+- `get_message`: reads one message (envelope, a window of the text body, attachment list); read-only.
+- `list_attachments`: lists the attachments of one message (metadata only); read-only.
+- `set_flags`: adds or removes flags and keywords on up to 100 messages; write; refused on `readOnly` accounts.
+- `move_messages`: moves up to 100 messages into one folder and returns the new handles; write; refused on `readOnly` accounts.
+- `copy_messages`: copies up to 100 messages into one folder and returns the new handles; write; refused on `readOnly` accounts.
+- `delete_messages`: up to 100 messages; moves to Trash, not a permanent delete; write; refused on `readOnly` accounts.
+- `create_folder`: creates a folder (an existing one is success); write; refused on `readOnly` accounts.
 
 ## Documentation
 
@@ -53,7 +68,7 @@ Master is protected, so every step that changes it goes through a PR and the gat
 
 ## Running
 
-The same jar runs in two modes in v1 (see SPEC section 2):
+The same jar runs in two modes in v2 (see SPEC section 2):
 
 | Mode | Use | How clients connect |
 |---|---|---|
@@ -75,7 +90,24 @@ accounts:
     password: env:WORK_IMAP_PASSWORD
 ```
 
-Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`). Every other option is optional; keys not listed below are rejected as unknown.
+Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`), `readOnly` (default `false`). Every other option is optional; keys not listed below are rejected as unknown.
+
+`readOnly: true` makes the write tools refuse that account (error code `account_read_only`); `list_accounts` reports it as `read_only`. When every account is `readOnly: true`, the write tools are not listed at all. Example with one writable and one read-only account:
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+  - id: archive
+    host: imap.example.com
+    username: archive@example.com
+    password: env:ARCHIVE_IMAP_PASSWORD
+    readOnly: true
+```
+
+Deadline guard: while at least one account is not read-only, `tools.deadline` must be at least 30 s, otherwise the server refuses to start. If every account is read-only, the 30 s minimum does not apply; the normal bounds of `tools.deadline` still do. The bulk cap of the write tools (100 handles per call, 10 folders) is fixed and not configurable.
 
 Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`; sizes: a number plus `B`, `KiB`, `MiB` or `GiB`):
 
@@ -235,6 +267,14 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 
 `imap.trace: true` in the config switches on the Jakarta Mail protocol trace. It is a diagnostic opt-in, off by default. WARNING: with the trace on, the log file may contain message content (subjects, addresses, bodies); credentials stay redacted. Enable it only to diagnose a problem and disable it after diagnosis.
 
+### Safety and upgrading
+
+- Email content is untrusted input (possible prompt injection) and is returned as labeled data.
+- Write tools are enabled by default and make only reversible changes: nothing is permanently deleted. `delete_messages` moves to Trash; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
+- Set `readOnly: true` on every account the agent must never change.
+- MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
+- Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
+
 ### Notes
 
 - New-mail search (`since` / `as_of`) assumes the clocks of the MCP host and the IMAP server agree within 5 minutes.
@@ -246,7 +286,7 @@ Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Post
 
 ## Scope by phase
 
-v1 read-only tools, v2 reversible changes (flags, move), v3 gated deletion and public multi-tenant mode. Details in SPEC sections 3 and 4.
+v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3 gated deletion and public multi-tenant mode. Details in SPEC sections 3 and 4.
 
 ## Coverage
 
