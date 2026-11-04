@@ -88,6 +88,7 @@ class StdioFunctionalIT {
                         DovecotContainer.PASSWORD)
                 .account("starttls", DOVECOT.getHost(), DOVECOT.startTlsPort(), MailAccount.Security.STARTTLS, USER,
                         DovecotContainer.PASSWORD)
+                .readOnly("tls").readOnly("starttls") // this suite asserts the v1 tool set (#195)
                 .trustStore(TestTrust.writeTruststore(dir)).write();
 
         // The documented command line, as built by JarLauncher: java -Xlog... [jvm args] -jar <jar> --mode stdio --config <f>

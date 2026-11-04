@@ -138,7 +138,8 @@ class HttpLocalMainTest {
             HttpResponse<String> r = mcp(port, first);
             assertThat(r.statusCode()).isEqualTo(200);
             for (String tool : List.of("list_accounts", "list_folders", "search_messages", "get_message",
-                    "list_attachments")) {
+                    "list_attachments", "set_flags", "move_messages", "copy_messages", "delete_messages",
+                    "create_folder")) {
                 assertThat(r.body()).contains(tool);
             }
             stop(p);

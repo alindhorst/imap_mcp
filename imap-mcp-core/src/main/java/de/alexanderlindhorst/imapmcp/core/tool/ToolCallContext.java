@@ -21,6 +21,7 @@ public final class ToolCallContext {
     private final List<Runnable> callbacks = new ArrayList<>();
     private boolean cancelled;
     private volatile LogIds logIds;
+    private volatile String boundAccountHash;
     private volatile Instant deadline;
     private volatile boolean mutationStarted;
 
@@ -95,8 +96,15 @@ public final class ToolCallContext {
         Objects.requireNonNull(accountId, "accountId");
         LogIds ids = logIds;
         if (ids != null) {
-            MDC.put("acct", ids.account(accountId.value()));
+            String hash = ids.account(accountId.value());
+            boundAccountHash = hash;
+            MDC.put("acct", hash);
         }
+    }
+
+    /** The hashed account id bound by {@link #bindAccount}, or null; lets the executor restore the MDC elsewhere. */
+    String boundAccountHash() {
+        return boundAccountHash;
     }
 
     /** Called by the executor on the worker thread. */
