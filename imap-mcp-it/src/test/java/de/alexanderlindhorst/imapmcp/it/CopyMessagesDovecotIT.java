@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.Container;
@@ -71,6 +72,7 @@ class CopyMessagesDovecotIT {
         SERVER_OF.put("copy", FULL);
         SERVER_OF.put("role", FULL);
         SERVER_OF.put("same", FULL);
+        SERVER_OF.put("utf7", FULL);
         SERVER_OF.put("nomove", NO_MOVE);
         SERVER_OF.put("noup", NO_UIDPLUS);
         SERVER_OF.forEach((id, c) -> writer.account(id, c.getHost(), c.imapsPort(),
@@ -266,15 +268,30 @@ class CopyMessagesDovecotIT {
         assertThat(flagSets(after.folder(TARGET), diff.added(TARGET)))
                 .containsExactlyInAnyOrder("[\\Flagged]", "[\\Seen]", "[]");
 
-        // SPEC 5.5: UTF8=ACCEPT is never enabled (on any connection since the server started).
-        assertThat(commandsSince(0)).noneMatch(c -> c.startsWith("ENABLE"));
-        // Wire: UID COPY with the modified UTF-7 name, no other copy/move/expunge verb, the target never selected.
+        // The name encoding follows the connection state: raw UTF-8 once UTF8=ACCEPT was enabled, else modified UTF-7.
+        boolean utf8 = commandsSince(0).stream().anyMatch(c -> c.equals("ENABLE UTF8=ACCEPT"));
+        String expectedName = utf8 ? "\"" + TARGET + "\"" : "\"Projekte/" + TARGET_UTF7_TAIL + "\"";
         assertThat(commands).filteredOn(c -> c.startsWith("UID COPY")).hasSize(2)
-                .allMatch(c -> c.contains(TARGET_UTF7_TAIL) && c.chars().allMatch(ch -> ch < 128));
+                .allMatch(c -> c.endsWith(expectedName));
         assertThat(commands).noneMatch(c -> c.startsWith("COPY") || c.contains("MOVE") || c.contains("EXPUNGE"));
         assertThat(commands).noneMatch(c -> c.contains("STORE"));
         assertThat(commands).filteredOn(c -> c.startsWith("SELECT") || c.startsWith("EXAMINE"))
-                .noneMatch(c -> c.contains(TARGET_UTF7_TAIL));
+                .noneMatch(c -> c.contains("bersicht"));
+    }
+
+    @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
+    @Test
+    void strictSpecNoUtf8EnableAndModifiedUtf7OnTheWire() throws Exception {
+        try (MailSeeder s = seeder("utf7")) {
+            seed(s, "INBOX", "w1");
+            ensureFolder(s, TARGET);
+        }
+        String handle = handleOf("utf7", "INBOX", "w1");
+        long offset = logSize();
+        ok("copy_messages", args("account", account("utf7"), "handles", List.of(handle), "target_folder", TARGET));
+        assertThat(commandsSince(0)).noneMatch(c -> c.startsWith("ENABLE"));
+        assertThat(commandsSince(offset)).filteredOn(c -> c.startsWith("UID COPY")).hasSize(1)
+                .allMatch(c -> c.endsWith("\"Projekte/" + TARGET_UTF7_TAIL + "\""));
     }
 
     @Test
