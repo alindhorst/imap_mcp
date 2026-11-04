@@ -138,6 +138,10 @@ Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`
 | `http.allowedOrigins` | `[]` | accepted `Origin` header values |
 | `http.maxRequestBytes` | `1MiB` | request body limit |
 | `security.handleKey` | none | handle signing key as a secret reference (base64url, 32 bytes); generated into the state directory if unset |
+| `security.handleKeys` | `[]` | key ring: list of `{id, key}` (`id` 0 to 255, `key` a secret reference, base64url of 32 bytes); all ids verify handles and cursors |
+| `security.signingKeyId` | `1` | id that signs new handles and cursors; must be in the ring |
+
+Key rotation (SPEC 5.4, 5.7), one restart per step: add a key under a new id in `security.handleKeys`, then set `security.signingKeyId` to it, later remove the old id (its handles and cursors then fail as `INVALID_HANDLE` / `INVALID_CURSOR`). Id 1 is `security.handleKey`, else the `handleKeys` entry with id 1, else the generated `handle-key` state file (created only while id 1 signs, otherwise only read), so existing handles keep verifying after keys are added. Switching the signing id gives every message a new handle and changes the hashed ids in logs. With several replicas, each step must reach every replica before the next starts.
 
 Locations (SPEC 5.7):
 
