@@ -55,6 +55,36 @@ public final class CopyUidParser {
         return Optional.empty();
     }
 
+    /**
+     * All well-formed COPYUID codes of the OK responses of one command, merged in response order (a server may
+     * report a UID MOVE in chunks). Empty if there is none, if the UIDVALIDITY values differ, or if the merged
+     * set would exceed {@link #MAX_EXPANDED}.
+     */
+    public static Optional<CopyUid> parseAll(Response[] responses) {
+        if (responses == null) {
+            return Optional.empty();
+        }
+        long validity = -1;
+        List<Long> src = new ArrayList<>();
+        List<Long> dst = new ArrayList<>();
+        for (Response r : responses) {
+            Optional<CopyUid> c = parse(r);
+            if (c.isEmpty()) {
+                continue;
+            }
+            if (validity >= 0 && validity != c.get().uidValidity()) {
+                return Optional.empty();
+            }
+            validity = c.get().uidValidity();
+            src.addAll(c.get().sourceUids());
+            dst.addAll(c.get().destinationUids());
+            if (src.size() > MAX_EXPANDED) {
+                return Optional.empty();
+            }
+        }
+        return validity < 0 ? Optional.empty() : Optional.of(new CopyUid(validity, src, dst));
+    }
+
     public static Optional<CopyUid> parse(Response response) {
         if (response == null || !response.isOK()) {
             return Optional.empty();
