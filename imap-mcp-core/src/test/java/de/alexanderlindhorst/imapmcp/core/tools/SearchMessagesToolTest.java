@@ -517,6 +517,21 @@ class SearchMessagesToolTest {
         assertThat(e.details()).containsEntry("capability", "X-GM-EXT-1");
     }
 
+    // #25 rework: a keyword with a trailing line terminator never reaches the wire
+    @Test
+    void keywordWithTrailingLineTerminatorIsInvalidArgumentWithoutImapIo() throws Exception {
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r"}) {
+            List<String> cmds = commands(() -> {
+                ToolError e = env.error(SearchEnv.T1, args("keywords", List.of(bad)));
+                assertThat(e.code()).isEqualTo(ErrorCode.INVALID_ARGUMENT);
+                assertThat(e.details()).containsEntry("field", "keywords[0]").containsEntry("reason", "format");
+                assertThat(e.toString()).doesNotContain("abc");
+            });
+            assertThat(cmds).isEmpty();
+        }
+    }
+
     // #29 AC1
     @Test
     void gmailRawOnAServerWithoutXGmExt1IsUnsupportedAndNoSearchIsSent() throws Exception {
