@@ -31,6 +31,9 @@ class KeyringSecretResolverTest {
         int exitCode;
         byte[] stdout = new byte[0];
         int stderrLength;
+        byte[] stderr;
+        /** Scripted replies, consumed one per call before falling back to the fields above. */
+        final java.util.ArrayDeque<Result> script = new java.util.ArrayDeque<>();
         boolean hang;
         IOException failToStart;
 
@@ -54,7 +57,17 @@ class KeyringSecretResolverTest {
                 }
                 throw new TimeoutException("timed out");
             }
-            return new Result(exitCode, stdout.clone(), stderrLength);
+            Result scripted = script.poll();
+            if (scripted != null) {
+                return scripted;
+            }
+            return stderr != null ? new Result(exitCode, stdout.clone(), stderr.clone())
+                    : new Result(exitCode, stdout.clone(), stderrLength);
+        }
+
+        FakeRunner then(int exit, String out, String err) {
+            script.add(new Result(exit, out.getBytes(StandardCharsets.UTF_8), err.getBytes(StandardCharsets.UTF_8)));
+            return this;
         }
     }
 
@@ -208,6 +221,70 @@ class KeyringSecretResolverTest {
             assertThat(String.valueOf(ev.getArgumentArray() == null ? "" : String.join(",", java.util.Arrays.stream(ev.getArgumentArray()).map(String::valueOf).toList())))
                     .doesNotContain(MARKER);
         });
+    }
+
+    // security -w prints bare lowercase hex (no marker) when any byte is not 0x20..0x7e; keychain_utilities.c
+    // print_buffer / keychain_find.c do_password_item_printing. An ASCII password that looks like hex is
+    // indistinguishable, so the hex-looking output is disambiguated with -g (stderr: password: "..." vs 0x...).
+
+    @Test
+    void macosHexOutputIsDecodedFromDashGFormToUtf8() {
+        // password "p<a-umlaut>ss", UTF-8 bytes 70 c3 a4 73 73
+        runner.then(0, "70c3a47373\n", "").then(0, "keychain: \"x\"\n", "password: 0x70C3A47373  \"p\\303\\244ss\"\n");
+        assertThat(lookup(Platform.MACOS, "imap-mcp", "alice")).isEqualTo("p" + (char) 0xE4 + "ss");
+        assertThat(runner.calls).hasSize(2);
+        assertThat(runner.calls.get(1))
+                .containsExactly("/usr/bin/security", "find-generic-password", "-s", "imap-mcp", "-a", "alice", "-g");
+    }
+
+    @Test
+    void macosAsciiPasswordThatLooksLikeHexIsNotMisread() {
+        runner.then(0, "deadbeef\n", "").then(0, "keychain: \"x\"\n", "password: \"deadbeef\"\n");
+        assertThat(lookup(Platform.MACOS, "imap-mcp", "alice")).isEqualTo("deadbeef");
+    }
+
+    @Test
+    void macosOutputThatCannotBeHexPrintedNeedsNoSecondCall() {
+        for (String pw : new String[] {"abc", "DEADBEEF", "dead beef", "deadbeeg"}) {
+            runner.calls.clear();
+            runner.reply(0, pw + "\n");
+            assertThat(lookup(Platform.MACOS, "imap-mcp", "alice")).isEqualTo(pw);
+            assertThat(runner.calls).hasSize(1);
+        }
+    }
+
+    @Test
+    void macosHexOutputDisagreeingWithDashGIsRefused() {
+        runner.then(0, "70c3a47373\n", "").then(0, "", "password: 0x70C3A47374  \"x\"\n");
+        assertThatThrownBy(() -> lookup(Platform.MACOS, "imap-mcp", "alice"))
+                .isInstanceOfSatisfying(KeyringLookupException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(Kind.FAILED);
+                    assertThat(e.getMessage()).contains("imap-mcp", "alice").doesNotContain("70C3A47373", "70c3a47373");
+                });
+    }
+
+    @Test
+    void macosUnparsableOrFailedDashGIsRefusedWithoutLeaking() {
+        runner.then(0, "70c3a47373\n", "").then(0, "", "something unexpected\n");
+        assertThatThrownBy(() -> lookup(Platform.MACOS, "imap-mcp", "alice"))
+                .isInstanceOfSatisfying(KeyringLookupException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(Kind.FAILED);
+                    assertThat(e.getMessage()).contains("imap-mcp", "alice").doesNotContain("70c3a47373", "unexpected");
+                });
+        runner.then(0, "70c3a47373\n", "").then(36, "", "password: 0x70C3A47373 \"x\"\n");
+        assertThatThrownBy(() -> lookup(Platform.MACOS, "imap-mcp", "alice"))
+                .isInstanceOfSatisfying(KeyringLookupException.class, e -> assertThat(e.kind()).isEqualTo(Kind.FAILED));
+    }
+
+    @Test
+    void macosHexThatIsNotValidUtf8IsRefusedNamingOnlyTheReference() {
+        runner.then(0, "fffe\n", "").then(0, "", "password: 0xFFFE  \"x\"\n");
+        assertThatThrownBy(() -> lookup(Platform.MACOS, "imap-mcp", "alice"))
+                .isInstanceOfSatisfying(KeyringLookupException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(Kind.FAILED);
+                    assertThat(e.getMessage()).contains("imap-mcp", "alice", "UTF-8").doesNotContain("fffe", "FFFE");
+                });
+        assertThat(logs.list).allSatisfy(ev -> assertThat(ev.getFormattedMessage()).doesNotContainIgnoringCase("fffe"));
     }
 
     @Test
