@@ -42,6 +42,7 @@ class LeaseMetricsTest {
     private ImapSessionFactory sessions;
     private StorePool pool;
     private PoolKey key;
+    private String password = "pw";
 
     @BeforeEach
     void setUp() {
@@ -67,7 +68,7 @@ class LeaseMetricsTest {
     }
 
     private StoreLeases leases(PoolSettings s) {
-        pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), new CapabilityCache(),
+        pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret(password.toCharArray())), new CapabilityCache(),
                 k -> k.equals(key) ? account(k) : null, s, recorder);
         recorder.attachPool(pool);
         return new StoreLeases(pool, Duration.ofSeconds(10), new Admission(s, Admission.recording(recorder)),
@@ -178,5 +179,45 @@ class LeaseMetricsTest {
         }
         String line = app.list.getFirst().getFormattedMessage();
         assertThat(line).contains("op=connect").contains("op=open").contains("op=read").doesNotContain("INBOX");
+    }
+
+    private long authFailures() {
+        return recorder.snapshot().tenants().stream().filter(t -> t.tenant().equals(logIds.tenant("t1")))
+                .mapToLong(MetricsSnapshot.TenantMetrics::authFailures).sum();
+    }
+
+    @Test
+    void aRefusedLoginIsCountedOnceAndStillTimedAsConnect() {
+        password = "wrong";
+        StoreLeases leases = leases(settings(1));
+        assertThatThrownBy(() -> leases.withLease(key, new ToolCallContext(new AccountContext(TENANT), "r"),
+                lease -> null)).isInstanceOf(StoreUnavailableException.class);
+        assertThat(authFailures()).isEqualTo(1);
+        assertThat(op("connect").count()).isEqualTo(1);
+    }
+
+    @Test
+    void aSuccessfulConnectCountsNoAuthFailure() throws Exception {
+        StoreLeases leases = leases(settings(1));
+        leases.withLease(key, new ToolCallContext(new AccountContext(TENANT), "r"), lease -> null);
+        assertThat(authFailures()).isZero();
+    }
+
+    @Test
+    void theExecutorDoesNotCountTheSameRefusedLoginAgain() {
+        password = "wrong";
+        StoreLeases leases = leases(settings(1));
+        de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor executor = new de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor(
+                Duration.ofSeconds(10), logIds, recorder);
+        executor.wrap("t", (cx, a) -> {
+            try {
+                return leases.withLease(key, cx, lease -> new de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome.Success(
+                        Map.of()));
+            } catch (jakarta.mail.MessagingException | RuntimeException e) {
+                return new de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome.Failure(
+                        de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper.map(e, cx.requestId()).error());
+            }
+        }).handle(new ToolCallContext(new AccountContext(TENANT), "r"), Map.of());
+        assertThat(authFailures()).isEqualTo(1);
     }
 }
