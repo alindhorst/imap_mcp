@@ -28,6 +28,19 @@ class LogIdsTest {
         assertThat(ids(1).tenant("t-1")).isNotEqualTo(ids(2).tenant("t-1"));
     }
 
+    /** #262 / SPEC 5.6: hashed ids use the signing key's log subkey, not that of any other key in the ring. */
+    @Test
+    void usesTheSigningKeysLogSubkeyOfARingWithSeveralKeys() {
+        byte[] k1 = new byte[32];
+        byte[] k2 = new byte[32];
+        Arrays.fill(k1, (byte) 1);
+        Arrays.fill(k2, (byte) 2);
+        LogIds signing2 = new LogIds(new KeyRing(2, Map.of(1, k1, 2, k2)));
+        LogIds signing1 = new LogIds(new KeyRing(1, Map.of(1, k1, 2, k2)));
+        assertThat(signing2.tenant("t-1")).isEqualTo(ids(2).tenant("t-1"));
+        assertThat(signing1.tenant("t-1")).isEqualTo(ids(1).tenant("t-1")).isNotEqualTo(signing2.tenant("t-1"));
+    }
+
     @Test
     void tenantAndAccountAreDomainSeparated() {
         assertThat(ids(1).tenant("same")).isNotEqualTo(ids(1).account("same"));

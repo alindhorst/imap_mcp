@@ -330,4 +330,59 @@ class StateDirectoryTest {
             Files.setPosixFilePermissions(ro, PosixFilePermissions.fromString("rwx------"));
         }
     }
+
+    // #262: read-only access to the persisted handle key (key ring id 1 while another id signs)
+
+    @Test
+    void existingHandleKeyIsEmptyAndCreatesNothingWhenAbsent() {
+        Path dir = tmp.resolve("state");
+        assertThat(new StateDirectory(dir).existingHandleKey()).isEmpty();
+        assertThat(Files.exists(dir)).isFalse();
+        Path empty = tmp.resolve("state2");
+        assertThat(empty.toFile().mkdir()).isTrue();
+        assertThat(new StateDirectory(empty).existingHandleKey()).isEmpty();
+        assertThat(empty.toFile().list()).isEmpty();
+    }
+
+    @Test
+    void existingHandleKeyReturnsThePersistedKey() {
+        Path dir = tmp.resolve("state");
+        byte[] key = new StateDirectory(dir).handleKey();
+        assertThat(new StateDirectory(dir).existingHandleKey()).hasValue(key);
+    }
+
+    @Test
+    void existingHandleKeyIgnoresAConfiguredKey() {
+        Path dir = tmp.resolve("state");
+        byte[] key = new StateDirectory(dir).handleKey();
+        StateDirectory sd = new StateDirectory(dir, null, b64(new byte[32]).toCharArray());
+        assertThat(sd.existingHandleKey()).hasValue(key);
+    }
+
+    @Test
+    void existingHandleKeyLeavesAnUnsecurableFileOutWithWarn() throws Exception {
+        Path dir = tmp.resolve("state");
+        new StateDirectory(dir).handleKey();
+        Files.setPosixFilePermissions(dir.resolve("handle-key"), PosixFilePermissions.fromString("rw-r--r--"));
+        assertThat(new StateDirectory(dir, null, null, REFUSED).existingHandleKey()).isEmpty();
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("handle-key"));
+    }
+
+    @Test
+    void existingHandleKeyLeavesACorruptOrNonRegularFileOutWithWarnAndNoEcho() throws Exception {
+        Path dir = tmp.resolve("state");
+        new StateDirectory(dir).handleKey();
+        String bad = b64(new byte[5]);
+        Files.writeString(dir.resolve("handle-key"), bad);
+        assertThat(new StateDirectory(dir).existingHandleKey()).isEmpty();
+        assertThat(logText()).doesNotContain(bad);
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN);
+
+        logs.list.clear();
+        Files.delete(dir.resolve("handle-key"));
+        Files.createDirectory(dir.resolve("handle-key"));
+        assertThat(new StateDirectory(dir).existingHandleKey()).isEmpty();
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN);
+    }
 }

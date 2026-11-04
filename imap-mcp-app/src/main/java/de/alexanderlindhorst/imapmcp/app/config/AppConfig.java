@@ -55,6 +55,10 @@ public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tool
             List<String> allowedHosts, List<String> allowedOrigins, long maxRequestBytes) {
     }
 
-    public record Security(SecretRef handleKey) {
+    /** @param handleKey legacy single key (id 1); @param handleKeys key ring entries; @param signingKeyId signing id */
+    public record Security(SecretRef handleKey, List<HandleKey> handleKeys, int signingKeyId) {
+    }
+
+    public record HandleKey(int id, SecretRef key) {
     }
 }
