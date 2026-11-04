@@ -121,6 +121,11 @@ final class ArchitectureRules {
             .should().dependOnClassesThat().haveFullyQualifiedName(COMMAND_CLASS)
             .as("the v1 read classes must not use the write command class");
 
+    /** Placeholder, replaced by the real rule after the red run (#207). */
+    static final ArchRule NO_CONSOLE_OUTPUT = noClasses()
+            .should().dependOnClassesThat().haveFullyQualifiedName("does.not.Exist")
+            .as("core must not write to System.out/System.err or print stack traces (stdout is the protocol, SPEC 5.6)");
+
     private static DescribedPredicate<JavaClass> haveFullyQualifiedNameIn(String... names) {
         Set<String> n = Set.of(names);
         return new DescribedPredicate<>("have a fully qualified name in " + n) {
