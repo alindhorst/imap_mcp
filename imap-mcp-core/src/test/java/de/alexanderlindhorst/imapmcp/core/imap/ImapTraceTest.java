@@ -22,6 +22,7 @@ import jakarta.mail.Store;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -98,6 +99,32 @@ class ImapTraceTest {
 
     @Test
     void debugOutIsAlwaysRedactingStreamAndTraceOffIsSilent() throws Exception {
+        traceOffScenario();
+    }
+
+    /**
+     * The trace logger is global, so a leftover thread of another test (a store being closed) can log to it while this
+     * test's appender is attached. The collector must neither fail on that nor count the foreign events (#207).
+     */
+    @Test
+    void traceOffStaysSilentWhileAnotherThreadLogsToTheTraceLogger() throws Exception {
+        AtomicBoolean stop = new AtomicBoolean();
+        Thread foreign = Thread.ofPlatform().name("foreign-tracer").start(() -> {
+            while (!stop.get()) {
+                traceLogger.debug("FOREIGN-EVENT");
+            }
+        });
+        try {
+            for (int i = 0; i < 20; i++) {
+                traceOffScenario();
+            }
+        } finally {
+            stop.set(true);
+            foreign.join();
+        }
+    }
+
+    private void traceOffScenario() throws Exception {
         try (ImapSessionFactory f = factory(false)) {
             Session s = session(f);
             assertThat(s.getDebugOut()).isInstanceOf(RedactingDebugStream.class);
