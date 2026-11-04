@@ -60,11 +60,12 @@ public final class ListAccountsTool implements ToolHandler {
                     "label", schema("type", "string"),
                     "address", schema("type", List.of("string", "null")),
                     "provider", schema("type", "string", "enum", List.of("generic", "gmail")),
+                    "read_only", schema("type", "boolean"),
                     "status", schema("type", "string", "enum", List.of("ok", "auth_failed", "unreachable", "unknown")),
                     "capabilities", CAPABILITIES_SCHEMA,
                     "capabilities_detected_at", schema("type", List.of("string", "null"))),
-            "required", List.of("account", "label", "address", "provider", "status", "capabilities",
-                    "capabilities_detected_at"));
+            "required", List.of("account", "label", "address", "provider", "read_only", "status",
+                    "capabilities", "capabilities_detected_at"));
 
     static final Map<String, Object> OUTPUT_SCHEMA = schema("type", "object",
             "properties", schema("accounts", schema("type", "array", "items", ITEM_SCHEMA)),
@@ -72,7 +73,7 @@ public final class ListAccountsTool implements ToolHandler {
 
     public static final ToolDefinition DEFINITION = new ToolDefinition(NAME, "List mail accounts",
             "List the mail accounts linked for this user, with a label, an optional address, the provider, "
-                    + "connection status and a capability summary. Use the returned account handle as the account "
+                    + "connection status, whether the account is read-only (write tools refuse it) and a capability summary. Use the returned account handle as the account "
                     + "argument of every other tool. Read-only; does not change flags or mark messages as read.",
             INPUT_SCHEMA, OUTPUT_SCHEMA, ToolHints.READ_ONLY_OPEN_WORLD);
 
@@ -156,6 +157,7 @@ public final class ListAccountsTool implements ToolHandler {
         m.put("label", a.label());
         m.put("address", a.address());
         m.put("provider", a.flavor() == MailAccount.Flavor.GMAIL ? "gmail" : "generic");
+        m.put("read_only", a.readOnly());
         m.put("status", status);
         m.put("capabilities", caps == null ? null : capabilityMap(caps));
         m.put("capabilities_detected_at", detectedAt == null ? null : detectedAt.truncatedTo(ChronoUnit.SECONDS).toString());
