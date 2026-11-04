@@ -170,7 +170,7 @@ class MoveStepTest {
     void fallbackStoresAndExpungesOnlyTheCopiedUidsAndTheRestIsAlreadyGone() throws Exception {
         var out = fallback(answer("A1 OK [COPYUID 9 3 30] copied"), answer("A2 OK"), answer("A3 OK"))
                 .apply(null, present(3, 4), gate);
-        assertThat(wire).containsExactly("COPY 3,4 Target", "STORE 3", "EXPUNGE 3");
+        assertThat(wire).containsExactly("COPY 3:4 Target", "STORE 3", "EXPUNGE 3");
         assertThat(out.get(0).status()).isEqualTo(ItemStatus.OK);
         assertThat(out.get(1).status()).isEqualTo(ItemStatus.ALREADY_GONE);
     }
@@ -199,7 +199,7 @@ class MoveStepTest {
     void fallbackStoreRefusedSkipsExpungeAndFailsTheCopiedItems() throws Exception {
         var out = fallback(answer("A1 OK [COPYUID 9 3 30] copied"), answer("A2 NO [READ-ONLY] no"), answer("A3 OK"))
                 .apply(null, present(3, 4), gate);
-        assertThat(wire).containsExactly("COPY 3,4 Target", "STORE 3");
+        assertThat(wire).containsExactly("COPY 3:4 Target", "STORE 3");
         assertThat(out.get(0).status()).isEqualTo(ItemStatus.FAILED);
         assertThat(out.get(0).newHandle()).isNull();
         assertThat(out.get(1).status()).isEqualTo(ItemStatus.ALREADY_GONE);

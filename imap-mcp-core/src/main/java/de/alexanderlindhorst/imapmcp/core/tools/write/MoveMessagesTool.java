@@ -28,7 +28,7 @@ import java.util.Optional;
 
 /**
  * {@code move_messages} (SPEC 4 v2 write contract, 5.4): moves up to 100 handles to one target folder with
- * {@code UID MOVE} and returns the new handles from COPYUID. Check order: schema and target shape, account,
+ * {@code UID MOVE} (or, without MOVE, COPY + STORE \\Deleted + UID EXPUNGE of the copied UIDs) and returns the new handles from COPYUID. Check order: schema and target shape, account,
  * read-only account, handles, duplicates and folder cap ({@link WritePreflight}), lease, UIDPLUS gate before any
  * SELECT, target resolution by LIST (never selected), then the groups by {@link FolderGroupRunner} with
  * {@link MoveStep}. Groups whose folder is the target are {@code already_in_target} without a command. One leased
@@ -72,11 +72,17 @@ public final class MoveMessagesTool implements ToolHandler {
     private final Clock clock;
 
     public MoveMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock) {
+        this(preflight, leases, handles, clock, new FolderGroupRunner(clock));
+    }
+
+    /** Test seam: a runner with a fault-injection hook. */
+    MoveMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock,
+            FolderGroupRunner runner) {
         this.preflight = Objects.requireNonNull(preflight, "preflight");
         this.leases = Objects.requireNonNull(leases, "leases");
         this.handles = Objects.requireNonNull(handles, "handles");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.runner = new FolderGroupRunner(clock);
+        this.runner = Objects.requireNonNull(runner, "runner");
     }
 
     @Override
@@ -147,7 +153,7 @@ public final class MoveMessagesTool implements ToolHandler {
         MoveStep step = new MoveStep(targetName, caps.move(), ref -> handles.encode(tenant, accountId, ref), rid);
         items.addAll(runner.run(lease, ctx, toRun, FolderGroupRunner.AbsentStatus.ALREADY_GONE, step));
         BulkResult result = BulkResult.inInputOrder(BulkResult.Kind.MOVE, account, targetName, handleList, items);
-        WriteCallLog.bulk(NAME, result, ok.groups().size(), false, Duration.ofNanos(System.nanoTime() - start));
+        WriteCallLog.bulk(NAME, result, ok.groups().size(), step.usedFallback(), Duration.ofNanos(System.nanoTime() - start));
         return new ToolOutcome.Success(result.toMap());
     }
 

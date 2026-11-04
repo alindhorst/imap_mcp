@@ -196,7 +196,10 @@ class MoveFallbackTest {
     private ToolOutcome call(List<String> hs) throws Exception {
         ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-" + (++counter));
         var ok = (WritePreflight.Result.Ok) preflight.check(ctx, accountHandle1, hs, null);
-        IMAPStore s = direct();
+        var key = de.alexanderlindhorst.imapmcp.core.account.PoolKey.of(new AccountContext(T1),
+                new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(T1, account, accountHandle1));
+        IMAPStore s = (IMAPStore) sessions.sessionFor(key, account).getStore("imaps"); // traced session
+        s.connect("127.0.0.1", greenMail.getImaps().getPort(), USER, "pw");
         try {
             trace.list.clear();
             var lease = LeaseTestSeams.lease(s, ctx);
@@ -245,6 +248,7 @@ class MoveFallbackTest {
         String h2 = handle(T1, "INBOX", uids.get(2));
 
         Map<String, Object> out = ok(call(List.of(h1, h2)));
+        String w = wire(); // before the verification connections add to the trace
 
         assertThat(results(out)).extracting(r -> r.get("status")).containsOnly("ok");
         Map<Long, String> target = snapshot("Target");
@@ -256,7 +260,6 @@ class MoveFallbackTest {
             assertThat(target).containsKey(ref.uid());
         }
         assertThat(snapshot("INBOX").keySet()).containsExactly(uids.get(1));
-        String w = wire();
         int copy = w.indexOf("UID COPY");
         int store = w.indexOf("UID STORE");
         int expunge = w.indexOf("UID EXPUNGE");
