@@ -24,6 +24,19 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         }
     }
 
+    /** Closed set of PERMISSION_DENIED reasons (details.reason). */
+    public enum PermissionReason {
+        ACCOUNT_READ_ONLY("account_read_only"),
+        FOLDER_READ_ONLY("folder_read_only"),
+        SERVER_DENIED("server_denied");
+
+        private final String wire;
+
+        PermissionReason(String wire) {
+            this.wire = wire;
+        }
+    }
+
     public ToolError {
         details = details == null || details.isEmpty() ? null : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(details));
     }
@@ -47,6 +60,30 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         }
         e.put("request_id", requestId);
         return Map.of("error", e);
+    }
+
+    /** The error object without the {"error":...} wrapper and without request_id (per-item error of a bulk result). */
+    public Map<String, Object> toItemMap() {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> e = new LinkedHashMap<>((Map<String, Object>) toMap().get("error"));
+        e.remove("request_id");
+        return e;
+    }
+
+    /**
+     * Marks that a write may have been applied (details.outcome "unknown"), appended after the existing details.
+     * Only valid for TIMEOUT, UPSTREAM_UNAVAILABLE and INTERNAL_ERROR.
+     */
+    public ToolError withOutcomeUnknown() {
+        if (code != ErrorCode.TIMEOUT && code != ErrorCode.UPSTREAM_UNAVAILABLE && code != ErrorCode.INTERNAL_ERROR) {
+            throw new IllegalStateException("details.outcome is not defined for " + code);
+        }
+        Map<String, Object> d = new LinkedHashMap<>();
+        if (details != null) {
+            d.putAll(details);
+        }
+        d.put("outcome", "unknown");
+        return new ToolError(code, message, hint, retryAfterMs, d, requestId);
     }
 
     private static Map<String, Object> detail(Object... kv) {
@@ -84,6 +121,12 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         return of(ErrorCode.INVALID_HANDLE, "Invalid message handle. Obtain a handle via search_messages.",
                 "Handle is invalid or not from this account; obtain handles via search_messages for this account.",
                 null, requestId);
+    }
+
+    /** Multi-handle tools: names the first failing position (the client's own input, e.g. handles[3]). */
+    public static ToolError invalidHandle(String field, String requestId) {
+        ToolError v1 = invalidHandle(requestId);
+        return of(v1.code, v1.message, v1.hint, detail("field", field), requestId);
     }
 
     public static ToolError invalidCursor(String requestId) {
@@ -150,10 +193,15 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
 
     /** serverText is untrusted: control characters are stripped, collapsed to a single line and capped (UntrustedText). */
     public static ToolError upstreamError(String serverText, String requestId) {
+        return upstreamError(serverText, null, requestId);
+    }
+
+    /** responseCode must be one of a closed set of RFC 5530 atoms chosen by the caller, never server text. */
+    public static ToolError upstreamError(String serverText, String responseCode, String requestId) {
         return of(ErrorCode.UPSTREAM_ERROR,
                 "The IMAP server rejected the request. Adjust the request or try later.",
                 "See details.server_text; the text comes from the server and is not trusted.",
-                detail("server_text",
+                detail("response_code", responseCode, "server_text",
                         serverText == null ? null : UntrustedText.singleLine(serverText, UntrustedText.UPSTREAM_ERROR_MAX)), requestId);
     }
 
@@ -174,5 +222,23 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
     public static ToolError internalError(String requestId) {
         return of(ErrorCode.INTERNAL_ERROR, "Internal error. Report the request_id to the operator.",
                 "Report the request_id to the operator.", null, requestId);
+    }
+
+    public static ToolError permissionDenied(PermissionReason reason, String requestId) {
+        return of(ErrorCode.PERMISSION_DENIED, "The change is not permitted. Do not retry.",
+                "The change was refused by configuration or by the server; do not retry. See details.reason.",
+                detail("reason", reason.wire), requestId);
+    }
+
+    public static ToolError quotaExceeded(String requestId) {
+        return of(ErrorCode.QUOTA_EXCEEDED, "The mailbox quota is exceeded. Ask the user to free space; do not retry.",
+                "Ask the user to free space in the mailbox; do not retry.", null, requestId);
+    }
+
+    public static ToolError outcomeUnknown(String requestId) {
+        return of(ErrorCode.OUTCOME_UNKNOWN,
+                "The outcome of the copy is unknown. Search the target folder before repeating.",
+                "Search the target folder before repeating the call; otherwise the copies are duplicated.", null,
+                requestId);
     }
 }
