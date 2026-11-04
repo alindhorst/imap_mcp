@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
+import ch.qos.logback.core.AppenderBase;
 import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
@@ -22,6 +22,8 @@ import jakarta.mail.Store;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,12 +41,28 @@ class ImapTraceTest {
     @RegisterExtension
     static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());
 
-    private final ListAppender<ILoggingEvent> traceEvents = new ListAppender<>();
-    private final ListAppender<ILoggingEvent> factoryEvents = new ListAppender<>();
+    private final OwnThreadEvents traceEvents = new OwnThreadEvents();
+    private final OwnThreadEvents factoryEvents = new OwnThreadEvents();
     private Logger traceLogger;
     private Logger factoryLogger;
     private PrintStream originalOut;
     private final ByteArrayOutputStream capturedOut = new ByteArrayOutputStream();
+
+    /**
+     * Collects the events of the test thread only, thread-safely. The loggers are global: a leftover thread of another
+     * test may log to them at any time, which a plain {@code ListAppender} (an ArrayList) does not survive (#207).
+     */
+    private static final class OwnThreadEvents extends AppenderBase<ILoggingEvent> {
+        final List<ILoggingEvent> list = new CopyOnWriteArrayList<>();
+        private final String thread = Thread.currentThread().getName();
+
+        @Override
+        protected void append(ILoggingEvent event) {
+            if (event.getThreadName().equals(thread)) {
+                list.add(event);
+            }
+        }
+    }
 
     @BeforeEach
     void attach() {
@@ -98,16 +116,39 @@ class ImapTraceTest {
 
     @Test
     void debugOutIsAlwaysRedactingStreamAndTraceOffIsSilent() throws Exception {
+        traceOffScenario();
+    }
+
+    /**
+     * The trace logger is global, so a leftover thread of another test (a store being closed) can log to it while this
+     * test's appender is attached. The collector must neither fail on that nor count the foreign events (#207).
+     */
+    @Test
+    void traceOffStaysSilentWhileAnotherThreadLogsToTheTraceLogger() throws Exception {
+        AtomicBoolean stop = new AtomicBoolean();
+        Thread foreign = Thread.ofPlatform().name("foreign-tracer").start(() -> {
+            while (!stop.get()) {
+                traceLogger.debug("FOREIGN-EVENT");
+            }
+        });
+        try {
+            for (int i = 0; i < 20; i++) {
+                traceOffScenario();
+            }
+        } finally {
+            stop.set(true);
+            foreign.join();
+        }
+    }
+
+    private void traceOffScenario() throws Exception {
         try (ImapSessionFactory f = factory(false)) {
             Session s = session(f);
             assertThat(s.getDebugOut()).isInstanceOf(RedactingDebugStream.class);
             assertThat(s.getDebug()).isFalse();
             traceEvents.list.clear();
             login(s);
-            // The trace logger is global: filter by thread so a late cleanup event of another test's store
-            // (other thread) cannot make this test flaky.
-            String me = Thread.currentThread().getName();
-            assertThat(traceEvents.list).noneMatch(e -> e.getThreadName().equals(me));
+            assertThat(traceEvents.list).isEmpty();
             assertThat(factoryEvents.list).noneMatch(e -> e.getFormattedMessage().contains("trace enabled"));
             assertThat(capturedOut.size()).isZero();
         }

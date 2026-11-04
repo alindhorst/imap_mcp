@@ -37,6 +37,9 @@ class ArchitectureRulesTest {
     @ArchTest
     static final ArchRule readClassesNeverWrite = ArchitectureRules.READ_CLASSES_NEVER_WRITE;
 
+    @ArchTest
+    static final ArchRule noConsoleOutput = ArchitectureRules.NO_CONSOLE_OUTPUT;
+
     /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
     @Test
     void rulesFailOnAnEmptyClassSet() {
@@ -44,7 +47,7 @@ class ArchitectureRulesTest {
         assertThatThrownBy(() -> coreHasNoForbiddenDependencies.check(none)).isInstanceOf(AssertionError.class);
         assertThatThrownBy(() -> sdkOnlyInCoreMcp.check(none)).isInstanceOf(AssertionError.class);
         for (ArchRule rule : new ArchRule[] {folderOpenOnlyInLease, readWriteOpenOnlyFromWritePackage, noMutationHelpers,
-                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass, readClassesNeverWrite}) {
+                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass, readClassesNeverWrite, noConsoleOutput}) {
             assertThatThrownBy(() -> rule.check(none)).isInstanceOf(AssertionError.class);
         }
     }
@@ -108,5 +111,11 @@ class ArchitectureRulesTest {
     @Test
     void ruleEDetectsRawCommandsOutsideCommandClass() {
         assertDetects(rawCommandsOnlyInCommandClass, "RawCommandFixture", "doCommand", "command(");
+    }
+
+    /** #207: CLAUDE.md "no System.out/printStackTrace": stdout is the protocol in stdio mode. */
+    @Test
+    void ruleFDetectsConsoleOutputAndPrintStackTrace() {
+        assertDetects(noConsoleOutput, "ConsoleOutputFixture", "System.out", "System.err", "printStackTrace");
     }
 }

@@ -81,6 +81,12 @@ public final class LoggingProbe {
                 }
             }
         }
+        // Not reached in practice. If it ever is, say why on stderr (the test shows it) instead of a bare file count (#207).
+        try (var files = java.nio.file.Files.list(dir)) {
+            System.err.println("no rollover after the line budget; files=" + files.map(f -> f.getFileName().toString()).toList());
+        }
+        var ctx = (ch.qos.logback.classic.LoggerContext) LoggerFactory.getILoggerFactory();
+        ctx.getStatusManager().getCopyOfStatusList().forEach(st -> System.err.println("logback status: " + st));
     }
 
     private static int statusErrors() {

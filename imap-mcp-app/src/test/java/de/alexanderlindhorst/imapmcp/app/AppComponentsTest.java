@@ -194,6 +194,16 @@ class AppComponentsTest {
                 McpSchema.ToolAnnotations::openWorldHint).containsExactly(false, false, true, true);
     }
 
+    /** #207: SPEC v0.8 has no write-tools switch; no tool description or schema may mention one. */
+    @Test
+    void noRegisteredToolMentionsAWriteToolsSwitch() throws IOException {
+        for (var s : create().statefulToolSpecs()) {
+            assertThat(s.tool().description()).as(s.tool().name()).doesNotContain("writeTools");
+            assertThat(String.valueOf(s.tool().inputSchema())).as(s.tool().name()).doesNotContain("writeTools");
+            assertThat(String.valueOf(s.tool().outputSchema())).as(s.tool().name()).doesNotContain("writeTools");
+        }
+    }
+
     @Test
     void descriptionRulesHoldForAllTenRegisteredTools() throws IOException {
         GREEN_MAIL.setUser("user@localhost", "user", "pw");
