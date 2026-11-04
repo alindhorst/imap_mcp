@@ -77,14 +77,16 @@ public final class UidCommands {
             throws MessagingException {
         String set = uidSet(uids);
         requireWritable(folder);
-        return send(folder, "UID MOVE " + set, requireName(targetFolder));
+        String target = requireName(targetFolder);
+        return ImapLease.timedWrite("uid_move", () -> send(folder, "UID MOVE " + set, target));
     }
 
     public static Result uidCopy(IMAPFolder folder, Collection<Long> uids, String targetFolder)
             throws MessagingException {
         String set = uidSet(uids);
         requireWritable(folder);
-        return send(folder, "UID COPY " + set, requireName(targetFolder));
+        String target = requireName(targetFolder);
+        return ImapLease.timedWrite("uid_copy", () -> send(folder, "UID COPY " + set, target));
     }
 
     public static Result uidStore(IMAPFolder folder, Collection<Long> uids, FlagMode mode, Flags flags)
@@ -92,13 +94,14 @@ public final class UidCommands {
         String set = uidSet(uids);
         String list = flagList(flags);
         requireWritable(folder);
-        return send(folder, "UID STORE " + set + " " + mode.item + " " + list, null);
+        return ImapLease.timedWrite("uid_store",
+                () -> send(folder, "UID STORE " + set + " " + mode.item + " " + list, null));
     }
 
     public static Result uidExpunge(IMAPFolder folder, Collection<Long> uids) throws MessagingException {
         String set = uidSet(uids);
         requireWritable(folder);
-        return send(folder, "UID EXPUNGE " + set, null);
+        return ImapLease.timedWrite("uid_expunge", () -> send(folder, "UID EXPUNGE " + set, null));
     }
 
     /**
@@ -106,12 +109,16 @@ public final class UidCommands {
      * refuses otherwise with IllegalStateException): with a folder open, Angus would log in a second connection.
      */
     public static Result create(ImapLease lease, String name) throws MessagingException {
-        return send(storeFolder(lease), "CREATE", requireName(name));
+        String n = requireName(name);
+        IMAPFolder root = storeFolder(lease); // refuses while a folder is open, before anything is timed
+        return ImapLease.timedWrite("create", () -> send(root, "CREATE", n));
     }
 
     /** SUBSCRIBE; same lease rules as {@link #create}. */
     public static Result subscribe(ImapLease lease, String name) throws MessagingException {
-        return send(storeFolder(lease), "SUBSCRIBE", requireName(name));
+        String n = requireName(name);
+        IMAPFolder root = storeFolder(lease);
+        return ImapLease.timedWrite("subscribe", () -> send(root, "SUBSCRIBE", n));
     }
 
     private static IMAPFolder storeFolder(ImapLease lease) throws MessagingException {

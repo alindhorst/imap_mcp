@@ -228,6 +228,38 @@ public final class ImapLease implements AutoCloseable {
         this.forcedCapabilities = forced;
     }
 
+    /** The lease whose work is running on this thread (bound by {@link StoreLeases#withLease}), if any. */
+    private static final ScopedValue<ImapLease> CURRENT = ScopedValue.newInstance();
+
+    /** Work timed by {@link #timedWrite}. */
+    @FunctionalInterface
+    public interface TimedWork<T> {
+        T run() throws MessagingException;
+    }
+
+    /**
+     * Runs one write command and records its latency under {@code op} for the lease of the current call; the lease then
+     * no longer counts as a read lease. Without a bound lease (no {@code withLease}) it just runs. The command
+     * itself (including a NO answer or a connection failure) is timed; no names or arguments are recorded.
+     */
+    public static <T> T timedWrite(String op, TimedWork<T> work) throws MessagingException {
+        ImapLease lease = CURRENT.isBound() ? CURRENT.get() : null;
+        if (lease == null) {
+            return work.run();
+        }
+        lease.wrote = true;
+        Instant start = lease.metrics.now();
+        try {
+            return work.run();
+        } finally {
+            lease.record(op, start);
+        }
+    }
+
+    static <T> T runBound(ImapLease lease, TimedWork<T> work) throws MessagingException {
+        return ScopedValue.where(CURRENT, lease).call(work::run);
+    }
+
     /** Records one IMAP operation of this lease under the hashed tenant of its key; never throws. */
     void record(String op, Instant start) {
         metrics.operation(key.tenantId(), METRIC_TOOL, op, Duration.between(start, metrics.now()));

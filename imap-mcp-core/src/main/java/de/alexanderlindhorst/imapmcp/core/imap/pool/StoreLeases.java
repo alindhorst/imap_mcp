@@ -69,7 +69,7 @@ public final class StoreLeases {
         try (ImapLease lease = lease(key, ctx)) {
             Instant start = metrics.now();
             try {
-                return work.apply(lease);
+                return ImapLease.runBound(lease, () -> work.apply(lease));
             } catch (Throwable e) {
                 lease.markBroken();
                 throw e;
