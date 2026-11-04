@@ -13,12 +13,16 @@ class SmokeEnvTest {
     private static final Map<String, String> GMAIL = Map.of(
             "IMAP_MCP_SMOKE_GMAIL_USER", "someone@example.org", "IMAP_MCP_SMOKE_GMAIL_PASSWORD", "app-pw-1234");
 
+    private static org.assertj.core.api.AbstractStringAssert<?> reason(java.util.Optional<String> r) {
+        return assertThat(r).isPresent().get(org.assertj.core.api.InstanceOfAssertFactories.STRING);
+    }
+
     @Test
     void emptyEnvironmentSkipsEveryProviderWithAReasonNamingTheVariables() {
         assertThat(SmokeEnv.settings(Provider.GMAIL, Map.of())).isEmpty();
-        assertThat(SmokeEnv.skipReason(Provider.GMAIL, Map.of()))
+        reason(SmokeEnv.skipReason(Provider.GMAIL, Map.of()))
                 .contains("IMAP_MCP_SMOKE_GMAIL_USER").contains("IMAP_MCP_SMOKE_GMAIL_PASSWORD");
-        assertThat(SmokeEnv.skipReason(Provider.M365, Map.of()))
+        reason(SmokeEnv.skipReason(Provider.M365, Map.of()))
                 .contains("IMAP_MCP_SMOKE_M365_USER").contains("IMAP_MCP_SMOKE_M365_PASSWORD");
     }
 
@@ -62,19 +66,19 @@ class SmokeEnvTest {
 
     @Test
     void writeChecksNeedTheExtraOptInAndAGmailAccount() {
-        assertThat(SmokeEnv.writeSkipReason(Provider.GMAIL, GMAIL)).contains("IMAP_MCP_SMOKE_WRITE=1");
+        reason(SmokeEnv.writeSkipReason(Provider.GMAIL, GMAIL)).contains("IMAP_MCP_SMOKE_WRITE=1");
         Map<String, String> on = new java.util.HashMap<>(GMAIL);
         on.put("IMAP_MCP_SMOKE_WRITE", "1");
         assertThat(SmokeEnv.writeSkipReason(Provider.GMAIL, on)).isEmpty();
         on.put("IMAP_MCP_SMOKE_WRITE", "true");
         assertThat(SmokeEnv.writeSkipReason(Provider.GMAIL, on)).isPresent();
         // the opt-in alone is not enough
-        assertThat(SmokeEnv.writeSkipReason(Provider.GMAIL, Map.of("IMAP_MCP_SMOKE_WRITE", "1")))
+        reason(SmokeEnv.writeSkipReason(Provider.GMAIL, Map.of("IMAP_MCP_SMOKE_WRITE", "1")))
                 .contains("IMAP_MCP_SMOKE_GMAIL_USER");
         // write checks are defined for Gmail only
         Map<String, String> m365 = Map.of("IMAP_MCP_SMOKE_M365_USER", "u", "IMAP_MCP_SMOKE_M365_PASSWORD", "p",
                 "IMAP_MCP_SMOKE_WRITE", "1");
-        assertThat(SmokeEnv.writeSkipReason(Provider.M365, m365)).contains("Gmail");
+        reason(SmokeEnv.writeSkipReason(Provider.M365, m365)).contains("Gmail");
     }
 
     @Test
