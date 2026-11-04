@@ -25,7 +25,7 @@ public final class TestTrust {
     private TestTrust() {
     }
 
-    /** Truststore with the committed Dovecot test certificate ({@code dovecot/tls.crt}, SAN localhost, 127.0.0.1). */
+    /** Truststore with the committed Dovecot test certificate ({@code dovecot/tls.crt}, SAN dovecot, localhost, 127.0.0.1). */
     public static Path writeTruststore(Path dir) throws Exception {
         KeyStore trust = emptyStore();
         try (InputStream in = TestTrust.class.getResourceAsStream("/dovecot/tls.crt")) {

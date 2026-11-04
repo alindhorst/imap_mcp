@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.PortBinding;
 import com.github.dockerjava.api.model.Ports;
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -39,6 +43,8 @@ class DockerImageIT {
             List.of("list_accounts", "list_folders", "search_messages", "get_message", "list_attachments", "set_flags",
                     "move_messages", "copy_messages", "delete_messages", "create_folder");
 
+    private static final String USER = "dockeruser";
+
     private static Network network;
     private static DovecotContainer dovecot;
     private static ImageFromDockerfile image;
@@ -54,6 +60,10 @@ class DockerImageIT {
         network = Network.newNetwork();
         dovecot = new DovecotContainer().withNetwork(network);
         dovecot.start();
+        try (MailSeeder seeder = dovecot.seeder(USER)) {
+            seeder.appendPlain("INBOX", "First", "one");
+            seeder.appendPlain("INBOX", "Second", "two");
+        }
 
         Path jar = Path.of(System.getProperty("imapmcp.jar"));
         assertThat(jar).exists();
@@ -69,9 +79,9 @@ class DockerImageIT {
                   - id: work
                     host: %s
                     port: %d
-                    username: alice
+                    username: %s
                     password: "file:/config/imap_password"
-                """.formatted(DovecotContainer.NETWORK_ALIAS, DovecotContainer.IMAPS_PORT));
+                """.formatted(DovecotContainer.NETWORK_ALIAS, DovecotContainer.IMAPS_PORT, USER));
         Path password = cfgDir.resolve("imap_password");
         Files.writeString(password, DovecotContainer.PASSWORD, StandardCharsets.UTF_8);
         Path trust = TestTrust.writeTruststore(cfgDir);
@@ -150,6 +160,35 @@ class DockerImageIT {
         HttpResponse<String> health = HTTP.send(HttpRequest.newBuilder(uri("/health")).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(health.statusCode()).isEqualTo(200);
+    }
+
+    /**
+     * A real IMAP call from inside the container: host "dovecot" with hostname verification on, trust from the
+     * mounted truststore (needs the SAN dovecot on the test certificate).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void realImapCallFromInsideTheContainer() {
+        try (McpSyncClient client = McpClient.sync(HttpClientStreamableHttpTransport.builder(
+                        "http://127.0.0.1:" + app.getMappedPort(8080)).endpoint("/mcp")
+                .httpRequestCustomizer((b, m, u, body, ctx) -> b.header("Authorization", "Bearer " + token))
+                .build()).requestTimeout(Duration.ofSeconds(60)).initializationTimeout(Duration.ofSeconds(30))
+                .build()) {
+            client.initialize();
+            McpSchema.CallToolResult accounts = client.callTool(new McpSchema.CallToolRequest("list_accounts", Map.of()));
+            Map<String, Object> out = (Map<String, Object>) accounts.structuredContent();
+            List<Map<String, Object>> list = (List<Map<String, Object>>) out.get("accounts");
+            assertThat(list).hasSize(1);
+            assertThat(list.get(0).get("status")).isEqualTo("ok");
+
+            McpSchema.CallToolResult search = client.callTool(new McpSchema.CallToolRequest("search_messages",
+                    Map.of("account", list.get(0).get("account"), "folder", "INBOX")));
+            assertThat(search.isError()).isNotEqualTo(Boolean.TRUE);
+            Map<String, Object> page = (Map<String, Object>) search.structuredContent();
+            assertThat(((Number) page.get("total")).intValue()).isEqualTo(2);
+            assertThat((List<?>) page.get("messages")).hasSize(2);
+        }
+        assertThat(app.getLogs()).doesNotContain(token);
     }
 
     /** Loopback publish: the host side of the port mapping is 127.0.0.1 only. */
