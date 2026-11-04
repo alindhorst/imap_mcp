@@ -152,9 +152,10 @@ public final class AppComponents implements AutoCloseable {
         InMemoryMetricsRecorder metrics = null;
         try {
             CapabilityCache capabilities = new CapabilityCache(p.capabilityTtl(), clock);
-            pool = new StorePool(sessions, credentials, capabilities,
-                    key -> TENANT.equals(key.tenantId()) ? byId.get(key.accountId().value()) : null, settings);
             metrics = new InMemoryMetricsRecorder(logIds, clock);
+            pool = new StorePool(sessions, credentials, capabilities,
+                    key -> TENANT.equals(key.tenantId()) ? byId.get(key.accountId().value()) : null, settings,
+                    metrics);
             metrics.attachPool(pool);
             Admission admission = new Admission(settings, Admission.recording(metrics));
             StoreLeases leases = new StoreLeases(pool, settings.acquireTimeout(), admission, metrics);

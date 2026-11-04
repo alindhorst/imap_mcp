@@ -126,7 +126,11 @@ public final class ToolExecutor {
         }
         if (outcome instanceof ToolOutcome.Failure f) {
             switch (f.error().code()) {
-                case AUTH_FAILED -> metrics.authFailure(tenant);
+                case AUTH_FAILED -> {
+                    if (!ctx.authFailureCounted()) { // a refused connect is already counted by the lease layer
+                        metrics.authFailure(tenant);
+                    }
+                }
                 case TIMEOUT -> {
                     if (!state.cancelled.get()) { // an external cancel is not a timeout
                         metrics.timeout(tenant);
