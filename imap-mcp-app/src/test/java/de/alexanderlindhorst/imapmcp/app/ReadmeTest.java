@@ -106,7 +106,10 @@ class ReadmeTest {
         Set<String> named = new HashSet<>();
         Matcher m = Pattern.compile("\\b(IMAP_MCP_[A-Z_]+|XDG_[A-Z_]+)\\b").matcher(readme);
         while (m.find()) {
-            named.add(m.group(1));
+            // The opt-in smoke tests (#258) read their own IMAP_MCP_SMOKE_* variables; the server never does.
+            if (!m.group(1).startsWith("IMAP_MCP_SMOKE_")) {
+                named.add(m.group(1));
+            }
         }
         assertThat(named).isNotEmpty().isSubsetOf(known);
         // Everything the code reads is documented.
@@ -273,5 +276,56 @@ class ReadmeTest {
                 "Move into Drafts or Sent refused")) {
             assertThat(section).as("checklist item").contains(heading);
         }
+    }
+
+    /** #261: CLAUDE.md is not versioned; README and TUTORIAL must not refer to it. */
+    @Test
+    void readmeAndTutorialDoNotMentionClaudeMd() throws IOException {
+        assertThat(readme).doesNotContain("CLAUDE.md");
+        assertThat(Files.readString(Path.of("..", "doc", "TUTORIAL.md"))).doesNotContain("CLAUDE.md");
+    }
+
+    /** #261: the error reference lists exactly the ErrorCode values, with the retryable flag the enum carries. */
+    @Test
+    void errorReferenceMatchesErrorCodes() {
+        Matcher sec = Pattern.compile("(?s)\\n### Errors\\R(.*?)(?=\\n##+ |\\z)").matcher(readme);
+        assertThat(sec.find()).as("README has a '### Errors' section").isTrue();
+        String section = sec.group(1);
+        Matcher row = Pattern.compile("(?m)^\\| `([A-Z_]+)` \\| (yes|no) \\|").matcher(section);
+        Map<String, Boolean> rows = new java.util.LinkedHashMap<>();
+        while (row.find()) {
+            rows.put(row.group(1), row.group(2).equals("yes"));
+        }
+        Map<String, Boolean> expected = new java.util.LinkedHashMap<>();
+        for (var c : de.alexanderlindhorst.imapmcp.core.error.ErrorCode.values()) {
+            expected.put(c.name(), c.retryable());
+        }
+        assertThat(rows).containsExactlyInAnyOrderEntriesOf(expected);
+        assertThat(section).contains("retry_after_ms").contains("details.outcome").contains("`unknown`")
+                .contains("details.field").contains("details.reason").contains("details.max")
+                .contains("isError").contains("no `structuredContent`").contains("request_id")
+                .contains("account_read_only");
+    }
+
+    /** #261: README:95 wording; the old bare error code is gone. */
+    @Test
+    void readOnlyRefusalIsPermissionDenied() {
+        assertThat(readme).contains("`PERMISSION_DENIED` with `details.reason` `account_read_only`")
+                .doesNotContain("(error code `account_read_only`)");
+    }
+
+    /** #261: UTF8=ACCEPT for any server, deadline bound, \Deleted, v3 scope, macOS keyring, smoke tests. */
+    @Test
+    void v011Details() {
+        assertThat(readme).contains("any server that advertises `UTF8=ACCEPT` or `UTF8=ONLY`")
+                .contains("at most 10m")
+                .contains("`\\Deleted` messages are not filtered out")
+                .contains("v3 gated deletion, `download_attachment`")
+                .contains("`security -g`").doesNotContain("only ASCII passwords");
+        assertThat(readme).contains("`mvn -Psmoke -pl imap-mcp-it -am verify`")
+                .contains("IMAP_MCP_SMOKE_GMAIL_USER").contains("IMAP_MCP_SMOKE_GMAIL_PASSWORD")
+                .contains("IMAP_MCP_SMOKE_M365_USER").contains("IMAP_MCP_SMOKE_M365_PASSWORD")
+                .contains("IMAP_MCP_SMOKE_<GMAIL|M365>_HOST").contains("IMAP_MCP_SMOKE_WRITE=1")
+                .contains("skipped");
     }
 }
