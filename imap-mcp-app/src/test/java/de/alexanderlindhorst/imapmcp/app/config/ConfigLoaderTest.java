@@ -295,4 +295,58 @@ class ConfigLoaderTest {
         assertThat(m.address()).isEqualTo("me@example.org");
         assertThat(m.secretRef().value()).isEqualTo("env:MAIL_PW");
     }
+
+    // #262: key ring configuration (SPEC 5.4, 5.7)
+
+    @Test
+    void keyRingDefaultsToNoExtraKeysAndSigningId1() throws IOException {
+        AppConfig c = load(ACCOUNT);
+        assertThat(c.security().handleKeys()).isEmpty();
+        assertThat(c.security().signingKeyId()).isEqualTo(1);
+        // an empty list equals absent
+        assertThat(load(ACCOUNT + "security:\n  handleKeys: []\n").security().handleKeys()).isEmpty();
+    }
+
+    @Test
+    void keyRingEntriesAndSigningIdAreBound() throws IOException {
+        AppConfig c = load(ACCOUNT + """
+                security:
+                  signingKeyId: 2
+                  handleKeys:
+                    - id: 1
+                      key: env:K1
+                    - id: 2
+                      key: file:/run/secrets/k2
+                """);
+        assertThat(c.security().signingKeyId()).isEqualTo(2);
+        assertThat(c.security().handleKeys()).extracting(AppConfig.HandleKey::id).containsExactly(1, 2);
+        assertThat(c.security().handleKeys().get(1).key().value()).isEqualTo("file:/run/secrets/k2");
+    }
+
+    @ParameterizedTest
+    @MethodSource("badKeyRings")
+    void badKeyRingFailsNamingThePath(String yaml, String path) {
+        assertThatThrownBy(() -> load(ACCOUNT + yaml)).isInstanceOf(ConfigException.class)
+                .hasMessageContaining(path).message().doesNotContain("SECRETVALUE");
+    }
+
+    static Stream<Arguments> badKeyRings() {
+        return Stream.of(
+                Arguments.of("security:\n  handleKey: env:A\n  handleKeys:\n    - id: 1\n      key: env:B\n",
+                        "security.handleKeys[0].id"),
+                Arguments.of("security:\n  handleKeys:\n    - id: 1\n      key: env:A\n    - id: 2\n      key: env:B\n"
+                        + "    - id: 1\n      key: env:C\n", "security.handleKeys[2].id"),
+                Arguments.of("security:\n  handleKeys:\n    - key: env:A\n", "security.handleKeys[0].id"),
+                Arguments.of("security:\n  handleKeys:\n    - id: 256\n      key: env:A\n", "security.handleKeys[0].id"),
+                Arguments.of("security:\n  handleKeys:\n    - id: -1\n      key: env:A\n", "security.handleKeys[0].id"),
+                Arguments.of("security:\n  handleKeys:\n    - id: x\n      key: env:A\n", "security.handleKeys[0].id"),
+                Arguments.of("security:\n  handleKeys:\n    - id: 2\n", "security.handleKeys[0].key"),
+                Arguments.of("security:\n  handleKeys:\n    - id: 2\n      key: SECRETVALUE\n",
+                        "security.handleKeys[0].key"),
+                Arguments.of("security:\n  handleKeys:\n    - id: 2\n      key: env:A\n      other: 1\n",
+                        "security.handleKeys[0].other"),
+                Arguments.of("security:\n  handleKeys: env:A\n", "security.handleKeys"),
+                Arguments.of("security:\n  signingKeyId: 256\n", "security.signingKeyId"),
+                Arguments.of("security:\n  signingKeyId: -1\n", "security.signingKeyId"));
+    }
 }
