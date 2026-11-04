@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.core.tools.write;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
+import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import java.util.ArrayList;
 import java.util.List;
@@ -196,22 +197,42 @@ class MoveStepTest {
     }
 
     @Test
-    void fallbackStoreRefusedSkipsExpungeAndFailsTheCopiedItems() throws Exception {
+    void fallbackStoreRefusedSkipsExpungeAndFailsTheCopiedItemsKeepingTheirNewHandle() throws Exception {
         var out = fallback(answer("A1 OK [COPYUID 9 3 30] copied"), answer("A2 NO [READ-ONLY] no"), answer("A3 OK"))
                 .apply(null, present(3, 4), gate);
         assertThat(wire).containsExactly("COPY 3:4 Target", "STORE 3");
         assertThat(out.get(0).status()).isEqualTo(ItemStatus.FAILED);
-        assertThat(out.get(0).newHandle()).isNull();
+        assertThat(out.get(0).newHandle()).isEqualTo("Target/9/30");
+        assertThat(out.get(0).error().code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
+        assertThat(out.get(0).error().hint()).contains("copied to the target folder").contains("copies them again");
         assertThat(out.get(1).status()).isEqualTo(ItemStatus.ALREADY_GONE);
     }
 
     @Test
-    void fallbackExpungeRefusedFailsTheCopiedItems() throws Exception {
+    void fallbackExpungeRefusedSendsNothingMoreAndFailsTheCopiedItemsKeepingTheirNewHandle() throws Exception {
         var out = fallback(answer("A1 OK [COPYUID 9 3 30] copied"), answer("A2 OK"), answer("A3 NO nope"))
                 .apply(null, present(3), gate);
         assertThat(wire).containsExactly("COPY 3 Target", "STORE 3", "EXPUNGE 3");
         assertThat(out.get(0).status()).isEqualTo(ItemStatus.FAILED);
+        assertThat(out.get(0).newHandle()).isEqualTo("Target/9/30");
         assertThat(out.get(0).error().code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+    }
+
+    @Test
+    void fallbackRefusalWithoutCopyUidFailsWithoutNewHandle() throws Exception {
+        var out = fallback(answer("A1 OK copied"), answer("A2 NO nope"), answer("A3 OK")).apply(null, present(3), gate);
+        assertThat(out.get(0).status()).isEqualTo(ItemStatus.FAILED);
+        assertThat(out.get(0).newHandle()).isNull();
+    }
+
+    @Test
+    void aRefusalThatWouldBeRetryableBecomesUpstreamErrorKeepingTheResponseCode() throws Exception {
+        var out = fallback(answer("A1 OK [COPYUID 9 3 30] copied"), answer("A2 OK"),
+                answer("A3 NO [UNAVAILABLE] busy")).apply(null, present(3), gate);
+        ToolError e = out.get(0).error();
+        assertThat(e.code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+        assertThat(e.retryable()).isFalse();
+        assertThat(e.details()).containsEntry("response_code", "UNAVAILABLE");
     }
 
     @Test

@@ -125,6 +125,17 @@ class BulkResultTest {
     }
 
     @Test
+    void failedMayCarryTheNewHandleOfACopyThatWasNotRemoved() {
+        ToolError err = ToolError.upstreamError("NO denied", RID);
+        Item item = Item.failedCopied("h1", "n1", err);
+        assertThat(item.status()).isEqualTo(ItemStatus.FAILED);
+        Map<String, Object> out = move(item).toMap();
+        assertThat(results(out).get(0)).containsEntry("new_handle", "n1").containsEntry("note", null);
+        assertThatThrownBy(() -> new Item("h", ItemStatus.NOT_FOUND, "n", null, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void itemInvariantsAreEnforced() {
         assertThatThrownBy(() -> Item.failed("h", null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new Item("h", ItemStatus.OK, "n", null, ToolError.StaleReason.FOLDER_MISSING, null))
