@@ -107,6 +107,7 @@ class SetFlagsToolTest {
         traceLogger.addAppender(trace);
         trace.start();
         writeLogger = (Logger) LoggerFactory.getLogger(WriteCallLog.class);
+        writeLogger.setLevel(Level.INFO);
         writeLogger.addAppender(callLog);
         callLog.start();
     }
@@ -115,6 +116,7 @@ class SetFlagsToolTest {
     void tearDown() {
         traceLogger.detachAppender(trace);
         writeLogger.detachAppender(callLog);
+        writeLogger.setLevel(null);
         pool.close();
         sessions.close();
     }
@@ -221,6 +223,11 @@ class SetFlagsToolTest {
         return (List<Map<String, Object>>) out.get("results");
     }
 
+    /** Client commands that mention STORE (server answers like "OK STORE completed" excluded). */
+    List<String> storeCommands() {
+        return traceLines().stream().filter(l -> l.contains("UID STORE") || l.matches("\\S+ STORE .*")).toList();
+    }
+
     List<String> traceLines() {
         return new ArrayList<>(trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
     }
@@ -246,7 +253,7 @@ class SetFlagsToolTest {
             assertThat(f.contains(Flags.Flag.FLAGGED)).isTrue();
             assertThat(f.contains(Flags.Flag.ANSWERED)).isFalse();
         }
-        List<String> stores = traceLines().stream().filter(l -> l.contains("STORE")).toList();
+        List<String> stores = storeCommands();
         assertThat(stores).hasSize(4); // one add and one remove per group, two groups
         assertThat(stores).allMatch(l -> l.contains("UID STORE")
                 && (l.contains("+FLAGS.SILENT") || l.contains("-FLAGS.SILENT")));
@@ -319,7 +326,7 @@ class SetFlagsToolTest {
         assertThat(r.get(1)).containsEntry("status", "ok");
         assertThat(flagsOf(a).contains(Flags.Flag.SEEN)).isFalse(); // the group failed as a whole
         assertThat(flagsOf(c).contains(Flags.Flag.SEEN)).isTrue();
-        assertThat(traceLines().stream().filter(l -> l.contains("STORE")).count()).isEqualTo(1);
+        assertThat(storeCommands().size()).isEqualTo(1);
     }
 
     @Test
