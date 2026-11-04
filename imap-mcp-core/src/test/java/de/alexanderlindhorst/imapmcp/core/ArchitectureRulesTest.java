@@ -113,7 +113,7 @@ class ArchitectureRulesTest {
         assertDetects(rawCommandsOnlyInCommandClass, "RawCommandFixture", "doCommand", "command(");
     }
 
-    /** #207: CLAUDE.md "no System.out/printStackTrace": stdout is the protocol in stdio mode. */
+    /** #207: no System.out/printStackTrace (SPEC 5.6): stdout is the protocol in stdio mode. */
     @Test
     void ruleFDetectsConsoleOutputAndPrintStackTrace() {
         assertDetects(noConsoleOutput, "ConsoleOutputFixture", "System.out", "System.err", "printStackTrace");
