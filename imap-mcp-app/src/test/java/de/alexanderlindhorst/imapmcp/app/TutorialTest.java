@@ -115,6 +115,12 @@ class TutorialTest {
         assertThat(tutorial).contains(WRONG_DEADLINE_ERROR);
     }
 
+    /** #207: SPEC v0.8 has no write-tools switch. */
+    @Test
+    void doesNotMentionAWriteToolsSwitch() {
+        assertThat(tutorial).doesNotContain("writeTools");
+    }
+
     @Test
     void pitfallsListTheWriteToolLines() {
         String pitfalls = tutorial.substring(tutorial.indexOf("## 8. Pitfalls at a glance"));
