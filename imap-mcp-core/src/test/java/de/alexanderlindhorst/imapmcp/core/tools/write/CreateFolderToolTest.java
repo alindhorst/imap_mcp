@@ -161,7 +161,7 @@ class CreateFolderToolTest {
                 .containsEntry("subscribed", true).containsEntry("parent", null).containsEntry("account", handleA());
         assertThat(out.get("delimiter")).isNotNull();
         assertThat(listedNames()).contains("Projects");
-        assertThat(subscribed()).contains("Projects");
+        assertThat(subscribed()).anyMatch(n -> n.endsWith(".Projects")); // GreenMail prefixes the user namespace
     }
 
     @Test
