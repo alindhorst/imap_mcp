@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.it;
 
 import com.icegreen.greenmail.util.GreenMail;
+import com.icegreen.greenmail.util.ServerSetup;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import jakarta.mail.MessagingException;
 
@@ -9,7 +10,14 @@ public final class GreenMailFixture implements AutoCloseable {
 
     public static final String HOST = "127.0.0.1";
 
-    private final GreenMail greenMail = new GreenMail(ServerSetupTest.IMAPS.dynamicPort());
+    private final GreenMail greenMail = new GreenMail(withStartupTimeout());
+
+    /** GreenMail's 2000 ms default start timeout flakes under host load (#207). */
+    private static ServerSetup withStartupTimeout() {
+        ServerSetup setup = ServerSetupTest.IMAPS.dynamicPort();
+        setup.setServerStartupTimeout(30_000L);
+        return setup;
+    }
 
     private GreenMailFixture() {
     }

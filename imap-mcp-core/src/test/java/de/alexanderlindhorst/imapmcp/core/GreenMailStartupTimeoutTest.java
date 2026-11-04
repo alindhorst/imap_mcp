@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * #207: GreenMail's default startup timeout of 2000 ms is exceeded under host load (parallel builds), which failed
- * unrelated tests. The parent pom raises it for every module through the surefire system property.
+ * unrelated tests. The test listener of the module raises it (no system property reaches dynamicPort() setups).
  */
 class GreenMailStartupTimeoutTest {
 
