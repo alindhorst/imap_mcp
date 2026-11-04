@@ -109,7 +109,7 @@ class CreateFolderDovecotIT {
     @SuppressWarnings("unchecked")
     private static Result call(String tool, Map<String, Object> args) {
         McpSchema.CallToolResult r = client.callTool(new McpSchema.CallToolRequest(tool, args));
-        return new Result(Boolean.TRUE.equals(r.isError()), (Map<String, Object>) r.structuredContent());
+        return new Result(Boolean.TRUE.equals(r.isError()), ToolResults.payload(r));
     }
 
     private static Result ok(String tool, Map<String, Object> args) {

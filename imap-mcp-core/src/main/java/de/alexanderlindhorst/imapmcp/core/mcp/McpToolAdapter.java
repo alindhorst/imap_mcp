@@ -31,10 +31,14 @@ import org.slf4j.LoggerFactory;
  * flavours (stateful stdio, stateless HTTP). The only place that knows the MCP SDK (SPEC 5.1).
  *
  * <p>The {@link AccountContext} is resolved from the SDK's {@link McpTransportContext} (filled by the
- * transport from the validated principal), never from tool arguments. Both result shapes carry
+ * transport from the validated principal), never from tool arguments. A success result carries
  * {@code structuredContent} plus exactly one text block with the same JSON, as MCP clients that ignore
  * structured output still need the text. The SDK validates a success result's structuredContent against
- * the tool's outputSchema and turns a mismatch into an error result; error results are not validated.
+ * the tool's outputSchema and turns a mismatch into an error result.
+ *
+ * <p>Error results ({@code isError} true) carry the {@code {"error":{...}}} object only in that one text
+ * block and no {@code structuredContent}: the outputSchema describes the success shape, and MCP clients that
+ * validate structuredContent of error results would otherwise reject every tool error (SPEC 4).
  *
  * <p>Every handler is wrapped in the {@link ToolExecutor} and, inside it, the input validation ({@link ValidatingToolHandler}) so that
  * errors are INVALID_ARGUMENT tool results with exact field/reason. Servers built with these specs MUST call
@@ -128,6 +132,7 @@ public final class McpToolAdapter {
             LOG.error("result serialisation failed, request_id={}, cause={}", requestId, e.getClass().getName());
             return result(ToolError.internalError(requestId).toMap(), true, requestId);
         }
-        return McpSchema.CallToolResult.builder().structuredContent(structured).addTextContent(json).isError(isError).build();
+        McpSchema.CallToolResult.Builder b = McpSchema.CallToolResult.builder().addTextContent(json).isError(isError);
+        return isError ? b.build() : b.structuredContent(structured).build();
     }
 }

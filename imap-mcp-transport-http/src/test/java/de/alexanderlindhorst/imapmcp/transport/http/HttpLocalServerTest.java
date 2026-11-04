@@ -100,7 +100,7 @@ class HttpLocalServerTest {
         HttpResponse<String> r = post(rpc("tools/call", "{\"name\":\"count_things\",\"arguments\":{\"bogus\":1}}"));
         assertThat(r.statusCode()).isEqualTo(200);
         assertThat(r.body()).contains("\"isError\":true").contains("INVALID_ARGUMENT").contains("unknown_property")
-                .contains("structuredContent");
+                .doesNotContain("structuredContent");
     }
 
     @Test

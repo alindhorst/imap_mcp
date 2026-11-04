@@ -79,8 +79,19 @@ class McpToolAdapterTest {
         McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.timeout(c.requestId())))
                 .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.timeout("req-1").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.timeout("req-1").toMap());
         assertThat(textOf(r)).isEqualTo(MAPPER.writeValueAsString(ToolError.timeout("req-1").toMap()));
+    }
+
+    @Test
+    void errorResultHasNoStructuredContentAndExactlyOneTextBlockWithErrorObject() throws Exception {
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.timeout(c.requestId())))
+                .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isNull();
+        assertThat(r.content()).hasSize(1);
+        assertThat(r.content().get(0)).isInstanceOf(McpSchema.TextContent.class);
+        assertThat(MAPPER.readValue(textOf(r), Map.class)).isEqualTo(ToolError.timeout("req-1").toMap());
     }
 
     @Test
@@ -89,7 +100,7 @@ class McpToolAdapterTest {
             throw new IllegalStateException("secret subject line");
         }).callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.internalError("req-1").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.internalError("req-1").toMap());
         assertThat(textOf(r)).doesNotContain("secret");
     }
 
@@ -145,7 +156,7 @@ class McpToolAdapterTest {
             return new ToolOutcome.Success(Map.of("count", 1));
         }).callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.timeout("req-t").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.timeout("req-t").toMap());
     }
 
     @Test
@@ -171,12 +182,12 @@ class McpToolAdapterTest {
         var spec = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.authFailed(c.requestId())));
         McpSchema.CallToolResult r = new InMemoryMcp.Stateless(spec).call("count_things", Map.of(), TCTX);
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.authFailed("req-1").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.authFailed("req-1").toMap());
 
         var spec2 = adapter.stateful(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.authFailed(c.requestId())));
         McpSchema.CallToolResult r2 = new InMemoryMcp.Stateful(spec2).call("count_things", Map.of());
         assertThat(r2.isError()).isTrue();
-        assertThat(r2.structuredContent()).isEqualTo(ToolError.authFailed("req-2").toMap());
+        assertThat(ErrorResults.payload(r2)).isEqualTo(ToolError.authFailed("req-2").toMap());
     }
 
     @Test
@@ -208,7 +219,7 @@ class McpToolAdapterTest {
         McpSchema.CallToolResult r = adapter.stateless(SAMPLE, this::ok).callHandler()
                 .apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of("n", 11)));
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.invalidArgument("n", "out_of_range", 10, "req-1").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.invalidArgument("n", "out_of_range", 10, "req-1").toMap());
         assertThat(seen).isEmpty();
     }
 
@@ -217,7 +228,7 @@ class McpToolAdapterTest {
         McpSchema.CallToolResult r = new InMemoryMcp.Stateless(adapter.stateless(SAMPLE, this::ok))
                 .call("count_things", Map.of("n", "5"), TCTX);
         assertThat(r.isError()).isTrue();
-        assertThat(r.structuredContent()).isEqualTo(ToolError.invalidArgument("n", "type", null, "req-1").toMap());
+        assertThat(ErrorResults.payload(r)).isEqualTo(ToolError.invalidArgument("n", "type", null, "req-1").toMap());
         McpSchema.CallToolResult r2 = new InMemoryMcp.Stateful(adapter.stateful(SAMPLE, this::ok))
                 .call("count_things", Map.of("n", 0));
         assertThat(r2.isError()).isTrue();

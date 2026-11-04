@@ -42,7 +42,7 @@ class WriteLogAuditIT {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> structured(McpSchema.CallToolResult r) {
-        return (Map<String, Object>) r.structuredContent();
+        return ToolResults.payload(r);
     }
 
     @SuppressWarnings("unchecked")
@@ -124,7 +124,7 @@ class WriteLogAuditIT {
             for (McpSchema.CallToolRequest w : writes) {
                 McpSchema.CallToolResult r = client.callTool(w);
                 writeCalls++;
-                assertThat(r.structuredContent()).as(w.name()).isNotNull();
+                assertThat(ToolResults.payload(r)).as(w.name()).isNotNull();
             }
             assertThat(client.callTool(new McpSchema.CallToolRequest("search_messages",
                     args("account", work, "folder", FOLDER_TARGET))).isError()).isNotEqualTo(true);

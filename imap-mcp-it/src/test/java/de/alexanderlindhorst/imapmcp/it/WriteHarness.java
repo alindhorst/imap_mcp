@@ -35,7 +35,7 @@ final class WriteHarness implements AutoCloseable {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> structured() {
-            return (Map<String, Object>) raw.structuredContent();
+            return ToolResults.payload(raw);
         }
 
         boolean isError() {
