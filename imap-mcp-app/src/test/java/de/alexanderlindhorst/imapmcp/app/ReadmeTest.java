@@ -190,7 +190,8 @@ class ReadmeTest {
         assertThat(actual.tools()).isEqualTo(expected.tools());
         assertThat(actual.secrets()).isEqualTo(expected.secrets());
         assertThat(actual.http()).isEqualTo(expected.http());
-        assertThat(readme).contains("`http.token`").contains("`security.handleKey`");
+        assertThat(readme).contains("`http.token`").contains("`security.handleKey`")
+                .contains("`security.handleKeys`").contains("`security.signingKeyId`");
     }
 
     /** #165 AC2: the groupId is final; the README states it and does not call it a placeholder. */
