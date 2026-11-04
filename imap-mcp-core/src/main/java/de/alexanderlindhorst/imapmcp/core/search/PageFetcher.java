@@ -45,7 +45,10 @@ public final class PageFetcher {
     static final String SUMMARY_ITEMS = "UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE "
             + "BODY.PEEK[HEADER.FIELDS (Date)]";
 
-    /** Raw fetched items of one message; {@code dateHeader} is the header block text or null. */
+    static final String SUMMARY_ITEMS_NO_ENVELOPE = "UID FLAGS INTERNALDATE RFC822.SIZE BODYSTRUCTURE "
+            + "BODY.PEEK[HEADER.FIELDS (Date)]";
+
+    /** Raw fetched items of one message; {@code envelope} is null when the server's ENVELOPE could not be parsed; {@code dateHeader} is the header block text or null. */
     public record Row(long uid, ENVELOPE envelope, Flags flags, Date received, long size, BODYSTRUCTURE structure,
             String dateHeader) {
     }
@@ -277,7 +280,33 @@ public final class PageFetcher {
     private static List<Row> rows(IMAPFolder folder, int[] seqs) throws MessagingException {
         int[] sorted = seqs.clone();
         java.util.Arrays.sort(sorted);
-        return rows(fetch(folder, sorted, SUMMARY_ITEMS), sorted);
+        Response[] responses = fetch(folder, sorted, SUMMARY_ITEMS);
+        List<Row> rows = rows(responses, sorted);
+        if (rows.size() >= sorted.length) {
+            return rows;
+        }
+        // Angus drops a whole untagged FETCH when one of its items does not parse (a domain-less address is an
+        // IMAP "group" start without end, so ENVELOPE throws) and the response never reaches us. Ask again for
+        // the messages that produced no row, without ENVELOPE: they keep UID, flags, size, date and structure; the
+        // envelope fields degrade to null. A concurrently expunged message simply stays absent.
+        Set<Integer> have = new HashSet<>();
+        Set<Long> haveUids = new HashSet<>();
+        rows.forEach(r -> haveUids.add(r.uid()));
+        for (Merged m : merge(responses, sorted)) {
+            if (m.uid != null && m.envelope != null) {
+                have.add(m.seq);
+            }
+        }
+        int[] missing = java.util.Arrays.stream(sorted).filter(sq -> !have.contains(sq)).toArray();
+        if (missing.length > 0) {
+            for (Row r : rows(fetch(folder, missing, SUMMARY_ITEMS_NO_ENVELOPE), missing, false)) {
+                if (haveUids.add(r.uid())) {
+                    rows.add(r);
+                }
+            }
+            rows.sort(Comparator.comparingLong(Row::uid).reversed());
+        }
+        return rows;
     }
 
     /**
@@ -285,9 +314,13 @@ public final class PageFetcher {
      * merged over all its responses; anything else (unsolicited, FLAGS-only, partial) creates no row.
      */
     static List<Row> rows(Response[] responses, int[] seqs) {
+        return rows(responses, seqs, true);
+    }
+
+    private static List<Row> rows(Response[] responses, int[] seqs, boolean requireEnvelope) {
         List<Row> rows = new ArrayList<>();
         for (Merged m : merge(responses, seqs)) {
-            if (m.uid == null || m.envelope == null) {
+            if (m.uid == null || (requireEnvelope && m.envelope == null)) {
                 continue;
             }
             rows.add(new Row(m.uid.uid, m.envelope, m.flags == null ? new Flags() : m.flags,

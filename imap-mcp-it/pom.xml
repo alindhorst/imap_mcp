@@ -125,4 +125,29 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <!-- Opt-in smoke tests against real accounts (#258, SPEC 5.8): mvn -Psmoke -pl imap-mcp-it -am verify.
+         They are named *LiveSmoke so neither surefire nor failsafe selects them by default. The profile runs only
+         them (no Docker needed) and every one is skipped, with a reason, unless IMAP_MCP_SMOKE_* is set in the
+         environment (see SmokeEnv). Credentials never go through this pom or the command line. -->
+    <profile>
+      <id>smoke</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <configuration>
+              <includes>
+                <include>**/*LiveSmoke.java</include>
+              </includes>
+              <systemPropertyVariables>
+                <imapmcp.requireDocker>false</imapmcp.requireDocker>
+              </systemPropertyVariables>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
