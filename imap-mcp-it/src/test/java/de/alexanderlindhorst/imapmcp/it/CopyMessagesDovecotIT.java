@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.Container;
@@ -35,7 +34,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * {@code copy_messages} against Dovecot 2.4.5 in the three capability sets of SPEC 5.8 (v2 write tests): UID COPY with
- * COPYUID handles into a non-ASCII target (modified UTF-7), the role target, {@code same_folder}, the UIDPLUS refusal
+ * COPYUID handles into a non-ASCII target (UTF-8 on the full set, where Angus enables UTF8=ACCEPT itself, modified
+ * UTF-7 on the profile without it), the role target, {@code same_folder}, the UIDPLUS refusal
  * and the wire trace. The server runs once (stdio, shaded jar, {@code imap.trace: true}); every scenario has its own
  * Dovecot user (own store) and account. Each wire test reads only the log bytes written during its own call.
  */
@@ -46,7 +46,7 @@ class CopyMessagesDovecotIT {
     private static final Pattern CLIENT_COMMAND =
             Pattern.compile(" imapmcp\\.imap\\.trace - ([A-Z]+\\d+) (?!(?:OK|NO|BAD)\\b)([A-Z][A-Z.]*\\b.*)$");
 
-    /** "Projekte/Übersicht"; on the wire "Projekte/&ANw-bersicht" (modified UTF-7). */
+    /** "Projekte/Übersicht"; on the wire "Projekte/&ANw-bersicht" (modified UTF-7) unless UTF8=ACCEPT is enabled. */
     private static final String TARGET = "Projekte/Übersicht";
     private static final String TARGET_UTF7_TAIL = "&ANw-bersicht";
 
@@ -56,6 +56,10 @@ class CopyMessagesDovecotIT {
     static final DovecotContainer NO_MOVE = new DovecotContainer(DovecotContainer.Profile.NO_MOVE);
     @Container
     static final DovecotContainer NO_UIDPLUS = new DovecotContainer(DovecotContainer.Profile.NO_MOVE_NO_UIDPLUS);
+
+    /** Without UTF8=ACCEPT: Angus sends no ENABLE and names travel in modified UTF-7 (SPEC 5.4, 5.8). */
+    @Container
+    static final DovecotContainer NO_UTF8 = new DovecotContainer(DovecotContainer.Profile.NO_UTF8_ACCEPT);
 
     @TempDir
     static Path dir;
@@ -268,30 +272,57 @@ class CopyMessagesDovecotIT {
         assertThat(flagSets(after.folder(TARGET), diff.added(TARGET)))
                 .containsExactlyInAnyOrder("[\\Flagged]", "[\\Seen]", "[]");
 
-        // The name encoding follows the connection state: raw UTF-8 once UTF8=ACCEPT was enabled, else modified UTF-7.
-        boolean utf8 = commandsSince(0).stream().anyMatch(c -> c.equals("ENABLE UTF8=ACCEPT"));
-        String expectedName = utf8 ? "\"" + TARGET + "\"" : "\"Projekte/" + TARGET_UTF7_TAIL + "\"";
+        // The full set advertises UTF8=ACCEPT: Angus enabled it at login, so the name travels as UTF-8 (SPEC 5.4).
+        assertThat(commandsSince(0)).contains("ENABLE UTF8=ACCEPT");
         assertThat(commands).filteredOn(c -> c.startsWith("UID COPY")).hasSize(2)
-                .allMatch(c -> c.endsWith(expectedName));
+                .allMatch(c -> c.endsWith("\"" + TARGET + "\""));
         assertThat(commands).noneMatch(c -> c.startsWith("COPY") || c.contains("MOVE") || c.contains("EXPUNGE"));
         assertThat(commands).noneMatch(c -> c.contains("STORE"));
         assertThat(commands).filteredOn(c -> c.startsWith("SELECT") || c.startsWith("EXAMINE"))
                 .noneMatch(c -> c.contains("bersicht"));
     }
 
-    @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
+    /** The same mailbox seen from a connection without ENABLE: the copy target created via UTF-8 is there, in modified UTF-7. */
     @Test
-    void strictSpecNoUtf8EnableAndModifiedUtf7OnTheWire() throws Exception {
+    void aTargetUsedInTheUtf8StateIsTheSameMailboxSeenWithoutEnable() throws Exception {
         try (MailSeeder s = seeder("utf7")) {
+            seed(s, "INBOX", "x1");
+            ensureFolder(s, TARGET);
+        }
+        ok("copy_messages", args("account", account("utf7"), "handles", List.of(handleOf("utf7", "INBOX", "x1")),
+                "target_folder", TARGET));
+        try (RawImap raw = new RawImap(FULL.getHost(), FULL.imapsPort())) {
+            raw.login("cp-utf7", DovecotContainer.PASSWORD); // no ENABLE: modified UTF-7 state
+            assertThat(raw.listNames()).contains("Projekte/" + TARGET_UTF7_TAIL).noneMatch(n -> n.contains("\u00dc"));
+        }
+    }
+
+    /**
+     * SPEC 5.4 on a server without UTF8=ACCEPT: Angus sends no ENABLE (checked over the whole wire of a server process
+     * that only talks to this container), the name travels as modified UTF-7, and the verbatim name round-trips.
+     */
+    @Test
+    void withoutUtf8AcceptNoEnableIsSentAndTheTargetTravelsAsModifiedUtf7AndRoundTrips() throws Exception {
+        try (MailSeeder s = NO_UTF8.seeder("cp-strict")) {
             seed(s, "INBOX", "w1");
             ensureFolder(s, TARGET);
         }
-        String handle = handleOf("utf7", "INBOX", "w1");
-        long offset = logSize();
-        ok("copy_messages", args("account", account("utf7"), "handles", List.of(handle), "target_folder", TARGET));
-        assertThat(commandsSince(0)).noneMatch(c -> c.startsWith("ENABLE"));
-        assertThat(commandsSince(offset)).filteredOn(c -> c.startsWith("UID COPY")).hasSize(1)
-                .allMatch(c -> c.endsWith("\"Projekte/" + TARGET_UTF7_TAIL + "\""));
+        Path strictDir = java.nio.file.Files.createDirectories(dir.resolve("strict"));
+        try (TracedServer server = new TracedServer(NO_UTF8, strictDir, "cp-strict")) {
+            Map<String, Object> search = server.ok("search_messages", "cp-strict", "folder", "INBOX");
+            String handle = (String) list(search, "messages").get(0).get("handle");
+            long offset = server.logSize();
+            Map<String, Object> r = server.ok("copy_messages", "cp-strict", "handles", List.of(handle),
+                    "target_folder", TARGET);
+            assertThat(server.commandsSince(0)).as("whole wire of this server").isNotEmpty()
+                    .noneMatch(c -> c.startsWith("ENABLE"));
+            assertThat(server.commandsSince(offset)).filteredOn(c -> c.startsWith("UID COPY")).hasSize(1)
+                    .allMatch(c -> c.endsWith("Projekte/" + TARGET_UTF7_TAIL)); // an atom: Angus quotes only when needed
+            assertThat(r).containsEntry("target_folder", TARGET);
+            String copy = (String) list(r, "results").get(0).get("new_handle");
+            Map<String, Object> msg = server.ok("get_message", "cp-strict", "message", copy);
+            assertThat(msg).containsEntry("folder", TARGET);
+        }
     }
 
     @Test
