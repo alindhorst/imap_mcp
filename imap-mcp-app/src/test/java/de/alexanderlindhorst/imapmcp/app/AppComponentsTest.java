@@ -41,6 +41,8 @@ class AppComponentsTest {
 
     private static final List<String> TOOLS =
             List.of("list_accounts", "list_folders", "search_messages", "get_message", "list_attachments");
+    private static final List<String> WRITE_TOOLS =
+            List.of("set_flags", "move_messages", "copy_messages", "delete_messages", "create_folder");
     private static final AccountContext LOCAL = new AccountContext(new TenantId("local"));
 
     @TempDir
@@ -58,6 +60,10 @@ class AppComponentsTest {
     }
 
     private AppConfig config(String password, String extra) throws IOException {
+        return config(password, extra, false);
+    }
+
+    private AppConfig config(String password, String extra, boolean readOnly) throws IOException {
         Path f = dir.resolve("config.yaml");
         Files.writeString(f, """
                 accounts:
@@ -66,7 +72,28 @@ class AppComponentsTest {
                     port: %d
                     username: user
                     password: "%s"
-                """.formatted(GREEN_MAIL.getImaps().getPort(), password) + extra);
+                """.formatted(GREEN_MAIL.getImaps().getPort(), password) + (readOnly ? "    readOnly: true\n" : "")
+                + extra);
+        return ConfigLoader.load(f, Map.of());
+    }
+
+    /** One read-only account (ro) and one writable account (rw), both against GreenMail. */
+    private AppConfig mixedConfig() throws IOException {
+        Path f = dir.resolve("config.yaml");
+        Files.writeString(f, """
+                accounts:
+                  - id: ro
+                    host: 127.0.0.1
+                    port: %1$d
+                    username: user
+                    password: "env:MAIL_PW"
+                    readOnly: true
+                  - id: rw
+                    host: 127.0.0.1
+                    port: %1$d
+                    username: user
+                    password: "env:MAIL_PW"
+                """.formatted(GREEN_MAIL.getImaps().getPort()));
         return ConfigLoader.load(f, Map.of());
     }
 
@@ -125,8 +152,10 @@ class AppComponentsTest {
     }
 
     @Test
-    void statefulSpecsAreExactlyTheFiveReadOnlyTools() throws IOException {
-        List<McpServerFeatures.SyncToolSpecification> specs = create().statefulToolSpecs();
+    void allAccountsReadOnlyRegistersExactlyTheFiveV1Tools() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        List<McpServerFeatures.SyncToolSpecification> specs =
+                create(config("env:MAIL_PW", "", true), NO_RUNNER).statefulToolSpecs();
         assertThat(specs).extracting(s -> s.tool().name()).containsExactlyElementsOf(TOOLS);
         for (var s : specs) {
             McpSchema.ToolAnnotations a = s.tool().annotations();
@@ -136,6 +165,151 @@ class AppComponentsTest {
             assertThat(a.openWorldHint()).isTrue();
             assertThat(s.tool().outputSchema()).isNotEmpty();
         }
+    }
+
+    @Test
+    void defaultConfigRegistersTheTenTools() throws IOException {
+        AppComponents c = create();
+        List<String> all = new ArrayList<>(TOOLS);
+        all.addAll(WRITE_TOOLS);
+        assertThat(c.statefulToolSpecs()).extracting(s -> s.tool().name()).containsExactlyElementsOf(all);
+        assertThat(c.statelessToolSpecs(ctx -> LOCAL)).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(all);
+    }
+
+    @Test
+    void writeToolAnnotationsReachTheMcpLayer() throws IOException {
+        Map<String, McpSchema.ToolAnnotations> byName = new java.util.HashMap<>();
+        create().statefulToolSpecs().forEach(s -> byName.put(s.tool().name(), s.tool().annotations()));
+        for (String t : List.of("set_flags", "move_messages", "delete_messages")) {
+            assertThat(byName.get(t)).as(t).extracting(McpSchema.ToolAnnotations::readOnlyHint,
+                    McpSchema.ToolAnnotations::destructiveHint, McpSchema.ToolAnnotations::idempotentHint,
+                    McpSchema.ToolAnnotations::openWorldHint).containsExactly(false, true, true, true);
+        }
+        assertThat(byName.get("copy_messages")).extracting(McpSchema.ToolAnnotations::readOnlyHint,
+                McpSchema.ToolAnnotations::destructiveHint, McpSchema.ToolAnnotations::idempotentHint,
+                McpSchema.ToolAnnotations::openWorldHint).containsExactly(false, false, false, true);
+        assertThat(byName.get("create_folder")).extracting(McpSchema.ToolAnnotations::readOnlyHint,
+                McpSchema.ToolAnnotations::destructiveHint, McpSchema.ToolAnnotations::idempotentHint,
+                McpSchema.ToolAnnotations::openWorldHint).containsExactly(false, false, true, true);
+    }
+
+    @Test
+    void descriptionRulesHoldForAllTenRegisteredTools() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig cfg = config("env:MAIL_PW");
+        List<de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition> defs = create(cfg, NO_RUNNER).definitions();
+        assertThat(defs).hasSize(10);
+        for (var d : defs) {
+            assertThat(de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules.violations(d)).as(d.name()).isEmpty();
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void mixedConfigRegistersTenToolsAndDeniesWritesOnTheReadOnlyAccount() throws Exception {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppComponents c = create(mixedConfig(), NO_RUNNER);
+        var byName = new java.util.HashMap<String, McpServerFeatures.SyncToolSpecification>();
+        c.statefulToolSpecs().forEach(s -> byName.put(s.tool().name(), s));
+        assertThat(byName).hasSize(10);
+        McpSyncServerExchange ex = mock(McpSyncServerExchange.class);
+        when(ex.transportContext()).thenReturn(McpTransportContext.EMPTY);
+        List<Map<String, Object>> accounts =
+                (List<Map<String, Object>>) call(byName, ex, "list_accounts", Map.of()).get("accounts");
+        String ro = (String) accounts.stream().filter(a -> Boolean.TRUE.equals(a.get("read_only"))).findFirst()
+                .orElseThrow().get("account");
+        McpSchema.CallToolResult r = byName.get("set_flags").callHandler().apply(ex,
+                new McpSchema.CallToolRequest("set_flags", Map.of("account", ro, "handles", List.of("x"), "seen", true)));
+        assertThat(r.isError()).isTrue();
+        Map<String, Object> err = (Map<String, Object>) ((Map<String, Object>) r.structuredContent()).get("error");
+        assertThat(err.get("code")).isEqualTo("PERMISSION_DENIED");
+        assertThat(err.toString()).contains("account_read_only");
+    }
+
+    // startup INFO line (SPEC 5.3): counts only
+
+    private List<String> startupLines(Runnable create) {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("imapmcp.app");
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            create.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(m -> m.contains("write tools")).toList();
+    }
+
+    @Test
+    void startupLogsWhetherWriteToolsAreRegisteredWithCountsOnly() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig writable = config("env:MAIL_PW");
+        assertThat(startupLines(() -> create(writable, NO_RUNNER)))
+                .containsExactly("write tools registered=true, read-only accounts=0 of 1");
+        AppConfig mixed = mixedConfig();
+        assertThat(startupLines(() -> create(mixed, NO_RUNNER)))
+                .containsExactly("write tools registered=true, read-only accounts=1 of 2");
+        AppConfig readOnly = config("env:MAIL_PW", "", true);
+        assertThat(startupLines(() -> create(readOnly, NO_RUNNER)))
+                .containsExactly("write tools registered=false, read-only accounts=1 of 1");
+    }
+
+    // #195 comment: executor-produced outcomes of write tools get one write-call INFO line
+
+    private List<String> writeCallLines(Runnable action) {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger("de.alexanderlindhorst.imapmcp.core.tools.write");
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+    }
+
+    private static de.alexanderlindhorst.imapmcp.core.tool.ToolHandler sleepingAfterMark() {
+        return (cx, a) -> {
+            cx.markMutationStarted();
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException e) {
+                // interrupted by the executor
+            }
+            return new de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome.Success(Map.of());
+        };
+    }
+
+    @Test
+    void executorProducedWriteOutcomesLogOneWriteCallLineAndReadToolsNone() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig base = config("env:MAIL_PW");
+        var t = base.tools();
+        AppConfig shortDeadline = new AppConfig(base.accounts(), base.imap(), base.pool(),
+                new AppConfig.Tools(Duration.ofMillis(100), t.maxCharsCap(), t.maxBodyPartBytes(), t.maxFolders(),
+                        t.sinceMaxCandidates()), base.secrets(), base.http(), base.security(), base.mode(),
+                base.logLevel());
+        var ex = create(shortDeadline, NO_RUNNER).executor();
+        var ctx = new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(LOCAL, "req-9");
+        List<String> lines = writeCallLines(() -> {
+            ex.wrap(de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool.DEFINITION, sleepingAfterMark())
+                    .handle(ctx, Map.of());
+            ex.wrap(de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool.DEFINITION, sleepingAfterMark())
+                    .handle(new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(LOCAL, "req-10"), Map.of());
+            ex.wrap(de.alexanderlindhorst.imapmcp.core.tools.GetMessageTool.definition(1000), sleepingAfterMark())
+                    .handle(new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(LOCAL, "req-11"), Map.of());
+        });
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).contains("tool=move_messages", "request_id=req-9", "error_code=TIMEOUT");
+        assertThat(lines.get(1)).contains("tool=copy_messages", "request_id=req-10", "error_code=OUTCOME_UNKNOWN");
     }
 
     // AC3
