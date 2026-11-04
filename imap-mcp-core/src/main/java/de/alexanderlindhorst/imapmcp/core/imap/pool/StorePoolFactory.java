@@ -7,6 +7,7 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import java.time.Duration;
@@ -33,9 +34,17 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     private final CapabilityCache capabilities;
     private final Function<PoolKey, MailAccount> accounts;
     private final PoolSettings settings;
+    private final MetricsRecorder metrics;
 
     public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings settings) {
+        this(sessions, credentials, capabilities, accounts, settings, MetricsRecorder.NOOP);
+    }
+
+    /** {@code metrics} receives the connect+login latency of every new Store (SPEC 5.6). */
+    public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings settings, MetricsRecorder metrics) {
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
