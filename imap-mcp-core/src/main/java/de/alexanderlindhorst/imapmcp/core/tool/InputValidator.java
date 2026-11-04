@@ -89,6 +89,7 @@ public final class InputValidator {
                 }
                 case "pattern" -> {
                     try {
+                        EcmaPattern.check((String) v);
                         Pattern.compile((String) v);
                     } catch (PatternSyntaxException | ClassCastException ex) {
                         throw new IllegalArgumentException("invalid pattern at " + where);
@@ -212,7 +213,7 @@ public final class InputValidator {
         if (s.get("minLength") instanceof Number min && len < min.intValue()) {
             return new Violation(path, "out_of_range", null);
         }
-        if (s.get("pattern") instanceof String p && !Pattern.compile(p).matcher(str).find()) {
+        if (s.get("pattern") instanceof String p && !Pattern.compile(p).matcher(str).matches()) {
             return new Violation(path, "format", null);
         }
         if (s.get("format") instanceof String f) {

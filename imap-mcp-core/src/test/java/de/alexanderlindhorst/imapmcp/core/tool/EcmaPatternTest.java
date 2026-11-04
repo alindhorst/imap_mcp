@@ -53,7 +53,7 @@ class EcmaPatternTest {
                 Map.of("p", Map.of("type", "string", "pattern", "^[a-z]+$")));
         InputValidator v = new InputValidator(schema);
         assertThat(v.validate(Map.of("p", "abc"), "rid").valid()).isTrue();
-        for (String bad : List.of("abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc ", "abc ")) {
+        for (String bad : List.of("abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc\u2028", "abc\u2029")) {
             assertThat(v.validate(Map.of("p", bad), "rid").valid()).as("%d", bad.length()).isFalse();
         }
     }

@@ -65,7 +65,7 @@ public final class UidCommands {
     }
 
     private static final long MAX_UINT32 = 4_294_967_295L;
-    /** Same atom set as set_flags (anchored), so a keyword can never break out of the parenthesized list. */
+    /** Same atom set as set_flags (ATOM-CHAR), so a keyword can never break out of the parenthesized list. */
     private static final Pattern KEYWORD = Pattern.compile(SetFlagsTool.KEYWORD_PATTERN);
     private static final int MAX_KEYWORD = 64;
 

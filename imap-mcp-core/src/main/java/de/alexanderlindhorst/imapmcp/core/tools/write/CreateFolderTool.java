@@ -38,8 +38,8 @@ public final class CreateFolderTool implements ToolHandler {
     static final int NAME_MAX = 255;
     static final int PARENT_MAX = FolderResolver.MAX_FOLDER_NAME_BYTES;
 
-    /** No C0, DEL, C1, {@code %} or {@code *}; \A and \z because {@code $} would accept a trailing newline. */
-    private static final String NAME_PATTERN = "\\A[^\\u0000-\\u001F\\u007F-\\u009F%*]+\\z";
+    /** No C0, DEL, C1, {@code %} (x25) or {@code *} (x2a); ECMA-262 {@code ^...$}, matched against the whole value. */
+    private static final String NAME_PATTERN = "^[^\\u0000-\\u001F\\u007F-\\u009F\\x25\\x2a]+$";
 
     static final Map<String, Object> INPUT_SCHEMA = schema("type", "object",
             "properties", schema(

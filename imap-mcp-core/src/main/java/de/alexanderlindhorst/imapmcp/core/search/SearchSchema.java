@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.search;
 
+import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,8 +11,8 @@ import java.util.Map;
  */
 public final class SearchSchema {
 
-    /** IMAP atom characters only (no atom-specials, controls or non-ASCII); this also excludes a leading backslash. */
-    static final String KEYWORD_PATTERN = "\\A[^\\x00-\\x20(){%*\"\\\\\\]\\x7f-\\uffff]+\\z";
+    /** Shared with set_flags: RFC 3501 ATOM-CHAR only (ASCII), so no leading backslash either. */
+    static final String KEYWORD_PATTERN = SetFlagsTool.KEYWORD_PATTERN;
 
     public static final List<String> FOLDER_ROLES =
             List.of("inbox", "sent", "drafts", "trash", "junk", "archive", "all", "flagged", "important");

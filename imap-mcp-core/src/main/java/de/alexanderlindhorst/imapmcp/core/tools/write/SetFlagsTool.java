@@ -42,10 +42,11 @@ public final class SetFlagsTool implements ToolHandler {
     public static final int MAX_KEYWORDS = 10;
 
     /**
-     * IMAP atom characters as for search_messages keywords, anchored with \A...\z: the validator uses find() and
-     * {@code $} would admit a trailing line terminator, which must never reach UID STORE.
+     * RFC 3501 ATOM-CHAR as an ECMA-262 {@code ^...$} pattern, shared with search_messages and UidCommands. The
+     * validator matches the whole value, so a trailing line terminator never reaches UID STORE.
      */
-    public static final String KEYWORD_PATTERN = "\\A[^\\x00-\\x20(){%*\"\\\\\\]\\x7f-\\uffff]+\\z";
+    public static final String KEYWORD_PATTERN =
+            "^[\\x21\\x23\\x24\\x26\\x27\\x2b-\\x5b\\x5e-\\x7a\\x7c-\\x7e]+$";
 
 
     /** System flag fields in wire order (also the order inside the merged sets). */
