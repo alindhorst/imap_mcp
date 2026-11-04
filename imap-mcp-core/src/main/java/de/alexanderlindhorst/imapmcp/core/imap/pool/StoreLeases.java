@@ -67,11 +67,16 @@ public final class StoreLeases {
     public <T> T withLease(PoolKey key, ToolCallContext ctx, LeaseWork<T> work) throws MessagingException {
         Objects.requireNonNull(work, "work");
         try (ImapLease lease = lease(key, ctx)) {
+            Instant start = metrics.now();
             try {
                 return work.apply(lease);
             } catch (Throwable e) {
                 lease.markBroken();
                 throw e;
+            } finally {
+                if (!lease.wrote()) {
+                    lease.record("read", start); // one bucket per read lease operation (SPEC 5.6)
+                }
             }
         }
     }
@@ -132,7 +137,7 @@ public final class StoreLeases {
             discard(key, store);
             throw new StoreUnavailableException(new InterruptedException("cancelled"));
         }
-        return new ImapLease(pool, key, store, ctx, permit);
+        return new ImapLease(pool, key, store, ctx, permit, metrics);
     }
 
     /** Marks the borrow as abandoned; returns the Store if it arrived in the meantime, else throws. */

@@ -11,6 +11,7 @@ import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.Function;
 import org.apache.commons.pool2.KeyedPooledObjectFactory;
@@ -54,6 +55,16 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
 
     @Override
     public PooledObject<IMAPStore> makeObject(PoolKey key) throws MessagingException {
+        Instant start = metrics.now();
+        try {
+            return connect(key);
+        } finally { // success and failure alike: a slow refused login is still connect latency
+            metrics.operation(key.tenantId(), ImapLease.METRIC_TOOL, "connect",
+                    Duration.between(start, metrics.now()));
+        }
+    }
+
+    private PooledObject<IMAPStore> connect(PoolKey key) throws MessagingException {
         MailAccount account = accounts.apply(key);
         if (account == null) {
             throw new MessagingException("no account for pool key");

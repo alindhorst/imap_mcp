@@ -169,6 +169,7 @@ class LeaseMetricsTest {
         ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> app =
                 new ch.qos.logback.core.read.ListAppender<>();
         app.start();
+        log.setLevel(ch.qos.logback.classic.Level.INFO);
         log.addAppender(app);
         try {
             recorder.logSummary();
