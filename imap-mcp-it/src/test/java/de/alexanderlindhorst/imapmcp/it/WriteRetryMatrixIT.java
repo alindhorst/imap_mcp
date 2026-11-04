@@ -151,12 +151,7 @@ class WriteRetryMatrixIT {
         assertThat(count(afterRetry, target) - base).as("target after the retry").isEqualTo(s.tgtAfterRetry());
         // Never data loss: the message exists somewhere, and a repeat never touched anything else.
         assertThat(count(afterRetry, "INBOX") + count(afterRetry, target) - base).isGreaterThanOrEqualTo(1);
-        if (!"UNSELECT".equals(s.cutAt())) {
-            assertThat(harness.pool.createdCount()).as("the broken connection was replaced").isGreaterThan(createdBefore);
-        }
-        // A lost UNSELECT answer is swallowed by Angus' close(false) (it drops the socket itself): the lease sees a
-        // clean close, the Store stays pooled and reconnects on the retry (new LOGIN, same Store). Functionally
-        // harmless; reported as a finding in the #207 hand-off.
+        assertThat(harness.pool.createdCount()).as("the broken connection was replaced").isGreaterThan(createdBefore);
         if (flags) {
             assertThat(afterRetry.folder("INBOX").flags()).as("set_flags is idempotent")
                     .allSatisfy((uid, f) -> assertThat(f).contains("\\Flagged"));
