@@ -110,11 +110,12 @@ final class ArchitectureRules {
 
     static final ArchRule RAW_COMMANDS_ONLY_IN_COMMAND_CLASS = noClasses()
             .that().doNotHaveFullyQualifiedName(COMMAND_CLASS)
+            .and().doNotHaveFullyQualifiedName(LEASE) // ImapLease.doCommand only registers a BYE response handler; sends no command
             .and(not(haveFullyQualifiedNameIn(V1_READ_COMMAND_CLASSES)))
             .should().callMethodWhere(call("IMAPFolder.doCommand", "org.eclipse.angus.mail.imap.IMAPFolder",
                     "doCommand", "doCommandIgnoreFailure", "doOptionalCommand")
                     .or(call("Protocol.command", PROTOCOL, "command", "simpleCommand", "writeCommand")))
-            .as("IMAPFolder.doCommand and Protocol.command may only be called from UidCommands (and the named v1 read classes)");
+            .as("IMAPFolder.doCommand and Protocol.command may only be called from UidCommands (and the named v1 read classes; ImapLease registers a response handler, sends no command)");
 
     static final ArchRule READ_CLASSES_NEVER_WRITE = noClasses()
             .that(haveFullyQualifiedNameIn(V1_READ_COMMAND_CLASSES))

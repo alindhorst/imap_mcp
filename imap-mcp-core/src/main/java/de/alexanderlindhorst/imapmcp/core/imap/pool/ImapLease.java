@@ -11,8 +11,11 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.eclipse.angus.mail.iap.CommandFailedException;
+import org.eclipse.angus.mail.iap.Response;
+import org.eclipse.angus.mail.iap.ResponseHandler;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.eclipse.angus.mail.imap.IMAPStore;
+import org.eclipse.angus.mail.imap.protocol.IMAPProtocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +39,10 @@ public final class ImapLease implements AutoCloseable {
     private final AtomicBoolean finished = new AtomicBoolean();
     private final Admission.Permit permit; // nullable
     private IMAPFolder folder; // worker thread only
+    // Set by the BYE watch (synchronously on the thread that reads the response, before close(false) returns).
+    private final AtomicBoolean connectionLost = new AtomicBoolean();
+    private final ResponseHandler byeWatch = new ByeWatch();
+    private IMAPProtocol watched; // protocol carrying byeWatch; worker thread only
     private WriteCapabilities forcedCapabilities; // test seam, package-private setter only
 
     ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx, Admission.Permit permit) {
@@ -63,10 +70,12 @@ public final class ImapLease implements AutoCloseable {
     public IMAPFolder openReadOnly(String folderFullName) throws MessagingException {
         closeFolder();
         ensureUsable();
+        ensureConnected();
         try {
             IMAPFolder f = (IMAPFolder) store.getFolder(folderFullName);
             f.open(Folder.READ_ONLY);
             folder = f;
+            watchForBye(f);
             return f;
         } catch (MessagingException | RuntimeException e) {
             markBroken();
@@ -82,16 +91,49 @@ public final class ImapLease implements AutoCloseable {
     public IMAPFolder openReadWrite(String folderFullName) throws MessagingException {
         closeFolder();
         ensureUsable();
+        ensureConnected();
         try {
             IMAPFolder f = (IMAPFolder) store.getFolder(folderFullName);
             f.open(Folder.READ_WRITE);
             folder = f;
+            watchForBye(f);
             return f;
         } catch (MessagingException | RuntimeException e) {
             if (!isCommandLevelRefusal(e)) {
                 markBroken();
             }
             throw e;
+        }
+    }
+
+    /**
+     * Angus' {@code close(false)} (and the {@code isOpen()} NOOP) swallow a connection loss during UNSELECT / CLOSE, so the
+     * lease would pool a dead Store. A handler on the folder's protocol sees every BYE, synthetic or from the server.
+     * {@code doCommand} here only hands over the protocol; nothing is sent.
+     */
+    private void watchForBye(IMAPFolder f) throws MessagingException {
+        IMAPProtocol p = f.doCommand(proto -> {
+            proto.addResponseHandler(byeWatch);
+            return proto;
+        }) instanceof IMAPProtocol ip ? ip : null;
+        watched = p;
+    }
+
+    /** SPEC 5.5: after a lost connection later groups are not attempted; no transparent reconnect inside one lease. */
+    private void ensureConnected() throws StoreClosedException {
+        if (connectionLost.get()) {
+            throw new StoreClosedException(store, "connection lost");
+        }
+    }
+
+    /** Flags the lease on any BYE; sends no I/O, takes no locks, never looks at or logs the response text. */
+    private final class ByeWatch implements ResponseHandler {
+        @Override
+        public void handleResponse(Response r) {
+            if (r != null && r.isBYE()) {
+                connectionLost.set(true);
+                broken.set(true);
+            }
         }
     }
 
@@ -125,12 +167,22 @@ public final class ImapLease implements AutoCloseable {
             return;
         }
         try {
-            if (f.isOpen()) {
-                f.close(false);
+            f.close(false); // no isOpen() pre-check: its NOOP would absorb a dead connection
+        } catch (IllegalStateException e) {
+            if (!connectionLost.get()) { // a BYE already cleaned the folder up; otherwise a genuine failure
+                LOG.debug("closing folder failed: {}", e.getClass().getSimpleName());
+                markBroken();
             }
         } catch (MessagingException | RuntimeException e) {
             LOG.debug("closing folder failed: {}", e.getClass().getSimpleName());
             markBroken();
+        } finally {
+            // The protocol is pooled with the Store and reused by the next lease: the handler must not leak.
+            IMAPProtocol p = watched;
+            watched = null;
+            if (p != null) {
+                p.removeResponseHandler(byeWatch);
+            }
         }
     }
 
@@ -145,7 +197,7 @@ public final class ImapLease implements AutoCloseable {
 
     /**
      * The leased connection's write capabilities (no I/O, never the CapabilityCache); see {@link WriteCapabilities}.
-     * Usable while a folder is open or not.
+     * Only while no folder is open: with a folder open the Store would open a second connection.
      */
     public WriteCapabilities capabilities() throws MessagingException {
         ensureUsable();
