@@ -29,7 +29,6 @@ import java.util.regex.Pattern;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -43,7 +42,8 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>The tools are driven through the stdio client against the shaded jar with {@code imap.trace: true}; the trace is
  * the wire evidence (see {@code DovecotFidelityIT}). Every scenario uses its own Dovecot user and configured account.
- * The targets are non-ASCII folder names (modified UTF-7 on the wire).
+ * The targets are non-ASCII folder names: UTF-8 on the wire on the full set (Angus enables UTF8=ACCEPT itself, SPEC
+ * 5.4), modified UTF-7 on the NO_UTF8_ACCEPT profile.
  */
 class MoveMessagesDovecotIT {
 
@@ -373,25 +373,9 @@ class MoveMessagesDovecotIT {
                     || c.startsWith("CLOSE"));
         }
 
-        @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
+        /** The full set advertises UTF8=ACCEPT: Angus enabled it at login, the name travels as UTF-8 (SPEC 5.4). */
         @Test
-        void aNonAsciiTargetTravelsAsModifiedUtf7AndUtf8AcceptIsNeverEnabled() throws Exception {
-            String user = "utf7";
-            try (MailSeeder s = env.seeder(user)) {
-                s.appendPlain(SRC_A, "u1", "x");
-                s.store().getFolder(TARGET).create(Folder.HOLDS_MESSAGES);
-            }
-            List<String> input = new ArrayList<>(env.handles(user, SRC_A).values());
-            long offset = env.logSize();
-            env.ok("move_messages", args("account", env.accounts.get(user), "handles", input, "target_folder", TARGET));
-            assertThat(starting(env.commandsSince(offset), "UID MOVE")).singleElement()
-                    .asString().contains("\"Ziel-&ANw-bertrag\"");
-            // SPEC 5.4: never ENABLE UTF8=ACCEPT (checked over the whole log of this server process).
-            assertThat(env.commandsSince(0)).noneMatch(c -> c.startsWith("ENABLE"));
-        }
-
-        @Test
-        void theTargetNameEncodingFollowsTheConnectionStateAndTheMoveRoundTrips() throws Exception {
+        void theTargetTravelsAsUtf8AfterTheLoginEnableAndTheMoveRoundTrips() throws Exception {
             String user = "utf8state";
             try (MailSeeder s = env.seeder(user)) {
                 s.appendPlain(SRC_A, "u1", "x");
@@ -402,13 +386,28 @@ class MoveMessagesDovecotIT {
             Result r = env.ok("move_messages",
                     args("account", env.accounts.get(user), "handles", input, "target_folder", TARGET));
             List<String> commands = env.commandsSince(offset);
-            boolean utf8Enabled = env.commandsSince(0).stream().anyMatch(c -> c.equals("ENABLE UTF8=ACCEPT"));
-            assertThat(starting(commands, "UID MOVE")).singleElement().asString()
-                    .contains(utf8Enabled ? "\"Ziel-\u00dcbertrag\"" : "\"Ziel-&ANw-bertrag\"");
+            assertThat(env.commandsSince(0)).contains("ENABLE UTF8=ACCEPT");
+            assertThat(starting(commands, "UID MOVE")).singleElement().asString().contains("\"Ziel-\u00dcbertrag\"");
             String newHandle = (String) r.items().get(0).get("new_handle");
             Result msg = env.ok("get_message", args("account", env.accounts.get(user), "message", newHandle));
             assertThat(msg.structured()).containsEntry("folder", TARGET);
             assertThat(map(msg.structured(), "untrusted")).containsEntry("subject", "u1");
+        }
+
+        /** The same mailbox seen from a connection without ENABLE: listed in modified UTF-7. */
+        @Test
+        void aTargetUsedInTheUtf8StateIsTheSameMailboxSeenWithoutEnable() throws Exception {
+            String user = "utf7";
+            try (MailSeeder s = env.seeder(user)) {
+                s.appendPlain(SRC_A, "u1", "x");
+                s.store().getFolder(TARGET).create(Folder.HOLDS_MESSAGES);
+            }
+            List<String> input = new ArrayList<>(env.handles(user, SRC_A).values());
+            env.ok("move_messages", args("account", env.accounts.get(user), "handles", input, "target_folder", TARGET));
+            try (RawImap raw = new RawImap(env.dovecot.getHost(), env.dovecot.imapsPort())) {
+                raw.login(user, DovecotContainer.PASSWORD); // no ENABLE: modified UTF-7 state
+                assertThat(raw.listNames()).contains("Ziel-&ANw-bertrag").noneMatch(n -> n.contains("\u00dc"));
+            }
         }
 
         @Test
@@ -522,6 +521,52 @@ class MoveMessagesDovecotIT {
             assertThat(tool.annotations().destructiveHint()).isTrue();
             assertThat(tool.annotations().idempotentHint()).isTrue();
             assertThat(tool.annotations().readOnlyHint()).isFalse();
+        }
+    }
+
+    // ---- NO_UTF8_ACCEPT: modified UTF-7 state -----------------------------------------------------------------------
+
+    @Nested
+    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+    class NoUtf8Accept {
+
+        private Env env;
+
+        @BeforeAll
+        void start() throws Exception {
+            env = new Env(DovecotContainer.Profile.NO_UTF8_ACCEPT, "strict");
+        }
+
+        @AfterAll
+        void stop() {
+            if (env != null) {
+                env.close();
+            }
+        }
+
+        /**
+         * Against a server without UTF8=ACCEPT Angus sends no ENABLE (whole wire of this server process, which only
+         * talks to this container), the target travels as modified UTF-7, and the new handle round-trips.
+         */
+        @Test
+        void aNonAsciiTargetTravelsAsModifiedUtf7WithoutAnyEnableAndTheMoveRoundTrips() throws Exception {
+            String user = "strict";
+            try (MailSeeder s = env.seeder(user)) {
+                s.appendPlain(SRC_A, "u1", "x");
+                s.store().getFolder(TARGET).create(Folder.HOLDS_MESSAGES);
+            }
+            List<String> input = new ArrayList<>(env.handles(user, SRC_A).values());
+            long offset = env.logSize();
+            Result r = env.ok("move_messages",
+                    args("account", env.accounts.get(user), "handles", input, "target_folder", TARGET));
+            assertThat(starting(env.commandsSince(offset), "UID MOVE")).singleElement()
+                    .asString().endsWith("Ziel-&ANw-bertrag"); // an atom: Angus quotes only when needed
+            assertThat(env.commandsSince(0)).as("whole wire of this server").isNotEmpty()
+                    .noneMatch(c -> c.startsWith("ENABLE"));
+            String newHandle = (String) r.items().get(0).get("new_handle");
+            Result msg = env.ok("get_message", args("account", env.accounts.get(user), "message", newHandle));
+            assertThat(msg.structured()).containsEntry("folder", TARGET);
+            assertThat(map(msg.structured(), "untrusted")).containsEntry("subject", "u1");
         }
     }
 
