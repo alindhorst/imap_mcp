@@ -13,6 +13,7 @@ import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
+import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
@@ -41,6 +42,13 @@ import de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListFoldersTool;
 import de.alexanderlindhorst.imapmcp.core.tools.MessageLocator;
 import de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
+import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.WritePreflight;
 import de.alexanderlindhorst.imapmcp.store.file.ConfiguredAccountRepository;
 import eu.rekawek.toxiproxy.model.ToxicDirection;
 import jakarta.mail.Flags;
@@ -87,6 +95,7 @@ class TenantIsolationIT {
     private static ToxiproxyFixture toxiproxy;
     private static ToxiproxyFixture.Proxy proxy;
 
+    private static KeyRing keyRing;
     private static ImapSessionFactory sessions;
     private static StorePool pool;
     private static InMemoryMetricsRecorder metrics;
@@ -123,6 +132,7 @@ class TenantIsolationIT {
         new SecureRandom().nextBytes(salt);
         new SecureRandom().nextBytes(master);
         KeyRing keys = new KeyRing(1, Map.of(1, master));
+        keyRing = keys;
         logIds = new LogIds(keys);
 
         MailAccount aWork = account("work", proxy.host(), proxy.port(), USER_A);
@@ -179,6 +189,16 @@ class TenantIsolationIT {
         tools.put(GetMessageTool.definition(20_000), new GetMessageTool(account, locator, leases,
                 new BodyWindowReader(4L * 1024 * 1024), 20_000));
         tools.put(ListAttachmentsTool.DEFINITION, new ListAttachmentsTool(account, locator, leases));
+        // v2 write tools, wired as AppComponents does
+        WritePreflight preflight = new WritePreflight(account, locator);
+        MessageHandles handles = new MessageHandles(keys);
+        Clock clock = Clock.systemUTC();
+        tools.put(SetFlagsTool.DEFINITION, new SetFlagsTool(account, locator, leases, clock));
+        tools.put(MoveMessagesTool.DEFINITION, new MoveMessagesTool(preflight, leases, handles, clock));
+        tools.put(CopyMessagesTool.DEFINITION,
+                new CopyMessagesTool(preflight, leases, handles, new FolderGroupRunner(clock)));
+        tools.put(DeleteMessagesTool.DEFINITION, new DeleteMessagesTool(preflight, leases, handles, clock));
+        tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
         tools.forEach((def, h) -> HANDLERS.put(def.name(), executor.wrap(def.name(),
                 new ValidatingToolHandler(def, h))));
     }
@@ -496,5 +516,194 @@ class TenantIsolationIT {
     private static long busyTotal() {
         return metrics.snapshot().pools().stream().flatMap(p -> p.busyRejections().values().stream())
                 .mapToLong(Long::longValue).sum();
+    }
+
+    // ---- v2 write tools (SPEC 5.8) ----
+
+    private static final List<String> BULK_TOOLS = List.of("set_flags", "copy_messages", "move_messages",
+            "delete_messages");
+
+    private static Map<String, Object> writeArgs(String tool, String account, List<String> handles) {
+        Map<String, Object> args = new HashMap<>(Map.of("account", account, "handles", handles));
+        switch (tool) {
+            case "set_flags" -> args.put("seen", true);
+            case "copy_messages", "move_messages" -> args.put("target_folder", "IsoNoSuchTarget");
+            default -> {
+            }
+        }
+        return args;
+    }
+
+    private static MailboxSnapshot snapshot(String user) throws Exception {
+        try (MailSeeder s = dovecot.seeder(user)) {
+            return MailboxSnapshot.of(s.store(), "INBOX");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object fieldOf(Map<String, Object> error) {
+        return ((Map<String, Object>) error.get("details")).get("field");
+    }
+
+    private static Map<String, Object> withoutDetails(Map<String, Object> error) {
+        Map<String, Object> e = new LinkedHashMap<>(error);
+        e.remove("details");
+        return e;
+    }
+
+    /** Pool connections created plus leases of both tenants' accounts: any IMAP I/O moves one of them. */
+    private record IoMarks(long created, long leasesA, long leasesB) {
+        static IoMarks now() {
+            return new IoMarks(pool.createdCount(), leases(T_A, "work"), leases(T_B, "work"));
+        }
+    }
+
+    @Test
+    void badHandleAtAnyPositionOfAnyBulkWriteToolIsInvalidWithoutIoOrMailboxChange() throws Exception {
+        String workA = handleOf(T_A, "work");
+        List<String> own = new ArrayList<>();
+        for (Map<String, Object> m : search(T_A, workA, Map.of())) {
+            own.add((String) m.get("handle"));
+        }
+        assertThat(own).hasSizeGreaterThanOrEqualTo(3);
+        own = own.subList(0, 3);
+        String foreign = firstHandle(T_B, "work");
+        // a handle with a valid shape and tag under a key id this installation does not know
+        String unknownKey = new MessageHandles(new KeyRing(2, Map.of(2, new byte[32])))
+                .encode(T_A, new AccountId("work"), new MessageRef("INBOX", 1, 1));
+        String tampered = flip(own.get(0), 5, 3);
+
+        MailboxSnapshot beforeA = snapshot(USER_A);
+        MailboxSnapshot beforeB = snapshot(USER_B);
+        IoMarks marks = IoMarks.now();
+
+        for (String tool : BULK_TOOLS) {
+            for (int pos = 0; pos < 3; pos++) {
+                Map<String, Object> reference = null;
+                for (String bad : List.of(foreign, tampered, unknownKey)) {
+                    List<String> handles = new ArrayList<>(own);
+                    handles.set(pos, bad);
+                    Map<String, Object> e = error(T_A, tool, writeArgs(tool, workA, handles),
+                            ErrorCode.INVALID_HANDLE);
+                    assertThat(fieldOf(e)).as(tool + " position " + pos).isEqualTo("handles[" + pos + "]");
+                    if (reference == null) {
+                        reference = withoutDetails(e);
+                    }
+                    assertThat(withoutDetails(e)).as(tool + " position " + pos).isEqualTo(reference);
+                }
+            }
+        }
+
+        assertThat(IoMarks.now()).isEqualTo(marks);
+        assertThat(MailboxSnapshot.diff(beforeA, snapshot(USER_A)).isEmpty()).isTrue();
+        assertThat(MailboxSnapshot.diff(beforeB, snapshot(USER_B)).isEmpty()).isTrue();
+    }
+
+    @Test
+    void foreignAccountHandleOnEveryWriteToolIsAccountNotFoundAsInV1() {
+        String foreignAccount = handleOf(T_A, "work");
+        Map<String, Object> v1 = error(T_B, "list_folders", Map.of("account", foreignAccount),
+                ErrorCode.ACCOUNT_NOT_FOUND);
+        List<String> handles = List.of(firstHandle(T_B, "work"));
+        IoMarks marks = IoMarks.now();
+        for (String tool : BULK_TOOLS) {
+            assertThat(error(T_B, tool, writeArgs(tool, foreignAccount, handles), ErrorCode.ACCOUNT_NOT_FOUND))
+                    .as(tool).isEqualTo(v1);
+        }
+        assertThat(error(T_B, "create_folder", Map.of("account", foreignAccount, "name", "IsoForeign"),
+                ErrorCode.ACCOUNT_NOT_FOUND)).isEqualTo(v1);
+        assertThat(IoMarks.now()).isEqualTo(marks);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void newHandleOfAMoveIsInvalidForAnotherTenant() throws Exception {
+        String other = handleOf(T_A, "other");
+        try (MailSeeder s = dovecot.seeder(USER_A2)) {
+            s.appendPlain("INBOX", "to-move", "x");
+        }
+        Map<String, Object> folder = ok(T_A, "create_folder", Map.of("account", other, "name", "IsoMoved"));
+        String target = (String) folder.get("folder");
+        String old = (String) search(T_A, other, Map.of("subject", "to-move")).get(0).get("handle");
+        Map<String, Object> moved = ok(T_A, "move_messages", Map.of("account", other, "handles", List.of(old),
+                "target_folder", target));
+        String fresh = (String) ((Map<String, Object>) ((List<?>) moved.get("results")).get(0)).get("new_handle");
+        assertThat(fresh).isNotNull();
+
+        MailboxSnapshot beforeA2 = snapshot(USER_A2);
+        MailboxSnapshot beforeB = snapshot(USER_B);
+        IoMarks marks = IoMarks.now();
+        String workB = handleOf(T_B, "work");
+        for (String tool : BULK_TOOLS) {
+            for (String replayed : List.of(fresh, old)) {
+                Map<String, Object> e = error(T_B, tool, writeArgs(tool, workB, List.of(replayed)),
+                        ErrorCode.INVALID_HANDLE);
+                assertThat(fieldOf(e)).isEqualTo("handles[0]");
+            }
+        }
+        assertThat(IoMarks.now()).isEqualTo(marks);
+        assertThat(MailboxSnapshot.diff(beforeA2, snapshot(USER_A2)).isEmpty()).isTrue();
+        assertThat(MailboxSnapshot.diff(beforeB, snapshot(USER_B)).isEmpty()).isTrue();
+
+        // the owner can still use the handle the move returned
+        ok(T_A, "set_flags", Map.of("account", other, "handles", List.of(fresh), "seen", true));
+    }
+
+    @Test
+    void aTenantSaturatedWithWriteCallsDoesNotMakeAnotherTenantsWritesFail() throws Exception {
+        String workA = handleOf(T_A, "work");
+        String workB = handleOf(T_B, "work");
+        String handleA = firstHandle(T_A, "work");
+        String handleB = firstHandle(T_B, "work");
+        Map<String, Object> flagA = Map.of("account", workA, "handles", List.of(handleA), "flagged", true);
+        Map<String, Object> flagB = Map.of("account", workB, "handles", List.of(handleB), "flagged", true);
+        ok(T_A, "set_flags", flagA); // warm connections for both
+        ok(T_B, "set_flags", flagB);
+        long busyBefore = busyRejections(T_B, "work");
+
+        List<Future<ToolOutcome>> stalled = new ArrayList<>();
+        ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            var latency = proxy.toxics().toxics().latency("iso-write-latency", ToxicDirection.DOWNSTREAM, 3000);
+            try {
+                for (int i = 0; i < MAX_PER_TENANT; i++) {
+                    stalled.add(exec.submit(() -> call(T_A, "set_flags", flagA)));
+                }
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (admission.availableTenant(T_A) > 0 && System.nanoTime() < deadline) {
+                    Thread.sleep(20);
+                }
+                assertThat(admission.availableTenant(T_A)).isZero();
+                assertThat(admission.availableTenant(T_B)).isEqualTo(MAX_PER_TENANT);
+
+                error(T_A, "set_flags", flagA, ErrorCode.SERVER_BUSY);
+
+                List<Future<Long>> bCalls = new ArrayList<>();
+                for (int t = 0; t < MAX_PER_TENANT; t++) {
+                    bCalls.add(exec.submit(() -> {
+                        long worst = 0;
+                        for (int i = 0; i < 5; i++) {
+                            long t0 = System.nanoTime();
+                            ToolOutcome o = call(T_B, "set_flags", flagB);
+                            worst = Math.max(worst, System.nanoTime() - t0);
+                            assertThat(o).isInstanceOf(ToolOutcome.Success.class);
+                        }
+                        return worst;
+                    }));
+                }
+                for (Future<Long> f : bCalls) {
+                    assertThat(Duration.ofNanos(f.get(30, TimeUnit.SECONDS))).isLessThan(Duration.ofSeconds(2));
+                }
+                assertThat(busyRejections(T_B, "work")).isEqualTo(busyBefore);
+            } finally {
+                latency.remove();
+            }
+            for (Future<ToolOutcome> f : stalled) {
+                assertThat(f.get(60, TimeUnit.SECONDS)).isInstanceOf(ToolOutcome.Success.class);
+            }
+        } finally {
+            exec.shutdownNow();
+        }
+        assertThat(admission.availableTenant(T_A)).isEqualTo(MAX_PER_TENANT);
     }
 }
