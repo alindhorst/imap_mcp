@@ -176,7 +176,7 @@ class ReadmeTest {
             sections.computeIfAbsent(m.group(1), k -> new StringBuilder(k + ":\n"))
                     .append("  ").append(m.group(2)).append(": ").append(m.group(3)).append('\n');
         }
-        assertThat(sections.keySet()).containsExactlyInAnyOrder("imap", "pool", "tools", "secrets", "http");
+        assertThat(sections.keySet()).containsExactlyInAnyOrder("imap", "pool", "tools", "secrets", "http", "security");
         assertThat(rows).isGreaterThanOrEqualTo(24);
         String account = "accounts:\n  - id: a\n    host: imap.example.com\n    username: u\n    password: env:X\n";
         Path minimal = dir.resolve("minimal.yaml");
@@ -190,6 +190,7 @@ class ReadmeTest {
         assertThat(actual.tools()).isEqualTo(expected.tools());
         assertThat(actual.secrets()).isEqualTo(expected.secrets());
         assertThat(actual.http()).isEqualTo(expected.http());
+        assertThat(actual.security()).isEqualTo(expected.security());
         assertThat(readme).contains("`http.token`").contains("`security.handleKey`")
                 .contains("`security.handleKeys`").contains("`security.signingKeyId`");
     }
