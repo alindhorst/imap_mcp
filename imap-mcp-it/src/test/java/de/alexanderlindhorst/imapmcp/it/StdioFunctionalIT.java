@@ -403,6 +403,25 @@ class StdioFunctionalIT {
         }
     }
 
+    /** SPEC 4 (#264): an error result carries the error object only in its text block, without structuredContent. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void errorResultHasNoStructuredContentAndTheErrorObjectInOneTextBlock() throws Exception {
+        resolveAccounts();
+        McpSchema.CallToolResult r = client.callTool(new McpSchema.CallToolRequest("list_folders",
+                args("account", tlsAccount, "bogus", 1)));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.structuredContent()).isNull();
+        assertThat(r.content()).hasSize(1);
+        assertThat(r.content().get(0)).isInstanceOf(McpSchema.TextContent.class);
+        Map<String, Object> payload = McpJsonDefaults.getMapper()
+                .readValue(((McpSchema.TextContent) r.content().get(0)).text(), new TypeRef<Map<String, Object>>() {
+                });
+        assertThat(payload).containsOnlyKeys("error");
+        Map<String, Object> error = (Map<String, Object>) payload.get("error");
+        assertThat(error).containsEntry("code", "INVALID_ARGUMENT").containsKeys("message", "retryable", "request_id");
+    }
+
     /**
      * Self-contained (#143): reads mail itself (search, get_message with body and attachment), so the assertions are
      * meaningful whatever ran before; unordered tests run after the {@code @Order}ed ones anyway.

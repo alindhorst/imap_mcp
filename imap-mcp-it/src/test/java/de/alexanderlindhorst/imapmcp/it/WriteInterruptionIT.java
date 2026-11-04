@@ -254,7 +254,7 @@ class WriteInterruptionIT {
 
     private record Result(McpSchema.CallToolResult raw, Duration took) {
         Object structured() {
-            return raw.structuredContent();
+            return ToolResults.payload(raw);
         }
 
         boolean isError() {
@@ -263,7 +263,7 @@ class WriteInterruptionIT {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> error() {
-            return (Map<String, Object>) ((Map<String, Object>) raw.structuredContent()).get("error");
+            return (Map<String, Object>) ToolResults.payload(raw).get("error");
         }
 
         @SuppressWarnings("unchecked")
@@ -273,12 +273,12 @@ class WriteInterruptionIT {
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> items() {
-            return (List<Map<String, Object>>) ((Map<String, Object>) raw.structuredContent()).get("results");
+            return (List<Map<String, Object>>) ToolResults.payload(raw).get("results");
         }
 
         @SuppressWarnings("unchecked")
         List<String> notes() {
-            return (List<String>) ((Map<String, Object>) raw.structuredContent()).get("notes");
+            return (List<String>) ToolResults.payload(raw).get("notes");
         }
 
         List<String> statuses() {

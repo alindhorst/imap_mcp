@@ -211,7 +211,7 @@ class GetMessageSdkTest {
         McpSchema.CallToolResult r = mcp.call("get_message",
                 Map.of("account", account, "message", "m", "max_chars", 100001), McpTransportContext.EMPTY);
         assertThat(r.isError()).isTrue();
-        Map<?, ?> error = (Map<?, ?>) ((Map<?, ?>) r.structuredContent()).get("error");
+        Map<?, ?> error = ErrorResults.error(r);
         assertThat(error.get("code")).isEqualTo("INVALID_ARGUMENT");
         assertThat(((Map<?, ?>) error.get("details")).get("max")).isEqualTo(100000);
     }

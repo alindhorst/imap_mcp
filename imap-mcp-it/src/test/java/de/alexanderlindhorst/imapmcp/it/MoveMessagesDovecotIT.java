@@ -96,7 +96,7 @@ class MoveMessagesDovecotIT {
 
         Result call(String tool, Map<String, Object> args) {
             McpSchema.CallToolResult r = client.callTool(new McpSchema.CallToolRequest(tool, args));
-            return new Result(Boolean.TRUE.equals(r.isError()), asMap(r.structuredContent()));
+            return new Result(Boolean.TRUE.equals(r.isError()), ToolResults.payload(r));
         }
 
         Result ok(String tool, Map<String, Object> args) {

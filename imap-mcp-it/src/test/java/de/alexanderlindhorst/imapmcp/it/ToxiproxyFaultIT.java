@@ -168,7 +168,7 @@ class ToxiproxyFaultIT {
 
     private record Result(McpSchema.CallToolResult raw, Duration took) {
         Object getStructured() {
-            return raw.structuredContent();
+            return ToolResults.payload(raw);
         }
 
         boolean ok() {
@@ -177,13 +177,13 @@ class ToxiproxyFaultIT {
 
         @SuppressWarnings("unchecked")
         String errorCode() {
-            return (String) ((Map<String, Object>) ((Map<String, Object>) raw.structuredContent()).get("error"))
+            return (String) ((Map<String, Object>) ToolResults.payload(raw).get("error"))
                     .get("code");
         }
 
         @SuppressWarnings("unchecked")
         boolean retryable() {
-            return Boolean.TRUE.equals(((Map<String, Object>) ((Map<String, Object>) raw.structuredContent())
+            return Boolean.TRUE.equals(((Map<String, Object>) ToolResults.payload(raw)
                     .get("error")).get("retryable"));
         }
     }

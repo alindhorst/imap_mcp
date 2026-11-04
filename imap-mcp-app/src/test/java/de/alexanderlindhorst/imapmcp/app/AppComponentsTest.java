@@ -232,7 +232,7 @@ class AppComponentsTest {
         McpSchema.CallToolResult r = byName.get("set_flags").callHandler().apply(ex,
                 new McpSchema.CallToolRequest("set_flags", Map.of("account", ro, "handles", List.of("x"), "seen", true)));
         assertThat(r.isError()).isTrue();
-        Map<String, Object> err = (Map<String, Object>) ((Map<String, Object>) r.structuredContent()).get("error");
+        Map<String, Object> err = ErrorResults.error(r);
         assertThat(err.get("code")).isEqualTo("PERMISSION_DENIED");
         assertThat(err.toString()).contains("account_read_only");
     }

@@ -148,8 +148,7 @@ class StdioServerTest {
         Map<String, Object> resp = client.awaitResponse(client.request("tools/call",
                 Map.of("name", "count_things", "arguments", Map.of("bogus", 1))));
         Map<String, Object> result = map(resp.get("result"));
-        assertThat(result).containsEntry("isError", true);
-        Map<String, Object> sc = map(map(result.get("structuredContent")).get("error"));
+        Map<String, Object> sc = ErrorResults.error(result);
         assertThat(sc).containsEntry("code", "INVALID_ARGUMENT");
         assertThat(map(sc.get("details"))).containsEntry("reason", "unknown_property");
     }
