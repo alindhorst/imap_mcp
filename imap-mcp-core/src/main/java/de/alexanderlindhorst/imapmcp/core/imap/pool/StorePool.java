@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
 import java.time.Duration;
 import java.util.function.Function;
@@ -27,6 +28,12 @@ public final class StorePool implements AutoCloseable, PoolGauges {
 
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s) {
+        this(sessions, credentials, capabilities, accounts, s, MetricsRecorder.NOOP);
+    }
+
+    /** {@code metrics} receives the connect+login latency of every new Store. */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics) {
         GenericKeyedObjectPoolConfig<IMAPStore> config = new GenericKeyedObjectPoolConfig<>();
         config.setJmxEnabled(false); // must be set before construction
         config.setMaxTotalPerKey(s.maxPerMailbox());
@@ -40,7 +47,7 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setNumTestsPerEvictionRun(-1);
         config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
         this.pool = new GenericKeyedObjectPool<>(
-                new StorePoolFactory(sessions, credentials, capabilities, accounts, s), config);
+                new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics), config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
         abandoned.setRemoveAbandonedTimeout(s.abandonedTimeout());
