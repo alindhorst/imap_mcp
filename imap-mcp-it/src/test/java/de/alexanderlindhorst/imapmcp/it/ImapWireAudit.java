@@ -60,8 +60,9 @@ final class ImapWireAudit {
     }
 
     /**
-     * ENABLE rule. Strict: no ENABLE at all (SPEC 5.4 "Never ENABLE ..."). Relaxed (servers advertising UTF8=ACCEPT,
-     * where Angus 2.0.5 enables it on its own, #179): only {@code ENABLE UTF8=ACCEPT}, never CONDSTORE or QRESYNC.
+     * ENABLE rule. Strict (servers not advertising UTF8=ACCEPT, where Angus has nothing to enable): no ENABLE at all.
+     * Relaxed (servers advertising it, where Angus 2.0.5 enables it itself at login, SPEC 5.4, #179): only
+     * {@code ENABLE UTF8=ACCEPT}, never CONDSTORE or QRESYNC.
      */
     static List<String> enableViolations(List<String> commands, boolean strict) {
         List<String> out = new ArrayList<>();
