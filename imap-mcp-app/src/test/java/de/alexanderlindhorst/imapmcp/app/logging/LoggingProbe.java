@@ -63,13 +63,6 @@ public final class LoggingProbe {
     }
 
     /**
-     * Logback checks the file size only every {@code mask + 1}-th invocation (DefaultInvocationGate); the mask starts
-     * at 15 and doubles every time two checks are less than 100 ms apart, up to 65535. Whether a given number of
-     * lines or seconds triggers a rollover is therefore timing dependent. A line budget above three full gate
-     * periods is not: once the active file is over the limit, a check (and with it a rollover) happens within 65536
-     * lines, so three files exist well before the budget is spent. Bounded by lines, not by time.
-     */
-    /**
      * Logs until the first size rollover has happened and stops there. Logback cleans archives asynchronously after
      * every rollover, and its cleaner tasks share one non-thread-safe RollingCalendar (a GregorianCalendar): with
      * several rollovers in a few milliseconds (tiny size limit) overlapping tasks compute wrong periods and delete
