@@ -26,18 +26,22 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
      * {@code conf.d/98-*.conf}. SPECIAL-USE stays advertised in all of them.
      */
     public enum Profile {
-        FULL(null, true, true),
-        NO_MOVE("dovecot/98-no-move.conf", false, true),
-        NO_MOVE_NO_UIDPLUS("dovecot/98-no-move-no-uidplus.conf", false, false);
+        FULL(null, true, true, true),
+        NO_MOVE("dovecot/98-no-move.conf", false, true, true),
+        NO_MOVE_NO_UIDPLUS("dovecot/98-no-move-no-uidplus.conf", false, false, true),
+        /** Everything but UTF8=ACCEPT: Angus does not ENABLE it, names travel in modified UTF-7 (#179). */
+        NO_UTF8_ACCEPT("dovecot/98-no-utf8-accept.conf", true, true, false);
 
         private final String fixture;
         private final boolean move;
         private final boolean uidplus;
+        private final boolean utf8Accept;
 
-        Profile(String fixture, boolean move, boolean uidplus) {
+        Profile(String fixture, boolean move, boolean uidplus, boolean utf8Accept) {
             this.fixture = fixture;
             this.move = move;
             this.uidplus = uidplus;
+            this.utf8Accept = utf8Accept;
         }
 
         public boolean move() {
@@ -46,6 +50,10 @@ public final class DovecotContainer extends GenericContainer<DovecotContainer> {
 
         public boolean uidplus() {
             return uidplus;
+        }
+
+        public boolean utf8Accept() {
+            return utf8Accept;
         }
     }
 
