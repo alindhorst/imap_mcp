@@ -42,7 +42,7 @@ public final class BulkResult {
         }
     }
 
-    /** One result item. {@code reason} only for stale_reference, {@code error} only for failed. */
+    /** One result item. {@code reason} only for stale_reference, {@code error} only for failed ({@code new_handle} there only for a copy that was not removed). */
     public record Item(String handle, ItemStatus status, String newHandle, String note,
             ToolError.StaleReason reason, ToolError error) {
 
@@ -58,8 +58,9 @@ public final class BulkResult {
             if (note != null && !(NEW_UID_UNKNOWN.equals(note) && status == ItemStatus.OK && newHandle == null)) {
                 throw new IllegalArgumentException("note is only new_uid_unknown on ok without new_handle");
             }
-            if (newHandle != null && status != ItemStatus.OK && status != ItemStatus.ALREADY_IN_TARGET) {
-                throw new IllegalArgumentException("new_handle only for ok and already_in_target");
+            if (newHandle != null && status != ItemStatus.OK && status != ItemStatus.ALREADY_IN_TARGET
+                    && status != ItemStatus.FAILED) {
+                throw new IllegalArgumentException("new_handle only for ok, already_in_target and failed");
             }
             if (status == ItemStatus.ALREADY_IN_TARGET && !handle.equals(newHandle)) {
                 throw new IllegalArgumentException("already_in_target echoes the handle as new_handle");
@@ -99,6 +100,11 @@ public final class BulkResult {
 
         public static Item failed(String handle, ToolError error) {
             return new Item(handle, ItemStatus.FAILED, null, null, null, Objects.requireNonNull(error, "error"));
+        }
+
+        /** move without MOVE: the copy exists under {@code newHandle} but the original was not removed. */
+        public static Item failedCopied(String handle, String newHandle, ToolError error) {
+            return new Item(handle, ItemStatus.FAILED, newHandle, null, null, Objects.requireNonNull(error, "error"));
         }
 
         public static Item notAttempted(String handle) {

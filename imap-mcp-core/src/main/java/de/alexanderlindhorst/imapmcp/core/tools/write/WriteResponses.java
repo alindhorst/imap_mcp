@@ -105,6 +105,11 @@ public final class WriteResponses {
         return ToolError.permissionDenied(PermissionReason.FOLDER_READ_ONLY, rid);
     }
 
+    /** The response code atom of a tagged response, upper-cased, or null. */
+    static String responseCode(Response r) {
+        return r == null || r.getRest() == null ? null : code(r.getRest().stripLeading());
+    }
+
     /** The upper-cased response code atom at the start of the text, or null. */
     private static String code(String rest) {
         Matcher m = CODE.matcher(rest);

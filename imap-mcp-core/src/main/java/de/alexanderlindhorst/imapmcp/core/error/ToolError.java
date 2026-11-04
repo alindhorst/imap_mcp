@@ -205,6 +205,31 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                         serverText == null ? null : UntrustedText.singleLine(serverText, UntrustedText.UPSTREAM_ERROR_MAX)), requestId);
     }
 
+    /**
+     * The error of an item whose copy exists in the target but whose original was not removed (move without MOVE,
+     * STORE or UID EXPUNGE refused). Never retryable: repeating the call copies again. A refusal that maps to a
+     * retryable code becomes UPSTREAM_ERROR; {@code responseCode} (INUSE or UNAVAILABLE only) is then kept in
+     * details.response_code.
+     */
+    public ToolError copiedNotRemoved(String responseCode) {
+        ToolError mapped = this;
+        Map<String, Object> d = new LinkedHashMap<>();
+        if (mapped.details() != null) {
+            d.putAll(mapped.details());
+        }
+        ErrorCode c = mapped.code();
+        String message = mapped.message();
+        if (c.retryable()) {
+            c = ErrorCode.UPSTREAM_ERROR;
+            message = "The IMAP server refused to remove the original messages. Check the source and target folders.";
+            if ("INUSE".equals(responseCode) || "UNAVAILABLE".equals(responseCode)) {
+                d.put("response_code", responseCode);
+            }
+        }
+        return new ToolError(c, message, "The messages were copied to the target folder (new_handle) but not removed "
+                + "from the source folder; repeating the call copies them again.", null, d, requestId());
+    }
+
     public static ToolError unsupported(String capability, String requestId) {
         return of(ErrorCode.UNSUPPORTED,
                 "The IMAP server does not support a required capability. Use a different tool or arguments.",
