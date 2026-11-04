@@ -4,20 +4,29 @@ import de.alexanderlindhorst.imapmcp.core.content.UntrustedText;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.folder.FolderResolver;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.tool.InputValidator;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
+import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import jakarta.mail.MessagingException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * {@code create_folder} definition and argument parsing (SPEC 4, v2 write contract, check order step 1). The
  * server-independent {@code name} checks live here; the delimiter-dependent ones (step 5) need the server and
  * belong to the execution. {@code parent} is a verbatim full name and is not sanitized.
  */
-public final class CreateFolderTool {
+public final class CreateFolderTool implements ToolHandler {
 
     public static final String NAME = "create_folder";
     static final int NAME_MAX = 255;
@@ -56,7 +65,52 @@ public final class CreateFolderTool {
     public record Parsed(String account, String parent, String name, ToolError error) {
     }
 
-    private CreateFolderTool() {
+    /** Store-level LIST / NAMESPACE access of the handler (no folder is opened); a seam for tests. */
+    interface Directory {
+
+        /** Delimiter null: the server has no hierarchy. */
+        record Namespace(String prefix, Character delimiter) {
+        }
+
+        record Entry(String fullName, Character delimiter, List<String> attributes) {
+        }
+
+        Namespace personalNamespace(ImapLease lease) throws MessagingException;
+
+        /** The entry whose full name equals {@code fullName} (INBOX case-insensitively), if listed. */
+        Optional<Entry> list(ImapLease lease, String fullName) throws MessagingException;
+    }
+
+    /** The write commands; a seam for tests, production is {@link UidCommands}. */
+    interface Commands {
+        UidCommands.Result create(ImapLease lease, String name) throws MessagingException;
+
+        UidCommands.Result subscribe(ImapLease lease, String name) throws MessagingException;
+    }
+
+    private final AccountArgument accounts;
+    private final StoreLeases leases;
+    private final Directory directory;
+    private final Commands commands;
+
+    public CreateFolderTool(AccountArgument accounts, StoreLeases leases) {
+        this(accounts, leases, null, null);
+    }
+
+    CreateFolderTool(AccountArgument accounts, StoreLeases leases, Directory directory, Commands commands) {
+        this.accounts = Objects.requireNonNull(accounts, "accounts");
+        this.leases = Objects.requireNonNull(leases, "leases");
+        this.directory = directory;
+        this.commands = commands;
+    }
+
+    static Directory angusDirectory() {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public ToolOutcome handle(ToolCallContext ctx, Map<String, Object> args) {
+        throw new UnsupportedOperationException("not implemented");
     }
 
     /** Schema check, then the server-independent code checks (step 1); no I/O. */
