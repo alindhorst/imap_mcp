@@ -153,7 +153,48 @@ claude mcp add --transport http imap-mcp http://127.0.0.1:8080/mcp --header "Aut
 3. If it does not connect, look at the log file `<state>/logs/imap-mcp.log` (default `~/.local/state/imap-mcp/logs/imap-mcp.log`; `IMAP_MCP_STATE_DIR` and `IMAP_MCP_LOG_DIR` move it). A startup failure (bad config, unreadable password, locked keyring) is written as one line `imap-mcp: startup failed: ...` to stderr and, as soon as logging is up, also to that log file. In stdio mode stdout carries only the protocol, so the log file is the reliable place to look; the stderr line shows up in the client's MCP log if it keeps one. The logs never contain passwords, message bodies, subjects or addresses.
 4. `imap.trace: true` switches on the IMAP protocol trace. It can write message content (subjects, addresses, bodies) to the log; credentials stay redacted. It is off by default; enable it only to diagnose a problem and disable it afterwards.
 
-## 7. Pitfalls at a glance
+## 7. Write tools and read-only accounts
+
+Besides the read tools the server offers five write tools: `set_flags`, `move_messages`, `copy_messages`, `delete_messages` and `create_folder`. They are on by default for every account. The switch is `readOnly: true` on an account; there is no other setting and no per-tool selection. This example has one writable and one read-only account:
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+  - id: archive
+    host: imap.example.com
+    username: archive@example.com
+    password: env:ARCHIVE_IMAP_PASSWORD
+    readOnly: true
+```
+
+Check the result after a restart:
+
+- `tools/list` shows the five write tools. With `readOnly: true` on every account they are not listed at all.
+- `list_accounts` shows `read_only` for each account.
+- A write call on the read-only account (`archive` above) is refused with `PERMISSION_DENIED`; `details.reason` is `account_read_only`. Do not retry.
+
+Write tools lengthen a call, so `tools.deadline` must be at least 30 seconds unless every account is read-only (the default is 90 seconds). A shorter value with a writable account is refused at startup:
+
+```yaml invalid-deadline
+tools:
+  deadline: 20s
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+```
+
+The server then refuses to start with `tools.deadline: must be at least 30s while any account is not readOnly`. Raise the value to 30s or more, or mark every account `readOnly: true`.
+
+Undo: `move_messages` and `delete_messages` return new handles for the moved messages. To undo, move back with the returned handles (`move_messages` with those handles and the original folder as `target_folder`). `delete_messages` moves into the Trash folder, so delete moves to Trash; nothing is permanently deleted in this version.
+
+A server without the UIDPLUS extension cannot return the new handles; `copy_messages`, `move_messages` and `delete_messages` are then refused with `UNSUPPORTED` (`details.capability` is `UIDPLUS`).
+
+## 8. Pitfalls at a glance
 
 - Account `id`: only `[a-z0-9-]`, 1 to 32 characters (no underscores).
 - Replace `imap.example.com` and the example user names.
@@ -163,3 +204,7 @@ claude mcp add --transport http imap-mcp http://127.0.0.1:8080/mcp --header "Aut
 - stdio: keep both `-Xlog` flags, use absolute paths, put `-s` and `-e` before `--`.
 - Restart Claude Code after `claude mcp add`; check `/mcp`, then the log file.
 - HTTP: the token is in `<state>/http-token`; publish the port on loopback only.
+- Write tools are active on every account without `readOnly: true`.
+- There is no per-tool selection; `readOnly: true` turns all five write tools off for that account.
+- A server without UIDPLUS refuses copy/move/delete with `UNSUPPORTED`.
+- `tools.deadline` below 30s fails at startup while any account is writable.
