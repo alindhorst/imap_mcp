@@ -322,7 +322,7 @@ class ReadmeTest {
                 .contains("`\\Deleted` messages are not filtered out")
                 .contains("v3 gated deletion, `download_attachment`")
                 .contains("`security -g`").doesNotContain("only ASCII passwords");
-        assertThat(readme).contains("`mvn -Psmoke -pl imap-mcp-it -am verify`")
+        assertThat(readme).contains("mvn -Psmoke -pl imap-mcp-it -am verify")
                 .contains("IMAP_MCP_SMOKE_GMAIL_USER").contains("IMAP_MCP_SMOKE_GMAIL_PASSWORD")
                 .contains("IMAP_MCP_SMOKE_M365_USER").contains("IMAP_MCP_SMOKE_M365_PASSWORD")
                 .contains("IMAP_MCP_SMOKE_<GMAIL|M365>_HOST").contains("IMAP_MCP_SMOKE_WRITE=1")

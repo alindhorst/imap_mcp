@@ -10,7 +10,7 @@ Ten tools; the five v2 tools are write tools and are not listed when every accou
 
 - `list_accounts`: lists the configured accounts with label, provider, status and `read_only`; read-only.
 - `list_folders`: lists the folders of one account with role and attributes; read-only.
-- `search_messages`: searches one folder and returns a page of message summaries with handles; read-only.
+- `search_messages`: searches one folder and returns a page of message summaries with handles (`\Deleted` messages are not filtered out); read-only.
 - `get_message`: reads one message (envelope, a window of the text body, attachment list); read-only.
 - `list_attachments`: lists the attachments of one message (metadata only); read-only.
 - `set_flags`: adds or removes flags and keywords on up to 100 messages; write; refused on `readOnly` accounts.
@@ -23,7 +23,6 @@ Ten tools; the five v2 tools are write tools and are not listed when every accou
 
 - [`doc/SPEC.md`](doc/SPEC.md): scope, tools, phasing, architecture. Start here.
 - [`doc/TUTORIAL.md`](doc/TUTORIAL.md): getting started (build, config, keyring, stdio and HTTP setup, pitfalls).
-- [`CLAUDE.md`](CLAUDE.md): rules for AI-assisted development in this repo.
 
 ## Project layout
 
@@ -92,7 +91,7 @@ accounts:
 
 Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`), `readOnly` (default `false`). Every other option is optional; keys not listed below are rejected as unknown.
 
-`readOnly: true` makes the write tools refuse that account (error code `account_read_only`); `list_accounts` reports it as `read_only`. When every account is `readOnly: true`, the write tools are not listed at all. Example with one writable and one read-only account:
+`readOnly: true` makes the write tools refuse that account (error code `PERMISSION_DENIED` with `details.reason` `account_read_only`); `list_accounts` reports it as `read_only`. When every account is `readOnly: true`, the write tools are not listed at all. Example with one writable and one read-only account:
 
 ```yaml
 accounts:
@@ -125,7 +124,7 @@ Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`
 | `pool.maxLifetime` | `30m` | maximum connection age |
 | `pool.acquireTimeout` | `10s` | time to get a ready connection: pool wait plus connect, TLS and LOGIN |
 | `pool.capabilityTtl` | `10m` | cache time for server capabilities |
-| `tools.deadline` | `90s` | time limit per tool call |
+| `tools.deadline` | `90s` | time limit per tool call (at most 10m; at least 30s while a write tool is registered) |
 | `tools.maxCharsCap` | `100000` | upper bound for `max_chars` (configurable down only) |
 | `tools.maxBodyPartBytes` | `4MiB` | per-part source limit when reading bodies |
 | `tools.maxFolders` | `100` | folders listed at most |
@@ -250,7 +249,7 @@ accounts:
 - Moving into Drafts or Sent may be refused by Gmail (`UPSTREAM_ERROR`).
 - Flags and keywords apply to the message across labels.
 - The Gmail extension items `X-GM-LABELS`, `X-GM-MSGID` and `X-GM-THRID` are not used.
-- Angus Mail enables `UTF8=ACCEPT` when the server advertises it, which Gmail does.
+- Gmail advertises `UTF8=ACCEPT`, which Angus Mail enables (see Notes).
 
 Manual smoke checklist, to be run by the owner against a test Gmail account (use `example.com`-style test data, never a real mailbox):
 
@@ -284,7 +283,7 @@ accounts:
     password: keyring:imap-mcp/work@example.com
 ```
 
-The reference is resolved once at startup, so unlock the keyring first. Headless or SSH sessions without a D-Bus session bus cannot use `secret-tool`. On macOS only ASCII passwords are supported in this version.
+The reference is resolved once at startup, so unlock the keyring first. Headless or SSH sessions without a D-Bus session bus cannot use `secret-tool`. On macOS a non-ASCII password also works: when `security -w` prints hex, the password is read via `security -g` and decoded as strict UTF-8; an ambiguous or non-UTF-8 item fails startup, naming only the reference.
 
 ### IMAP protocol trace
 
@@ -298,8 +297,56 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 - MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
 - Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
 
+### Errors
+
+A failed tool call has `isError` true and carries the error object only in the text block, with no `structuredContent` (the output schema describes the success shape only):
+
+```
+{"error":{"code","message","retryable","hint","retry_after_ms"?,"details"?,"request_id"}}
+```
+
+Payloads carry no stack traces, host names or exception text. Codes:
+
+| Code | Retryable | Meaning |
+|---|---|---|
+| `INVALID_ARGUMENT` | no | an argument is missing, malformed or out of bounds; see `details` |
+| `ACCOUNT_NOT_FOUND` | no | unknown account handle |
+| `INVALID_HANDLE` | no | unknown, malformed, tampered or foreign message handle (one identical payload for all of them) |
+| `INVALID_CURSOR` | no | invalid cursor, or one used with other search criteria (`criteria_mismatch`) |
+| `STALE_REFERENCE` | no | the folder changed since the handle was issued (`details.reason` `uidvalidity_changed` or `folder_missing`); re-run the search |
+| `MESSAGE_NOT_FOUND` | no | the message no longer exists |
+| `FOLDER_NOT_FOUND` | no | the folder (or the Trash role folder) does not exist |
+| `AUTH_FAILED` | no | the IMAP server refused the login |
+| `SERVER_BUSY` | yes | pool or server limit reached; wait `retry_after_ms` (2000) |
+| `TIMEOUT` | yes | `tools.deadline` exceeded |
+| `UPSTREAM_UNAVAILABLE` | yes | the IMAP server is unreachable or dropped the connection |
+| `UPSTREAM_ERROR` | no | the IMAP server refused the command |
+| `UNSUPPORTED` | no | a needed capability is missing (for example `UIDPLUS`, `X-GM-EXT-1`, UTF-8 search) |
+| `INTERNAL_ERROR` | no | unexpected server error |
+| `PERMISSION_DENIED` | no | `details.reason` is `account_read_only`, `folder_read_only` or `server_denied` |
+| `QUOTA_EXCEEDED` | no | the mailbox is over quota; nothing is deleted permanently as a fallback |
+| `OUTCOME_UNKNOWN` | no | `copy_messages` only: the call was cut off after the first mutating command, so the copy may exist; repeating it could duplicate |
+
+`details` fields: `details.field` names the offending argument (`handles[i]` for the first bad handle), `details.reason` the specific rule, `details.max` the bound that was exceeded. For a write call cut off after the first mutating command (deadline, cancel, unexpected failure), `details.outcome` is `unknown`: the change may or may not have happened; for an idempotent tool the call is retryable, for `copy_messages` it is `OUTCOME_UNKNOWN`.
+
+### Smoke tests (opt-in)
+
+Smoke tests run against real accounts and never as part of a normal build. Run them with:
+
+```
+mvn -Psmoke -pl imap-mcp-it -am verify
+```
+
+- `IMAP_MCP_SMOKE_GMAIL_USER` and `IMAP_MCP_SMOKE_GMAIL_PASSWORD`: Gmail account and app password.
+- `IMAP_MCP_SMOKE_M365_USER` and `IMAP_MCP_SMOKE_M365_PASSWORD`: Microsoft 365 account and app password.
+- `IMAP_MCP_SMOKE_<GMAIL|M365>_HOST` and `_PORT`: optional host and port overrides.
+- `IMAP_MCP_SMOKE_WRITE=1`: also run the Gmail write checks.
+
+Every test is skipped, with a reason, when its credentials are not set.
+
 ### Notes
 
+- Angus Mail enables `UTF8=ACCEPT` by itself for any server that advertises `UTF8=ACCEPT` or `UTF8=ONLY` (not only Gmail; not configurable). Folder names a tool returns or accepts are the server-visible full names and round-trip verbatim either way.
 - New-mail search (`since` / `as_of`) assumes the clocks of the MCP host and the IMAP server agree within 5 minutes.
 - Security: publish on loopback only; `Host`/`Origin` checks and the bearer token apply; credentials are never in the image; literal passwords in the config are rejected; email content is untrusted input (possible prompt injection) and is returned as labeled data.
 
@@ -309,7 +356,7 @@ Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Post
 
 ## Scope by phase
 
-v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3 gated deletion and public multi-tenant mode. Details in SPEC sections 3 and 4.
+v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3 gated deletion, `download_attachment` and public multi-tenant mode. Details in SPEC sections 3 and 4.
 
 ## Coverage
 

@@ -1,6 +1,6 @@
 package de.alexanderlindhorst.imapmcp.it;
 
-/** Container images, referenced by tag and digest only (CLAUDE.md: pinned versions). */
+/** Container images, referenced by tag and digest only (pinned versions, SPEC 5.7). */
 public final class ItImages {
 
     public static final String DOVECOT =
