@@ -282,7 +282,7 @@ class CopyMessagesDovecotIT {
                 .noneMatch(c -> c.contains("bersicht"));
     }
 
-    /** The same mailbox seen from a connection without ENABLE: the copy target created via UTF-8 is there, in modified UTF-7. */
+    /** The same mailbox seen from a connection without ENABLE: the target created via UTF-8, in modified UTF-7. */
     @Test
     void aTargetUsedInTheUtf8StateIsTheSameMailboxSeenWithoutEnable() throws Exception {
         try (MailSeeder s = seeder("utf7")) {

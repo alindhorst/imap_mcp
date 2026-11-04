@@ -30,7 +30,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * {@code create_folder} against a real Dovecot 2.4.5, FULL profile (SPEC 4 "v2 write contract", 5.4, 5.8): hierarchy and
- * delimiter, subscription, idempotence, the name encoding on the wire (UTF-8 once Angus enabled UTF8=ACCEPT, modified UTF-7 against a server without it), the delimiter and missing-parent errors, INBOX, the
+ * delimiter, subscription, idempotence, the name encoding on the wire (UTF-8 once Angus enabled UTF8=ACCEPT, modified
+ * UTF-7 against a server without it), the delimiter and missing-parent errors, INBOX, the
  * read-only account and the set of IMAP commands the tool sends.
  *
  * <p>The tool is driven through the stdio client against the shaded jar with {@code imap.trace: true} (logger

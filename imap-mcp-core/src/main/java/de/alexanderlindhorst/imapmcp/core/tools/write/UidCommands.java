@@ -24,8 +24,9 @@ import org.eclipse.angus.mail.imap.protocol.IMAPProtocol;
  * response handlers see every response (an EXPUNGE keeps its message cache right). There is deliberately no method
  * that sends an arbitrary command. The tagged result is returned as a value, NO and BAD included, carrying the
  * response code for {@link WriteResponses}; only a connection-level failure (BYE, I/O) is thrown, by Angus's
- * {@code handleResult} / {@code doCommand}. Mailbox names are modified UTF-7 as in Angus's writeMailboxName (we
- * never ENABLE UTF8=ACCEPT). UID sets are never empty. Nothing is logged.
+ * {@code handleResult} / {@code doCommand}. Mailbox names go out as Angus's writeMailboxName writes them: modified
+ * UTF-7, or raw UTF-8 once UTF8=ACCEPT is enabled on the connection (our code never sends ENABLE; Angus does it at login
+ * when the server advertises UTF8=ACCEPT, SPEC 5.4). UID sets are never empty. Nothing is logged.
  */
 public final class UidCommands {
 
