@@ -76,6 +76,25 @@ class SearchInputTest {
                 .hasSize(3);
     }
 
+    // #25 rework: "$" also matches before a final line terminator, so the pattern must be anchored with \\A...\\z
+    @Test
+    void keywordWithTrailingLineTerminatorIsRejected() {
+        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc\u2028", "abc\u2029"}) {
+            assertField(args("keywords", List.of(bad)), "keywords[0]", "format");
+        }
+        assertThat(ok(args("keywords", List.of("abc"))).criteria().keywords()).containsExactly("abc");
+    }
+
+    @Test
+    void everyPublishedPatternIsAnchoredAgainstTrailingLineTerminators() {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) SearchSchema.inputSchema().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> items = (Map<String, Object>) ((Map<String, Object>) props.get("keywords")).get("items");
+        String pattern = (String) items.get("pattern");
+        assertThat(pattern).startsWith("\\A").endsWith("\\z");
+    }
+
     @Test
     void pageSizeBounds() {
         assertField(args("page_size", 0), "page_size", "out_of_range");
