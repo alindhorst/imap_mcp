@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import jakarta.mail.Folder;
 import jakarta.mail.FolderClosedException;
@@ -8,6 +9,8 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.ReadOnlyFolderException;
 import jakarta.mail.StoreClosedException;
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.eclipse.angus.mail.iap.CommandFailedException;
@@ -38,6 +41,8 @@ public final class ImapLease implements AutoCloseable {
     private final AtomicBoolean broken = new AtomicBoolean();
     private final AtomicBoolean finished = new AtomicBoolean();
     private final Admission.Permit permit; // nullable
+    private final MetricsRecorder metrics;
+    private volatile boolean wrote; // a READ_WRITE folder was opened or a write command timed: not a "read" lease
     private IMAPFolder folder; // worker thread only
     // Set by the BYE watch (synchronously on the thread that reads the response, before close(false) returns).
     private final AtomicBoolean connectionLost = new AtomicBoolean();
@@ -45,7 +50,16 @@ public final class ImapLease implements AutoCloseable {
     private IMAPProtocol watched; // protocol carrying byeWatch; worker thread only
     private WriteCapabilities forcedCapabilities; // test seam, package-private setter only
 
+    /** Tool name under which lease-level IMAP latencies are recorded (SPEC 5.6). */
+    public static final String METRIC_TOOL = "imap";
+
     ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx, Admission.Permit permit) {
+        this(pool, key, store, ctx, permit, MetricsRecorder.NOOP);
+    }
+
+    ImapLease(StorePool pool, PoolKey key, IMAPStore store, ToolCallContext ctx, Admission.Permit permit,
+            MetricsRecorder metrics) {
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.pool = pool;
         this.key = key;
         this.store = Objects.requireNonNull(store, "store");
@@ -71,9 +85,11 @@ public final class ImapLease implements AutoCloseable {
         closeFolder();
         ensureUsable();
         ensureConnected();
+        Instant start = metrics.now();
         try {
             IMAPFolder f = (IMAPFolder) store.getFolder(folderFullName);
             f.open(Folder.READ_ONLY);
+            record("open", start);
             folder = f;
             watchForBye(f);
             return f;
@@ -92,9 +108,12 @@ public final class ImapLease implements AutoCloseable {
         closeFolder();
         ensureUsable();
         ensureConnected();
+        wrote = true;
+        Instant start = metrics.now();
         try {
             IMAPFolder f = (IMAPFolder) store.getFolder(folderFullName);
             f.open(Folder.READ_WRITE);
+            record("open", start);
             folder = f;
             watchForBye(f);
             return f;
@@ -207,6 +226,48 @@ public final class ImapLease implements AutoCloseable {
     /** Test seam: forces what {@link #capabilities()} reports. Not reachable from production wiring. */
     void overrideCapabilities(WriteCapabilities forced) {
         this.forcedCapabilities = forced;
+    }
+
+    /** The lease whose work is running on this thread (bound by {@link StoreLeases#withLease}), if any. */
+    private static final ScopedValue<ImapLease> CURRENT = ScopedValue.newInstance();
+
+    /** Work timed by {@link #timedWrite}. */
+    @FunctionalInterface
+    public interface TimedWork<T> {
+        T run() throws MessagingException;
+    }
+
+    /**
+     * Runs one write command and records its latency under {@code op} for the lease of the current call; the lease then
+     * no longer counts as a read lease. Without a bound lease (no {@code withLease}) it just runs. The command
+     * itself (including a NO answer or a connection failure) is timed; no names or arguments are recorded.
+     */
+    public static <T> T timedWrite(String op, TimedWork<T> work) throws MessagingException {
+        ImapLease lease = CURRENT.isBound() ? CURRENT.get() : null;
+        if (lease == null) {
+            return work.run();
+        }
+        lease.wrote = true;
+        Instant start = lease.metrics.now();
+        try {
+            return work.run();
+        } finally {
+            lease.record(op, start);
+        }
+    }
+
+    static <T> T runBound(ImapLease lease, TimedWork<T> work) throws MessagingException {
+        return ScopedValue.where(CURRENT, lease).call(work::run);
+    }
+
+    /** Records one IMAP operation of this lease under the hashed tenant of its key; never throws. */
+    void record(String op, Instant start) {
+        metrics.operation(key.tenantId(), METRIC_TOOL, op, Duration.between(start, metrics.now()));
+    }
+
+    /** True once the lease opened a READ_WRITE folder; such a lease is not counted in the "read" bucket. */
+    boolean wrote() {
+        return wrote;
     }
 
     /** The lease must not return its Store to the pool (error, timeout, discard-worthy condition). */

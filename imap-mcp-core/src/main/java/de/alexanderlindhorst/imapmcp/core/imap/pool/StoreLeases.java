@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.MessagingException;
 import java.net.ConnectException;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
@@ -67,11 +68,16 @@ public final class StoreLeases {
     public <T> T withLease(PoolKey key, ToolCallContext ctx, LeaseWork<T> work) throws MessagingException {
         Objects.requireNonNull(work, "work");
         try (ImapLease lease = lease(key, ctx)) {
+            Instant start = metrics.now();
             try {
-                return work.apply(lease);
+                return ImapLease.runBound(lease, () -> work.apply(lease));
             } catch (Throwable e) {
                 lease.markBroken();
                 throw e;
+            } finally {
+                if (!lease.wrote()) {
+                    lease.record("read", start); // one bucket per read lease operation (SPEC 5.6)
+                }
             }
         }
     }
@@ -125,6 +131,10 @@ public final class StoreLeases {
             store = abandon(result, borrower, key, e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
+            if (isAuthFailure(cause)) { // once per failed connect, whichever caller (tool call or probe) triggered it
+                metrics.authFailure(key.tenantId());
+                ctx.markAuthFailureCounted();
+            }
             throw new StoreUnavailableException(
                     cause instanceof NoSuchElementException ? new ConnectException("pool exhausted") : cause);
         }
@@ -132,7 +142,16 @@ public final class StoreLeases {
             discard(key, store);
             throw new StoreUnavailableException(new InterruptedException("cancelled"));
         }
-        return new ImapLease(pool, key, store, ctx, permit);
+        return new ImapLease(pool, key, store, ctx, permit, metrics);
+    }
+
+    private static boolean isAuthFailure(Throwable t) {
+        for (int depth = 0; t != null && depth < 8; depth++, t = t.getCause()) {
+            if (t instanceof AuthenticationFailedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Marks the borrow as abandoned; returns the Store if it arrived in the meantime, else throws. */

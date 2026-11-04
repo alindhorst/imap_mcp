@@ -24,6 +24,7 @@ public final class ToolCallContext {
     private volatile String boundAccountHash;
     private volatile Instant deadline;
     private volatile boolean mutationStarted;
+    private volatile boolean authFailureCounted;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -47,6 +48,18 @@ public final class ToolCallContext {
      */
     public void markMutationStarted() {
         mutationStarted = true;
+    }
+
+    /**
+     * The lease layer counted a refused login of this call in the metrics (SPEC 5.6); the executor then does not count
+     * the resulting AUTH_FAILED outcome a second time.
+     */
+    public void markAuthFailureCounted() {
+        authFailureCounted = true;
+    }
+
+    boolean authFailureCounted() {
+        return authFailureCounted;
     }
 
     public boolean mutationStarted() {

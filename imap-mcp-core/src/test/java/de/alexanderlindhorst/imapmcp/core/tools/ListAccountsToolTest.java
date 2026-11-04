@@ -57,6 +57,10 @@ class ListAccountsToolTest {
     StorePool pool;
     Admission admission;
     CapabilityCache cache;
+    final de.alexanderlindhorst.imapmcp.core.crypto.LogIds logIds = new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(
+            new de.alexanderlindhorst.imapmcp.core.crypto.KeyRing(1, Map.of(1, new byte[32])));
+    final de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder recorder =
+            new de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder(logIds, Clock.systemUTC());
     ListAccountsTool tool;
     InMemoryAccountRepository repo;
     final AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-01-01T00:00:00Z"));
@@ -130,9 +134,9 @@ class ListAccountsToolTest {
                     return missingSecrets != null && missingSecrets.contains(a.value()) ? Optional.empty()
                         : Optional.of(new Secret(PASSWORDS.get(a.value()).toCharArray()));
                 }, cache,
-                byKey::get, s);
+                byKey::get, s, recorder);
         admission = new Admission(s);
-        tool = new ListAccountsTool(repo, cache, new StoreLeases(pool, Duration.ofSeconds(10), admission), 4);
+        tool = new ListAccountsTool(repo, cache, new StoreLeases(pool, Duration.ofSeconds(10), admission, recorder), 4);
     }
 
     void wireDefault() {
@@ -256,6 +260,19 @@ class ListAccountsToolTest {
         assertThat(accounts.get(0)).containsEntry("status", "ok");
         assertThat(accounts.get(1)).containsEntry("status", "auth_failed").containsEntry("capabilities", null)
                 .containsEntry("capabilities_detected_at", null);
+    }
+
+    @Test
+    void failedProbeLoginCountsOneAuthFailureForTheTenantWhileTheCallSucceeds() {
+        wire(Map.of(A, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null),
+                account("bad", "Bad", "bad", Flavor.GENERIC, null)),
+                B, List.of(account("alpha", "Alpha", "alpha", Flavor.GENERIC, null))));
+        assertThat(list(A)).hasSize(2); // returns normally
+        list(B);
+        var tenants = recorder.snapshot().tenants();
+        assertThat(tenants).filteredOn(t -> t.tenant().equals(logIds.tenant(A.value()))).singleElement()
+                .satisfies(t -> assertThat(t.authFailures()).isEqualTo(1));
+        assertThat(tenants).noneMatch(t -> t.tenant().equals(logIds.tenant(B.value())) && t.authFailures() > 0);
     }
 
     @Test
