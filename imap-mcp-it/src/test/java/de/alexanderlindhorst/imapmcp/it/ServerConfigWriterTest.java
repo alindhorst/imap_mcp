@@ -63,4 +63,48 @@ class ServerConfigWriterTest {
         assertThat(ConfigLoader.load(cfg.configFile(), cfg.env()).imap().connectTimeout())
                 .isEqualTo(java.time.Duration.ofMillis(500));
     }
+
+    @Test
+    void writeToolsAreUsableByDefault() throws Exception {
+        ServerConfig cfg = new ServerConfigWriter(dir)
+                .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw").write();
+
+        AppConfig loaded = ConfigLoader.load(cfg.configFile(), cfg.env());
+        assertThat(loaded.writeToolsUsable()).isTrue();
+        assertThat(loaded.accounts()).extracting(AppConfig.Account::readOnly).containsExactly(false);
+    }
+
+    @Test
+    void allAccountsReadOnlyDisablesTheWriteTools() throws Exception {
+        ServerConfig cfg = new ServerConfigWriter(dir)
+                .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw")
+                .account("home", "localhost", 31143, MailAccount.Security.STARTTLS, "bob", "pw")
+                .readOnly("work").readOnly("home").write();
+
+        AppConfig loaded = ConfigLoader.load(cfg.configFile(), cfg.env());
+        assertThat(loaded.writeToolsUsable()).isFalse();
+        assertThat(loaded.accounts()).extracting(AppConfig.Account::readOnly).containsExactly(true, true);
+    }
+
+    @Test
+    void mixedReadOnlyKeepsTheWriteToolsAndEachAccountsFlag() throws Exception {
+        ServerConfig cfg = new ServerConfigWriter(dir)
+                .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw")
+                .account("home", "localhost", 31143, MailAccount.Security.STARTTLS, "bob", "pw")
+                .readOnly("home").write();
+
+        AppConfig loaded = ConfigLoader.load(cfg.configFile(), cfg.env());
+        assertThat(loaded.writeToolsUsable()).isTrue();
+        assertThat(loaded.accounts()).extracting(AppConfig.Account::id, AppConfig.Account::readOnly)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("work", false),
+                        org.assertj.core.groups.Tuple.tuple("home", true));
+    }
+
+    @Test
+    void readOnlyOfAnUnknownAccountIsRejected() {
+        ServerConfigWriter w = new ServerConfigWriter(dir)
+                .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> w.readOnly("nope"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

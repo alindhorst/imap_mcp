@@ -6,9 +6,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Writes a server config (SPEC 5.7) plus state and log directories below a root dir (normally a {@code @TempDir}).
@@ -23,6 +25,7 @@ public final class ServerConfigWriter {
     private final Path root;
     private final List<Account> accounts = new ArrayList<>();
     private final Map<String, String> env = new LinkedHashMap<>();
+    private final Set<String> readOnly = new LinkedHashSet<>();
     private Path trustStore;
     private String extraYaml = "";
 
@@ -34,6 +37,15 @@ public final class ServerConfigWriter {
             String username, String password) {
         accounts.add(new Account(id, host, port, security, username));
         env.put(passwordVariable(id), password);
+        return this;
+    }
+
+    /** Marks an already added account {@code readOnly: true} (SPEC 5.3); write tools stay enabled by default. */
+    public ServerConfigWriter readOnly(String accountId) {
+        if (accounts.stream().noneMatch(a -> a.id().equals(accountId))) {
+            throw new IllegalArgumentException("no such account: " + accountId);
+        }
+        readOnly.add(accountId);
         return this;
     }
 
@@ -60,6 +72,9 @@ public final class ServerConfigWriter {
                             ? "starttls" : "implicit-tls").append('\n')
                     .append("    username: ").append(a.username()).append('\n')
                     .append("    password: \"env:").append(passwordVariable(a.id())).append("\"\n");
+            if (readOnly.contains(a.id())) {
+                yaml.append("    readOnly: true\n");
+            }
         }
         yaml.append(extraYaml);
         Path file = root.resolve("config.yaml");
