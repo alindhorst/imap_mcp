@@ -134,7 +134,7 @@ class WriteInterruptionIT {
         }
 
         TraceScript on(String command, Action action) {
-            steps.add(new Step(line -> line.matches("[A-Z]\\d+ " + command + "\\b.*"), action));
+            steps.add(new Step(line -> line.matches("[A-Z]+\\d+ " + command + "\\b.*"), action));
             return this;
         }
 
@@ -308,7 +308,7 @@ class WriteInterruptionIT {
 
         Result r = f.moveToTarget(handle);
 
-        assertThat(script.done()).as("the fault was injected after SELECT and the pre-check").isTrue();
+        assertThat(script.done()).as("the fault was injected after SELECT and the pre-check: %s", r.structured()).isTrue();
         assertThat(r.isError()).isTrue();
         assertThat(r.error().get("code")).isEqualTo("TIMEOUT");
         assertThat(r.error().get("retryable")).isEqualTo(true);
