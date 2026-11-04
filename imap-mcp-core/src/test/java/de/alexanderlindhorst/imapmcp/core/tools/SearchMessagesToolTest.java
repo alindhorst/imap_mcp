@@ -532,6 +532,20 @@ class SearchMessagesToolTest {
         }
     }
 
+    // #25 audit: free-text criteria with CR/LF go out as a non-synchronizing literal, so they cannot split the command.
+    // GreenMail may answer BAD to the literal (no LITERAL+ in SEARCH); only the shape of the sent commands is asserted.
+    @Test
+    void freeTextWithLineBreaksIsSentAsLiteralAndDoesNotSplitTheCommand() throws Exception {
+        env.deliver(1);
+        env.ok(SearchEnv.T1, args()); // warm the pooled connection
+        for (String field : new String[] {"from", "to", "subject", "text"}) {
+            List<String> cmds = commands(() -> env.call(SearchEnv.T1, args(field, "a\r\nb\r\n")));
+            assertThat(cmds).hasSize(3);
+            assertThat(cmds.get(1)).containsPattern("SEARCH \\w+ \\{\\d+\\+\\}$");
+            assertThat(cmds).noneMatch(c -> c.contains("\n") || c.contains("\r"));
+        }
+    }
+
     // #29 AC1
     @Test
     void gmailRawOnAServerWithoutXGmExt1IsUnsupportedAndNoSearchIsSent() throws Exception {
