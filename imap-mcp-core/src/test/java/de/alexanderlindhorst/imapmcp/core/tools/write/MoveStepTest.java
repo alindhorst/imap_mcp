@@ -93,4 +93,22 @@ class MoveStepTest {
         assertThat(moves).hasValue(0);
         assertThat(gateCalls).hasValue(0);
     }
+
+    @Test
+    void severalUntaggedCopyUidResponsesOfOneMoveAreCombined() throws Exception {
+        var out = step(true, "* OK [COPYUID 9 3:4 30:31] chunk", "* OK [COPYUID 9 5 32] chunk", "A1 OK done")
+                .apply(null, present(3, 4, 5), gate);
+        assertThat(out).extracting(BulkResult.Item::newHandle)
+                .containsExactly("Target/9/30", "Target/9/31", "Target/9/32");
+    }
+
+    @Test
+    void copyUidResponsesWithDifferentUidValidityCountAsNoCopyUid() throws Exception {
+        var out = step(true, "* OK [COPYUID 9 3 30] chunk", "* OK [COPYUID 8 4 31] chunk", "A1 OK done")
+                .apply(null, present(3, 4), gate);
+        assertThat(out).allSatisfy(i -> {
+            assertThat(i.status()).isEqualTo(ItemStatus.OK);
+            assertThat(i.note()).isEqualTo(BulkResult.NEW_UID_UNKNOWN);
+        });
+    }
 }
