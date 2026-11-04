@@ -122,7 +122,7 @@ class MoveMessagesToolTest {
 
     // ---- helpers ----
 
-    private void createFolder(String name) {
+    private void createFolder(String name) throws Exception {
         greenMail.getManagers().getImapHostManager().createMailbox(user, name);
     }
 
@@ -152,7 +152,9 @@ class MoveMessagesToolTest {
             f.open(Folder.READ_ONLY);
             Map<Long, String> out = new LinkedHashMap<>();
             for (Message m : f.getMessages()) {
-                out.put(f.getUID(m), m.getSubject() + "|" + m.getFlags().toString());
+                Flags flags = new Flags(m.getFlags());
+                flags.remove(Flags.Flag.RECENT); // SELECT clears \\Recent; not part of the contract (SPEC 5.4)
+                out.put(f.getUID(m), m.getSubject() + "|" + flags);
             }
             long ignored = f.getUIDValidity();
             f.close(false);
@@ -253,12 +255,12 @@ class MoveMessagesToolTest {
         assertThat(snapshot("Source2")).isEmpty();
         String w = wire();
         assertThat(w).contains("UID MOVE");
-        assertThat(w).doesNotContain("UID COPY").doesNotContain("UID STORE").doesNotContain("EXPUNGE ")
-                .doesNotContain(" UID EXPUNGE");
+        assertThat(w).doesNotContain("UID COPY").doesNotContain("UID STORE").doesNotContainPattern("(?m)^\\S+ (UID )?EXPUNGE");
         // old handles are gone, new ones resolve
+        long inboxValidity = validity("INBOX");
         leases.withLease(poolKey(), new ToolCallContext(new AccountContext(T1), "r"), lease -> {
             var old = locator().locate(lease, new ToolCallContext(new AccountContext(T1), "r"),
-                    new MessageRef("INBOX", validity("INBOX"), inboxUids.get(0)));
+                    new MessageRef("INBOX", inboxValidity, inboxUids.get(0)));
             assertThat(((MessageLocator.Located.Failed) old).error().code()).isEqualTo(ErrorCode.MESSAGE_NOT_FOUND);
             var ref = ((MessageHandles.Decoded.Ok) handles.decode(T1, account.id(),
                     (String) results(out).get(0).get("new_handle"))).ref();
@@ -354,11 +356,11 @@ class MoveMessagesToolTest {
         Map<Long, String> expectedSource = new LinkedHashMap<>(sourceBefore);
         expectedSource.remove(uids.get(0));
         assertThat(sourceAfter).isEqualTo(expectedSource);
-        assertThat(sourceAfter.get(uids.get(2))).contains("DELETED");
+        assertThat(sourceAfter.get(uids.get(2))).contains("\\Deleted");
         assertThat(targetBefore).isEmpty();
         assertThat(targetAfter).hasSize(1);
         assertThat(targetAfter.values().iterator().next()).doesNotContain("SEEN");
-        assertThat(wire()).doesNotContain("\\Seen");
+        assertThat(wire()).doesNotContainPattern("(?m)^\\S+ (UID )?STORE").doesNotContain("BODY[").doesNotContainPattern("(?m)^\\S+ EXPUNGE");
     }
 
     @Test
