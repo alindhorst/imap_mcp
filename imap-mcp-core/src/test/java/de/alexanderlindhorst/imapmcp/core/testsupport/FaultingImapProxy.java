@@ -1,4 +1,4 @@
-package de.alexanderlindhorst.imapmcp.core.tools;
+package de.alexanderlindhorst.imapmcp.core.testsupport;
 
 import com.icegreen.greenmail.util.DummySSLServerSocketFactory;
 import com.icegreen.greenmail.util.DummySSLSocketFactory;
@@ -16,9 +16,9 @@ import java.util.List;
  * instead of forwarding it, to exercise error paths a well-behaved server never produces. A command matches
  * when its line contains {@code needle}; {@link Mode#NONE} relays everything.
  */
-final class FaultingImapProxy implements AutoCloseable {
+public final class FaultingImapProxy implements AutoCloseable {
 
-    enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION }
+    public enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION }
 
     private final ServerSocket server;
     private final int targetPort;
@@ -27,28 +27,28 @@ final class FaultingImapProxy implements AutoCloseable {
     private volatile String needle = "BODYSTRUCTURE";
     private volatile String noText = "rejected";
 
-    FaultingImapProxy(int targetPort) throws IOException {
+    public FaultingImapProxy(int targetPort) throws IOException {
         this.targetPort = targetPort;
         this.server = DummySSLServerSocketFactory.getDefault().createServerSocket(0);
         Thread.ofVirtual().name("faulting-proxy-accept").start(this::acceptLoop);
     }
 
-    int port() {
+    public int port() {
         return server.getLocalPort();
     }
 
-    void rejectWithNo(String needle, String text) {
+    public void rejectWithNo(String needle, String text) {
         this.needle = needle;
         this.noText = text;
         this.mode = Mode.REJECT_WITH_NO;
     }
 
-    void dropConnectionOn(String needle) {
+    public void dropConnectionOn(String needle) {
         this.needle = needle;
         this.mode = Mode.DROP_CONNECTION;
     }
 
-    void relay() {
+    public void relay() {
         this.mode = Mode.NONE;
     }
 
@@ -95,7 +95,7 @@ final class FaultingImapProxy implements AutoCloseable {
                 }
                 String cmd = line.toString(java.nio.charset.StandardCharsets.ISO_8859_1);
                 line.reset();
-                if (mode != Mode.NONE && cmd.contains(" FETCH ") && cmd.contains(needle)) {
+                if (mode != Mode.NONE && cmd.contains(needle)) {
                     if (mode == Mode.DROP_CONNECTION) {
                         return;
                     }
