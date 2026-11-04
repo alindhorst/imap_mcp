@@ -585,4 +585,21 @@ class GetMessageToolTest {
                 Map.of("account", acctHandle, "message", "m", "max_chars", 5001)));
         assertThat(((Map<?, ?>) e.get("details")).get("max")).isEqualTo(5000);
     }
+
+    // #269: a domain-less address (IMAP host NIL) must degrade the field, never fail or drop the message
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void domainlessFromAndToStillYieldGetMessageAndListAttachments() throws Exception {
+        MimeMessage m = new MimeMessage(MAIL, new java.io.ByteArrayInputStream((
+                "From: smoke-write\r\nTo: smoke-write\r\nSubject: odd\r\nDate: Thu, 05 Mar 2026 10:00:00 +0000\r\n"
+                + "\r\nbody text\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        String h = deliver(m);
+        Map<String, Object> out = ok(call(h, Map.of()));
+        assertThat(out.get("untrusted")).isInstanceOf(Map.class);
+        assertThat(String.valueOf(out)).contains("body text");
+        Map<String, Object> att = ok(attachments.handle(new ToolCallContext(new AccountContext(A), "rid"),
+                Map.of("account", acctHandle, "message", h)));
+        assertThat(att).containsEntry("total", 0);
+    }
 }
