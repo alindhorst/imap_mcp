@@ -72,7 +72,13 @@ public final class DeleteMessagesTool implements ToolHandler {
     private final MoveStep.Mover mover;
 
     public DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock) {
-        this(preflight, leases, handles, clock, TargetResolver::resolveTrash, UidCommands::uidMove);
+        this(preflight, leases, handles, clock, TargetResolver::resolveTrash);
+    }
+
+    /** Default wiring with a substituted Trash resolution (tests). */
+    DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock,
+            TrashResolver trash) {
+        this(preflight, leases, handles, clock, trash, UidCommands::uidMove);
     }
 
     DeleteMessagesTool(WritePreflight preflight, StoreLeases leases, MessageHandles handles, Clock clock,

@@ -312,7 +312,7 @@ class DeleteMessagesToolTest {
     @Test
     void withoutMoveTheFallbackCopiesStoresDeletedAndUidExpungesExactlyTheCopiedUids() throws Exception {
         // the default wiring (no Mover seam), as AppComponents builds it
-        tool = new DeleteMessagesTool(preflight, leases, handles, Clock.systemUTC(), trashStub, null);
+        tool = new DeleteMessagesTool(preflight, leases, handles, Clock.systemUTC(), trashStub);
         var inbox = greenMail.getManagers().getImapHostManager().getFolder(user, "INBOX");
         List<Long> uids = new ArrayList<>(snapshot("INBOX").keySet());
         inbox.setFlags(new Flags(Flags.Flag.DELETED), true, uids.get(2), null, false);
