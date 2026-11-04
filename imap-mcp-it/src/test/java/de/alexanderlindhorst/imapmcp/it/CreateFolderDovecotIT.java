@@ -23,6 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.Container;
@@ -191,20 +192,45 @@ class CreateFolderDovecotIT {
         assertThat(commands).anyMatch(c -> verb(c, "SUBSCRIBE")).noneMatch(c -> verb(c, "CREATE"));
     }
 
+    /** The name encoding follows the connection state (Angus itself enables UTF8=ACCEPT, see the disabled test). */
     @Test
-    void aNestedNonAsciiFolderIsSentAsModifiedUtf7AndListedVerbatim() throws Exception {
+    void aNestedNonAsciiFolderRoundTripsAndTheWireNameFollowsTheConnectionState() throws Exception {
         ok("create_folder", args("account", account("nested"), "name", "Projekte"));
         long before = logSize();
         Result r = ok("create_folder",
-                args("account", account("nested"), "parent", "Projekte", "name", "Übersicht 2026"));
-        String full = "Projekte" + delimiter + "Übersicht 2026";
+                args("account", account("nested"), "parent", "Projekte", "name", "\u00dcbersicht 2026"));
+        String full = "Projekte" + delimiter + "\u00dcbersicht 2026";
         assertThat(r.structured).containsEntry("folder", full).containsEntry("parent", "Projekte")
                 .containsEntry("delimiter", delimiter).containsEntry("created", true)
                 .containsEntry("subscribed", true);
         List<String> commands = commandsSince(before);
-        assertThat(commands).anyMatch(c -> verb(c, "CREATE") && c.contains("&ANw-bersicht 2026"))
-                .noneMatch(c -> c.contains("Ü"));
+        String create = commands.stream().filter(c -> verb(c, "CREATE")).findFirst().orElseThrow();
+        if (utf8Enabled()) {
+            assertThat(create).contains("\u00dcbersicht 2026");
+        } else {
+            assertThat(create).contains("&ANw-bersicht 2026").doesNotContain("\u00dc");
+        }
         assertThat(folders("nested")).contains(full);
+        Result again = ok("create_folder",
+                args("account", account("nested"), "parent", "Projekte", "name", "\u00dcbersicht 2026"));
+        assertThat(again.structured).containsEntry("folder", full).containsEntry("created", false)
+                .containsEntry("subscribed", true);
+    }
+
+    @Test
+    @Disabled("SPEC 5.4 'Never ENABLE UTF8=ACCEPT' cannot be met with Angus 2.0.5; open owner decision, see #179 comment")
+    void strictSpecNonAsciiNameIsModifiedUtf7AndUtf8IsNeverEnabled() throws Exception {
+        long before = logSize();
+        ok("create_folder", args("account", account("basic"), "name", "\u00dcbersicht Strikt"));
+        List<String> commands = commandsSince(before);
+        assertThat(commands).anyMatch(c -> verb(c, "CREATE") && c.contains("&ANw-bersicht Strikt"))
+                .noneMatch(c -> c.contains("\u00dc"));
+        assertThat(utf8Enabled()).isFalse();
+    }
+
+    private static boolean utf8Enabled() throws IOException {
+        return Files.readString(config.logFile(), StandardCharsets.UTF_8).lines()
+                .anyMatch(l -> l.contains(TRACE_LOGGER) && l.contains("ENABLE UTF8=ACCEPT"));
     }
 
     @Test
