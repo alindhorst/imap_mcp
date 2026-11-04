@@ -119,16 +119,14 @@ public final class AppComponents implements AutoCloseable {
             throw new AppStartupException("Invalid secret reference in " + paths.configFile() + ": "
                     + e.getMessage(), e);
         }
-        char[] handleKey = resolveChars(credentials, config.security().handleKey(), "security.handleKey");
-        char[] token = resolveChars(credentials, config.http().token(), "http.token");
-        StateDirectory state = new StateDirectory(paths.stateDir(), token, handleKey);
-        wipe(handleKey);
+        char[] token = resolveChars(credentials, config.http().token(), "http.token", paths);
+        StateDirectory state = new StateDirectory(paths.stateDir(), token, null);
         wipe(token);
 
         byte[] salt;
         KeyRing keys;
         try {
-            keys = new KeyRing(1, Map.of(1, state.handleKey()));
+            keys = buildKeyRing(config.security(), credentials, state, paths);
             salt = state.installationSalt();
         } catch (StateDirectoryException | IllegalArgumentException e) {
             throw new AppStartupException("Cannot set up the key material under " + paths.stateDir() + ": "
@@ -214,15 +212,86 @@ public final class AppComponents implements AutoCloseable {
         WriteCallLog.error(tool, code, duration);
     }
 
-    private static char[] resolveChars(RefCredentialStore store, SecretRef ref, String key) {
+    private static char[] resolveChars(RefCredentialStore store, SecretRef ref, String key, AppPaths paths) {
         if (ref == null) {
             return null;
         }
         try (Secret s = store.resolve(ref)) {
             return s.chars().clone();
         } catch (SecretResolutionException e) {
-            throw new AppStartupException("Cannot resolve " + key + ": " + e.getMessage(), e);
+            throw new AppStartupException("Cannot resolve " + key + " in " + paths.configFile() + ": " + e.getMessage(),
+                    e);
         }
+    }
+
+    /**
+     * SPEC 5.4/5.7: id 1 is security.handleKey, else the handleKeys entry with id 1, else the handle-key state file
+     * (read or created while id 1 signs, otherwise only read). Errors name the config path, never key material.
+     */
+    private static KeyRing buildKeyRing(AppConfig.Security sec, RefCredentialStore credentials, StateDirectory state,
+            AppPaths paths) {
+        Map<Integer, byte[]> masters = new java.util.TreeMap<>();
+        Map<Integer, String> origin = new java.util.HashMap<>();
+        if (sec.handleKey() != null) {
+            add(masters, origin, 1, "security.handleKey", sec.handleKey(), credentials, paths);
+        }
+        for (int i = 0; i < sec.handleKeys().size(); i++) {
+            AppConfig.HandleKey k = sec.handleKeys().get(i);
+            add(masters, origin, k.id(), "security.handleKeys[" + i + "].key", k.key(), credentials, paths);
+        }
+        if (!masters.containsKey(1)) {
+            if (sec.signingKeyId() == 1) {
+                register(masters, origin, 1, "the handle-key state file", state.handleKey(), paths);
+            } else {
+                state.existingHandleKey().ifPresent(
+                        k -> register(masters, origin, 1, "the handle-key state file", k, paths));
+            }
+        }
+        if (!masters.containsKey(sec.signingKeyId())) {
+            throw new AppStartupException("security.signingKeyId in " + paths.configFile() + ": no key with id "
+                    + sec.signingKeyId() + " in the key ring");
+        }
+        return new KeyRing(sec.signingKeyId(), masters);
+    }
+
+    private static void add(Map<Integer, byte[]> masters, Map<Integer, String> origin, int id, String path,
+            SecretRef ref, RefCredentialStore credentials, AppPaths paths) {
+        char[] chars = resolveChars(credentials, ref, path, paths);
+        try {
+            byte[] key = decodeKey(chars, path, paths);
+            register(masters, origin, id, path, key, paths);
+        } finally {
+            wipe(chars);
+        }
+    }
+
+    /** base64url without padding of exactly 32 bytes; the value is never echoed. */
+    private static byte[] decodeKey(char[] chars, String path, AppPaths paths) {
+        String text = new String(chars);
+        try {
+            if (text.indexOf('=') < 0) {
+                byte[] b = java.util.Base64.getUrlDecoder().decode(text);
+                if (b.length == 32) {
+                    return b;
+                }
+            }
+        } catch (IllegalArgumentException ignored) {
+            // reported below without the value
+        }
+        throw new AppStartupException(path + " in " + paths.configFile()
+                + ": must be the base64url (no padding) encoding of exactly 32 bytes");
+    }
+
+    private static void register(Map<Integer, byte[]> masters, Map<Integer, String> origin, int id, String path,
+            byte[] key, AppPaths paths) {
+        for (var e : masters.entrySet()) {
+            if (java.util.Arrays.equals(e.getValue(), key)) {
+                throw new AppStartupException(path + " in " + paths.configFile() + ": same key as "
+                        + origin.get(e.getKey()) + " (a key must be used under one id only)");
+            }
+        }
+        masters.put(id, key);
+        origin.put(id, path);
     }
 
     private static void wipe(char[] c) {
