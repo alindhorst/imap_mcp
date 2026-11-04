@@ -241,6 +241,29 @@ accounts:
     password: env:GMAIL_APP_PASSWORD
 ```
 
+**Write tools on Gmail.** The write tools contain no Gmail-specific code; the label effects below come from the Gmail server and are tested against GreenMail and Dovecot only, not against real Gmail. On Gmail, folders are labels:
+
+- A copy adds a label. If the message already has the label, no duplicate is made and the returned handle points to the existing message.
+- A move replaces the source label with the target label. Moving into All Mail archives the message; moving out of Trash untrashes it. A message moved out of All Mail stays there, so repeating the call does not report `already_gone` and the old handle may stay valid.
+- Moving or copying into Junk, Starred or Important has the effect of that label.
+- `delete_messages` moves the message to the Trash role folder and removes all labels; Gmail purges Trash after 30 days.
+- Moving into Drafts or Sent may be refused by Gmail (`UPSTREAM_ERROR`).
+- Flags and keywords apply to the message across labels.
+- The Gmail extension items `X-GM-LABELS`, `X-GM-MSGID` and `X-GM-THRID` are not used.
+- Angus Mail enables `UTF8=ACCEPT` when the server advertises it, which Gmail does.
+
+Manual smoke checklist, to be run by the owner against a test Gmail account (use `example.com`-style test data, never a real mailbox):
+
+- COPYUID on labels: copy a message into a label and check the returned handle opens the message.
+- Copy into a label the message already has: no duplicate, handle points to the existing message.
+- Move into and out of All Mail: archives, and the message stays in All Mail after moving out.
+- Move out of Trash: the message is untrashed.
+- Junk, Starred and Important: move or copy into each and check the label effect.
+- Delete from a label: the message ends in Trash with no other labels.
+- Trash role under a localized UI: set the Gmail UI language to a non-English one and check `delete_messages` still finds Trash.
+- Keyword persistence: set a keyword with `set_flags`, reopen the message from another label and check it is still set.
+- Move into Drafts or Sent refused: the call reports `UPSTREAM_ERROR` and changes nothing.
+
 ### OS keyring (Linux and macOS)
 
 Passwords can come from the OS keyring through the platform CLI. Not available on Windows or in Docker. The commands prompt for the secret, so it never lands in shell history.

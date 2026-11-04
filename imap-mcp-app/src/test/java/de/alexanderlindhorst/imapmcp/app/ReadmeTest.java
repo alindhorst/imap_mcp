@@ -267,10 +267,10 @@ class ReadmeTest {
                 .contains("tested against GreenMail and Dovecot only, not against real Gmail")
                 .contains("adds a label").contains("replaces the source label").contains("All Mail")
                 .contains("UTF8=ACCEPT").doesNotContain("writeTools").doesNotContain("modified UTF-7");
-        for (String heading : List.of("COPYUID on labels", "copy into a label the message already has",
-                "move into and out of All Mail", "move out of Trash", "Junk, Starred and Important",
-                "delete from a label", "Trash role under a localized UI", "keyword persistence",
-                "move into Drafts or Sent refused")) {
+        for (String heading : List.of("COPYUID on labels", "Copy into a label the message already has",
+                "Move into and out of All Mail", "Move out of Trash", "Junk, Starred and Important",
+                "Delete from a label", "Trash role under a localized UI", "Keyword persistence",
+                "Move into Drafts or Sent refused")) {
             assertThat(section).as("checklist item").contains(heading);
         }
     }
