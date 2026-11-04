@@ -22,6 +22,7 @@ public final class ToolCallContext {
     private boolean cancelled;
     private volatile LogIds logIds;
     private volatile Instant deadline;
+    private volatile boolean mutationStarted;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -37,6 +38,18 @@ public final class ToolCallContext {
     /** The instant at which the executor gives up on this call; empty outside an executor. */
     public Optional<Instant> deadline() {
         return Optional.ofNullable(deadline);
+    }
+
+    /**
+     * Write tools call this immediately before the first mutating IMAP command is written. From then on a
+     * deadline, cancel or unchecked failure reports an unknown outcome (SPEC 5.5). Idempotent, thread-safe.
+     */
+    public void markMutationStarted() {
+        mutationStarted = true;
+    }
+
+    public boolean mutationStarted() {
+        return mutationStarted;
     }
 
     public AccountContext accountContext() {

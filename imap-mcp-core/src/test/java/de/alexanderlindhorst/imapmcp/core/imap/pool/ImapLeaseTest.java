@@ -150,6 +150,142 @@ class ImapLeaseTest {
         assertThat(pool.destroyedCount()).isZero();
     }
 
+    private void deliverMessage() throws Exception {
+        var user = greenMail.getManagers().getUserManager().getUserByEmail(USER + "@localhost");
+        var msg = new jakarta.mail.internet.MimeMessage((jakarta.mail.Session) null);
+        msg.setFrom("a@localhost");
+        msg.setRecipients(jakarta.mail.Message.RecipientType.TO, "b@localhost");
+        msg.setSubject("s");
+        msg.setText("body");
+        user.deliver(msg);
+    }
+
+    @Test
+    void openReadWriteSelectsAndClosesWithoutExpungeKeepingDeletedMessageAndUid() throws Exception {
+        leases(Duration.ofSeconds(10));
+        deliverMessage();
+        long uid;
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            IMAPFolder f = lease.openReadWrite("INBOX");
+            assertThat(f.getMode()).isEqualTo(jakarta.mail.Folder.READ_WRITE);
+            var m = f.getMessages()[0];
+            uid = f.getUID(m);
+            m.setFlag(jakarta.mail.Flags.Flag.DELETED, true);
+        }
+        trace.list.clear();
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            IMAPFolder f = lease.openReadWrite("INBOX");
+            assertThat(f.getMessageCount()).isEqualTo(1);
+            assertThat(f.getUID(f.getMessages()[0])).isEqualTo(uid);
+            assertThat(f.getMessages()[0].isSet(jakarta.mail.Flags.Flag.DELETED)).isTrue();
+        }
+        assertThat(count("[A-Z]+\\d+ SELECT .*")).isEqualTo(1);
+        assertThat(count("[A-Z]+\\d+ EXAMINE .*")).isEqualTo(1); // close(false) without UNSELECT: EXAMINE + CLOSE
+        assertThat(count("[A-Z]+\\d+ CLOSE")).isEqualTo(1);
+        assertThat(lines()).noneMatch(l -> l.contains("EXPUNGE"));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            IMAPFolder f = lease.openReadOnly("INBOX");
+            assertThat(f.getMessageCount()).isEqualTo(1);
+            assertThat(f.getUID(f.getMessages()[0])).isEqualTo(uid);
+        }
+    }
+
+    @Test
+    void capabilitiesReadLeasedConnectionWithoutWireTraffic() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            int before = trace.list.size();
+            var caps = lease.capabilities();
+            assertThat(caps.move()).isTrue();
+            assertThat(caps.uidplus()).isTrue();
+            assertThat(trace.list.size()).isEqualTo(before);
+        }
+    }
+
+    @Test
+    void gateRefusesWithoutUidplusBeforeAnyFolderCommand() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            lease.overrideCapabilities(new WriteCapabilities(true, false));
+            int before = trace.list.size();
+            var refusal = lease.capabilities().requireUidplus("rid");
+            assertThat(refusal).isPresent();
+            assertThat(refusal.get().code()).isEqualTo(ErrorCode.UNSUPPORTED);
+            assertThat(refusal.get().toMap().toString()).contains("UIDPLUS");
+            assertThat(trace.list.size()).isEqualTo(before);
+        }
+        assertThat(count("[A-Z]+\\d+ (SELECT|EXAMINE) .*")).isZero();
+    }
+
+    @Test
+    void gateIgnoresCapabilityCacheAndPassesWithUidplus() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            // the pool filled the CapabilityCache with UIDPLUS=true at connect; the gate must not look at it
+            lease.overrideCapabilities(new WriteCapabilities(false, false));
+            assertThat(lease.capabilities().requireUidplus("rid")).isPresent();
+        }
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            assertThat(lease.capabilities().requireUidplus("rid")).isEmpty();
+        }
+    }
+
+    @Test
+    void openReadOnlyNeverSelects() throws Exception {
+        leases(Duration.ofSeconds(10));
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            lease.openReadOnly("INBOX");
+        }
+        assertThat(count("[A-Z]+\\d+ SELECT .*")).isZero();
+        assertThat(count("[A-Z]+\\d+ EXAMINE .*")).isEqualTo(1);
+    }
+
+    @Test
+    void openReadWriteFollowsTheSameLeaseRulesAsOpenReadOnly() throws Exception {
+        leases(Duration.ofSeconds(10));
+        greenMail.getManagers().getImapHostManager().createMailbox(
+                greenMail.getManagers().getUserManager().getUserByEmail(USER + "@localhost"), "Other");
+        ImapLease lease = leases.lease(key, ctx());
+        IMAPFolder first = lease.openReadWrite("INBOX");
+        assertThatThrownBy(lease::store).isInstanceOf(IllegalStateException.class);
+        IMAPFolder second = lease.openReadOnly("Other");
+        assertThat(first.isOpen()).isFalse();
+        assertThat(second.isOpen()).isTrue();
+        IMAPFolder third = lease.openReadWrite("INBOX");
+        assertThat(second.isOpen()).isFalse();
+        assertThat(third.isOpen()).isTrue();
+        lease.close();
+        assertThatThrownBy(() -> lease.openReadWrite("INBOX")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void openReadWriteIsRejectedAfterCancel() throws Exception {
+        leases(Duration.ofSeconds(10));
+        ToolCallContext c = ctx();
+        ImapLease lease = leases.lease(key, c);
+        c.cancel();
+        assertThatThrownBy(() -> lease.openReadWrite("INBOX")).isInstanceOf(IllegalStateException.class);
+        lease.close();
+    }
+
+    @Test
+    void storeReturnsToPoolAfterReadWriteOpenAndIsReusableForExamine() throws Exception {
+        leases(Duration.ofSeconds(10));
+        greenMail.getManagers().getImapHostManager().createMailbox(
+                greenMail.getManagers().getUserManager().getUserByEmail(USER + "@localhost"), "Other");
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            lease.openReadWrite("INBOX");
+        }
+        assertThat(pool.numIdle(key)).isEqualTo(1);
+        assertThat(pool.destroyedCount()).isZero();
+        try (ImapLease lease = leases.lease(key, ctx())) {
+            assertThat(lease.openReadOnly("Other").isOpen()).isTrue();
+        }
+        assertThat(pool.createdCount()).isEqualTo(1);
+        assertThat(pool.destroyedCount()).isZero();
+        assertThat(pool.numIdle(key)).isEqualTo(1);
+    }
+
     @Test
     void rawLeaseIsNotPublicSoToolsMustGoThroughWithLease() throws Exception {
         var m = StoreLeases.class.getDeclaredMethod("lease", PoolKey.class, ToolCallContext.class);
