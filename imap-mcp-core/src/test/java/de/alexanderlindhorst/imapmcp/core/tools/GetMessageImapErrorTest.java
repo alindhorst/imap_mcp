@@ -24,6 +24,7 @@ import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
+import de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;

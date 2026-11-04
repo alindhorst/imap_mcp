@@ -24,6 +24,7 @@ import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
+import de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -284,6 +285,83 @@ class ImapLeaseTest {
         assertThat(pool.createdCount()).isEqualTo(1);
         assertThat(pool.destroyedCount()).isZero();
         assertThat(pool.numIdle(key)).isEqualTo(1);
+    }
+
+    // ---- #174 v2: a connection lost while a folder is open must discard the Store (BYE watch) ----
+
+    private void assertCutDiscardsStoreButCleanCloseKeepsIt(String cutNeedle) throws Exception {
+        try (FaultingImapProxy proxy = new FaultingImapProxy(greenMail.getImaps().getPort())) {
+            useAccountOnPort(proxy.port());
+            leases(Duration.ofSeconds(10));
+            try (ImapLease lease = leases.lease(key, ctx())) { // control: clean RW close keeps the Store
+                lease.openReadWrite("INBOX");
+            }
+            assertThat(pool.destroyedCount()).isZero();
+            assertThat(pool.numIdle(key)).isEqualTo(1);
+            try (ImapLease lease = leases.lease(key, ctx())) {
+                lease.openReadWrite("INBOX");
+                proxy.dropConnectionOn(cutNeedle);
+            }
+            await(() -> pool.destroyedCount() == 1);
+            assertThat(pool.numIdle(key)).isZero();
+            assertThat(pool.numActive(key)).isZero();
+            proxy.relay();
+            try (ImapLease lease = leases.lease(key, ctx())) {
+                assertThat(lease.openReadOnly("INBOX").isOpen()).isTrue();
+            }
+            assertThat(pool.createdCount()).isEqualTo(2);
+            assertThat(pool.destroyedCount()).isEqualTo(1);
+            assertThat(pool.numIdle(key)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void connectionDroppedOnTheExamineOfTheCloseDiscardsTheStore() throws Exception {
+        assertCutDiscardsStoreButCleanCloseKeepsIt(" EXAMINE ");
+    }
+
+    @Test
+    void connectionDroppedOnTheCloseDiscardsTheStore() throws Exception {
+        assertCutDiscardsStoreButCleanCloseKeepsIt(" CLOSE");
+    }
+
+    @Test
+    void afterAConnectionLossTheSameLeaseRefusesFurtherOpens() throws Exception {
+        try (FaultingImapProxy proxy = new FaultingImapProxy(greenMail.getImaps().getPort())) {
+            useAccountOnPort(proxy.port());
+            leases(Duration.ofSeconds(10));
+            try (ImapLease lease = leases.lease(key, ctx())) {
+                lease.openReadWrite("INBOX");
+                proxy.dropConnectionOn(" EXAMINE ");
+                lease.closeFolder();
+                assertThatThrownBy(() -> lease.openReadOnly("INBOX")).isInstanceOf(jakarta.mail.StoreClosedException.class);
+                assertThatThrownBy(() -> lease.openReadWrite("INBOX")).isInstanceOf(jakarta.mail.StoreClosedException.class);
+            }
+            await(() -> pool.destroyedCount() == 1);
+        }
+    }
+
+    @Test
+    void manyCleanReadWriteLeasesThenOneCutLeaseDestroyExactlyOneStore() throws Exception {
+        try (FaultingImapProxy proxy = new FaultingImapProxy(greenMail.getImaps().getPort())) {
+            useAccountOnPort(proxy.port());
+            leases(Duration.ofSeconds(10));
+            for (int i = 0; i < 5; i++) {
+                try (ImapLease lease = leases.lease(key, ctx())) {
+                    lease.openReadWrite("INBOX");
+                }
+            }
+            assertThat(pool.createdCount()).isEqualTo(1);
+            assertThat(pool.destroyedCount()).isZero();
+            try (ImapLease lease = leases.lease(key, ctx())) {
+                lease.openReadWrite("INBOX");
+                proxy.dropConnectionOn(" CLOSE");
+            }
+            await(() -> pool.destroyedCount() == 1);
+            Thread.sleep(100);
+            assertThat(pool.destroyedCount()).isEqualTo(1);
+            assertThat(pool.numIdle(key)).isZero();
+        }
     }
 
     @Test
