@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
+import de.alexanderlindhorst.imapmcp.core.tool.ImapAtoms;
 import de.alexanderlindhorst.imapmcp.core.tool.InputValidator;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
 import java.util.ArrayList;
@@ -77,7 +78,7 @@ class SetFlagsArgumentsTest {
             assertThat(kw).containsEntry("maxItems", 10).containsEntry("uniqueItems", true);
             Map<String, Object> item = (Map<String, Object>) kw.get("items");
             assertThat(item).containsEntry("minLength", 1).containsEntry("maxLength", 64)
-                    .containsEntry("pattern", SetFlagsTool.KEYWORD_PATTERN);
+                    .containsEntry("pattern", ImapAtoms.KEYWORD_PATTERN);
         }
     }
 
@@ -171,6 +172,10 @@ class SetFlagsArgumentsTest {
     void trailingLineTerminatorInKeywordIsRejected() {
         assertInvalid(args("add_keywords", List.of("abc\n")), "add_keywords[0]", "format");
         assertInvalid(args("remove_keywords", List.of("abc\r\n")), "remove_keywords[0]", "format");
+        for (String bad : new String[] {"abc\r", "abc\u0085", "abc\u2028", "abc\u2029", "a\ud83d\ude00", "a\ud800"}) {
+            assertInvalid(args("add_keywords", List.of(bad)), "add_keywords[0]", "format");
+            assertInvalid(args("remove_keywords", List.of(bad)), "remove_keywords[0]", "format");
+        }
     }
 
     @Test

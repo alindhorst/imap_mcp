@@ -82,7 +82,8 @@ class CreateFolderArgumentsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"a\u0000b", "a\tb", "a\nb", "a\u007Fb", "a\u0085b", "a%b", "a*b", "abc\n"})
+    @ValueSource(strings = {"a\u0000b", "a\tb", "a\nb", "a\u007Fb", "a\u0085b", "a%b", "a*b", "abc\n", "abc\r\n",
+            "abc\r", "abc\u0085", "abc\u2028", "abc\u2029"})
     void controlCharactersPercentAndStarRejectedBySchema(String name) {
         assertDetail(error(null, name), "name", "format", null);
     }

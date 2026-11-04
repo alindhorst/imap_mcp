@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
+import de.alexanderlindhorst.imapmcp.core.tool.ImapAtoms;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHints;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
@@ -41,13 +42,6 @@ public final class SetFlagsTool implements ToolHandler {
     public static final int MAX_HANDLES = 100;
     public static final int MAX_KEYWORDS = 10;
 
-    /**
-     * IMAP atom characters as for search_messages keywords, anchored with \A...\z: the validator uses find() and
-     * {@code $} would admit a trailing line terminator, which must never reach UID STORE.
-     */
-    public static final String KEYWORD_PATTERN = "\\A[^\\x00-\\x20(){%*\"\\\\\\]\\x7f-\\uffff]+\\z";
-
-
     /** System flag fields in wire order (also the order inside the merged sets). */
     private static final List<String> FLAG_FIELDS = List.of("seen", "flagged", "answered", "draft");
 
@@ -63,7 +57,7 @@ public final class SetFlagsTool implements ToolHandler {
     private static Map<String, Object> keywordList(String description) {
         return schema("type", "array", "maxItems", MAX_KEYWORDS, "uniqueItems", true, "description", description,
                 "items", schema("type", "string", "minLength", 1, "maxLength", 64, "pattern",
-                        KEYWORD_PATTERN));
+                        ImapAtoms.KEYWORD_PATTERN));
     }
 
     private static Map<String, Object> inputSchema() {

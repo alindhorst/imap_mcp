@@ -76,10 +76,11 @@ class SearchInputTest {
                 .hasSize(3);
     }
 
-    // #25 rework: "$" also matches before a final line terminator, so the pattern must be anchored with \\A...\\z
+    // #25 rework: "$" also matches before a final line terminator, so the pattern must be portable ^...$ and matched against the whole value
     @Test
     void keywordWithTrailingLineTerminatorIsRejected() {
-        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc\u2028", "abc\u2029"}) {
+        for (String bad : new String[] {"abc\n", "abc\r\n", "abc\r", "abc\u0085", "abc\u2028", "abc\u2029",
+                "a\ud83d\ude00", "a\ud800"}) {
             assertField(args("keywords", List.of(bad)), "keywords[0]", "format");
         }
         assertThat(ok(args("keywords", List.of("abc"))).criteria().keywords()).containsExactly("abc");
@@ -92,7 +93,7 @@ class SearchInputTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> items = (Map<String, Object>) ((Map<String, Object>) props.get("keywords")).get("items");
         String pattern = (String) items.get("pattern");
-        assertThat(pattern).startsWith("\\A").endsWith("\\z");
+        assertThat(pattern).startsWith("^").endsWith("$").doesNotContain("\\A").doesNotContain("\\z");
     }
 
     @Test
