@@ -62,6 +62,8 @@ class DeleteMessagesToolTest {
 
     private static final TenantId T1 = new TenantId("t1");
     private static final TenantId T2 = new TenantId("t2");
+    /** Any command that selects, moves, copies, flags or expunges (tagged lines of the trace). */
+    private static final String NO_COMMAND = "(?m)^\\S+ (UID )?(MOVE|COPY|STORE|EXPUNGE|SELECT|EXAMINE)\\b";
     private static final String USER = "deluser";
 
     private GreenMail greenMail;
@@ -257,8 +259,7 @@ class DeleteMessagesToolTest {
         assertThat(err.code()).isEqualTo(ErrorCode.FOLDER_NOT_FOUND);
         assertThat(err.details()).containsEntry("folder_role", "trash");
         assertThat(err.hint()).contains("move_messages");
-        assertThat(wire()).doesNotContain("MOVE").doesNotContain("COPY").doesNotContain("STORE")
-                .doesNotContain("EXPUNGE").doesNotContain("SELECT");
+        assertThat(wire()).doesNotContainPattern(NO_COMMAND);
         assertThat(snapshot("INBOX")).containsKey(uid);
     }
 
@@ -295,8 +296,7 @@ class DeleteMessagesToolTest {
         trace.list.clear();
         Map<String, Object> out = ok(call(T1, args(T1, List.of(handle(T1, "Trash", trashUid)))));
         assertThat(results(out).get(0).get("status")).isEqualTo("already_in_target");
-        assertThat(wire()).doesNotContain("MOVE").doesNotContain("COPY").doesNotContain("STORE")
-                .doesNotContain("EXPUNGE").doesNotContain("SELECT");
+        assertThat(wire()).doesNotContainPattern(NO_COMMAND);
         assertThat(snapshot("Trash")).hasSize(1);
     }
 
