@@ -203,7 +203,8 @@ class ToolErrorTest {
         }
         // every other public factory may only take the documented non-handle values
         Set<Class<?>> allowed = Set.of(String.class, int.class, Integer.class, ToolError.StaleReason.class,
-                ToolError.PermissionReason.class, ToolError.ElicitationReason.class);
+                ToolError.PermissionReason.class, ToolError.ElicitationReason.class, ToolError.StorageReason.class,
+                long.class, Long.class);
         for (Method m : ToolError.class.getDeclaredMethods()) {
             if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers())
                     && m.getReturnType() == ToolError.class) {
@@ -226,7 +227,7 @@ class ToolErrorTest {
                 "INVALID_ARGUMENT", "ACCOUNT_NOT_FOUND", "INVALID_HANDLE", "INVALID_CURSOR", "STALE_REFERENCE",
                 "MESSAGE_NOT_FOUND", "FOLDER_NOT_FOUND", "AUTH_FAILED", "SERVER_BUSY", "TIMEOUT",
                 "UPSTREAM_UNAVAILABLE", "UPSTREAM_ERROR", "UNSUPPORTED", "INTERNAL_ERROR",
-                "PERMISSION_DENIED", "QUOTA_EXCEEDED", "OUTCOME_UNKNOWN");
+                "PERMISSION_DENIED", "QUOTA_EXCEEDED", "OUTCOME_UNKNOWN", "TOO_LARGE", "LOCAL_STORAGE_ERROR");
     }
 
     @Test
@@ -383,5 +384,57 @@ class ToolErrorTest {
         item.remove("request_id");
         assertThat(ToolError.serverBusy(RID).toItemMap()).isEqualTo(item);
         assertThat(ToolError.serverBusy(RID).toItemMap().keySet()).containsExactlyElementsOf(item.keySet());
+    }
+
+    // v3a download_attachment (SPEC 4, 5.5)
+
+    @Test
+    void tooLargeCarriesSizeAndMaxOrOnlyMax() {
+        String before = json(ToolError.tooLarge(30L, 25L, RID));
+        assertThat(before).contains("\"code\":\"TOO_LARGE\"").contains("\"retryable\":false")
+                .contains("\"details\":{\"size\":30,\"max\":25}").contains("tools.download.maxBytes");
+        String streaming = json(ToolError.tooLarge(null, 25L, RID));
+        assertThat(streaming).contains("\"details\":{\"max\":25}").doesNotContain("size");
+        assertThat(ErrorCode.TOO_LARGE.retryable()).isFalse();
+    }
+
+    @Test
+    void localStorageErrorCarriesOnlyTheClosedReason() {
+        for (ToolError.StorageReason r : ToolError.StorageReason.values()) {
+            String j = json(ToolError.localStorage(r, RID));
+            assertThat(j).contains("\"code\":\"LOCAL_STORAGE_ERROR\"").contains("\"retryable\":false")
+                    .contains("\"details\":{\"reason\":\"" + r.name().toLowerCase() + "\"}");
+        }
+        assertThat(ToolError.StorageReason.values()).extracting(Enum::name)
+                .containsExactly("DIRECTORY_UNAVAILABLE", "NAME_EXHAUSTED", "NO_SPACE", "IO_ERROR");
+        assertThat(ErrorCode.LOCAL_STORAGE_ERROR.retryable()).isFalse();
+    }
+
+    @Test
+    void partNotFoundAndNotALeafAreInvalidArgumentOnFieldPart() {
+        String plain = json(ToolError.partNotFound(false, RID));
+        assertThat(plain).contains("\"code\":\"INVALID_ARGUMENT\"")
+                .contains("\"details\":{\"field\":\"part\",\"reason\":\"part_not_found\"}")
+                .contains("list_attachments");
+        String below = json(ToolError.partNotFound(true, RID));
+        assertThat(below).contains("\"reason\":\"part_not_found\"").contains("message/rfc822 part itself");
+        String leaf = json(ToolError.notALeaf(RID));
+        assertThat(leaf).contains("\"details\":{\"field\":\"part\",\"reason\":\"not_a_leaf\"}");
+    }
+
+    @Test
+    void unsupportedTransferEncodingAndDecodeFailedAreUnsupportedWithReason() {
+        assertThat(json(ToolError.unsupportedTransferEncoding(RID))).contains("\"code\":\"UNSUPPORTED\"")
+                .contains("\"details\":{\"reason\":\"transfer_encoding\"}").contains("\"retryable\":false");
+        assertThat(json(ToolError.decodeFailed(RID))).contains("\"code\":\"UNSUPPORTED\"")
+                .contains("\"details\":{\"reason\":\"decode_failed\"}");
+    }
+
+    @Test
+    void outcomeUnknownOfADownloadSaysTheFileMayExist() {
+        String j = json(ToolError.outcomeUnknown("download_attachment", RID));
+        assertThat(j).contains("\"code\":\"OUTCOME_UNKNOWN\"").contains("file may have been saved")
+                .doesNotContain("copy");
+        assertThat(ToolError.outcomeUnknown("copy_messages", RID)).isEqualTo(ToolError.outcomeUnknown(RID));
     }
 }
