@@ -202,6 +202,29 @@ class FolderGroupRunnerTest {
     }
 
     @Test
+    void aCallCancelledBeforeTheMutationBeginsWritesNothingAndTheGroupIsNotAttempted() throws Exception {
+        init();
+        folder("A", VALIDITY, 1);
+        folder("B", VALIDITY, 5);
+        List<String> commands = new ArrayList<>();
+        FolderGroupRunner r = new FolderGroupRunner(clock, (p, g, c) -> {
+            if (p == HookPoint.BEFORE_WRITE) {
+                ctx.cancel(); // the executor decided the plain TIMEOUT between the hook and the mark
+            }
+        });
+        var out = r.run(lease, ctx, List.of(group("A", 1), group("B", 5)), AbsentStatus.ALREADY_GONE,
+                (f, present, gate) -> {
+                    gate.beforeWrite();
+                    commands.add("STORE");
+                    return present.stream().map(i -> BulkResult.Item.okFlags(i.handle())).toList();
+                });
+        assertThat(commands).isEmpty();
+        assertThat(ctx.mutationStarted()).isFalse();
+        assertThat(statuses(out)).containsEntry(h("A", 1), ItemStatus.NOT_ATTEMPTED)
+                .containsEntry(h("B", 5), ItemStatus.NOT_ATTEMPTED);
+    }
+
+    @Test
     void mutationIsMarkedAfterTheBeforeWriteHookAndNeverDuringPreCheck() throws Exception {
         init();
         folder("A", VALIDITY, 1);

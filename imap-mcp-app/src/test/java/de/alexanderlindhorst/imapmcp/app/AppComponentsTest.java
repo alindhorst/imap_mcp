@@ -288,7 +288,7 @@ class AppComponentsTest {
 
     private static de.alexanderlindhorst.imapmcp.core.tool.ToolHandler sleepingAfterMark() {
         return (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             try {
                 Thread.sleep(10_000);
             } catch (InterruptedException e) {

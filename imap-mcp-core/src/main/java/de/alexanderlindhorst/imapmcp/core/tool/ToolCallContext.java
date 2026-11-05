@@ -46,6 +46,15 @@ public final class ToolCallContext {
      * Write tools call this immediately before the first mutating IMAP command is written. From then on a
      * deadline, cancel or unchecked failure reports an unknown outcome (SPEC 5.5). Idempotent, thread-safe.
      */
+    public boolean tryBeginMutation() {
+        mutationStarted = true;
+        return true;
+    }
+
+    boolean sealMutation() {
+        return mutationStarted;
+    }
+
     public void markMutationStarted() {
         mutationStarted = true;
     }

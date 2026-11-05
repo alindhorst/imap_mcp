@@ -71,16 +71,41 @@ class ToolCallContextTest {
     void mutationStartedIsFalseUntilMarkedAndMarkIsIdempotent() {
         ToolCallContext c = ctx();
         assertThat(c.mutationStarted()).isFalse();
-        c.markMutationStarted();
-        c.markMutationStarted();
+        assertThat(c.tryBeginMutation()).isTrue();
+        assertThat(c.tryBeginMutation()).isTrue();
         assertThat(c.mutationStarted()).isTrue();
     }
 
     @Test
     void mutationMarkSetOnOneThreadIsVisibleOnAnother() throws Exception {
         ToolCallContext c = ctx();
-        Thread t = Thread.ofVirtual().start(c::markMutationStarted);
+        Thread t = Thread.ofVirtual().start(c::tryBeginMutation);
         t.join();
+        assertThat(c.mutationStarted()).isTrue();
+    }
+
+    @Test
+    void tryBeginMutationIsFalseOnceCancelledAndNeverSetsTheMark() {
+        ToolCallContext c = ctx();
+        c.cancel();
+        assertThat(c.tryBeginMutation()).isFalse();
+        assertThat(c.mutationStarted()).isFalse();
+    }
+
+    @Test
+    void tryBeginMutationIsFalseOnceTheOutcomeIsDecidedAndTheDecisionIsFrozen() {
+        ToolCallContext c = ctx();
+        assertThat(c.sealMutation()).isFalse();
+        assertThat(c.tryBeginMutation()).isFalse();
+        assertThat(c.mutationStarted()).isFalse();
+    }
+
+    @Test
+    void aMutationStartedBeforeTheDecisionIsReportedAndLaterCommandsAreRefused() {
+        ToolCallContext c = ctx();
+        assertThat(c.tryBeginMutation()).isTrue();
+        assertThat(c.sealMutation()).isTrue();
+        assertThat(c.tryBeginMutation()).isFalse();
         assertThat(c.mutationStarted()).isTrue();
     }
 }

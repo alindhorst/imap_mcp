@@ -55,6 +55,7 @@ class CreateFolderToolStubbedTest {
         final Map<String, Entry> entries = new HashMap<>();
         Namespace namespace = new Namespace("", '.');
         final List<String> calls = new ArrayList<>();
+        Runnable onList = () -> { };
 
         StubDirectory has(String full, String... attrs) {
             entries.put(full, new Entry(full, '.', List.of(attrs)));
@@ -70,6 +71,7 @@ class CreateFolderToolStubbedTest {
         @Override
         public Optional<Entry> list(ImapLease lease, String fullName) throws MessagingException {
             calls.add("LIST " + fullName);
+            onList.run();
             return Optional.ofNullable(entries.get(fullName));
         }
     }
@@ -185,6 +187,32 @@ class CreateFolderToolStubbedTest {
     static ToolError err(ToolOutcome o) {
         assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
         return ((ToolOutcome.Failure) o).error();
+    }
+
+    // ---- cancel / deadline decided before a mutation begins ----
+
+    @Test
+    void aCallCancelledBeforeCreateSendsNeitherCreateNorSubscribe() {
+        dir.onList = ctx::cancel;
+        call(null, "x");
+        assertThat(cmds.calls).isEmpty();
+        assertThat(ctx.mutationStarted()).isFalse();
+    }
+
+    @Test
+    void aCallCancelledAfterCreateDoesNotSubscribe() {
+        cmds.onCreateOk = ctx::cancel;
+        call(null, "x");
+        assertThat(cmds.calls).containsExactly("CREATE x");
+    }
+
+    @Test
+    void aCallCancelledBeforeSubscribeOfAnExistingFolderSendsNothing() {
+        dir.has("x");
+        dir.onList = ctx::cancel;
+        call(null, "x");
+        assertThat(cmds.calls).isEmpty();
+        assertThat(ctx.mutationStarted()).isFalse();
     }
 
     // ---- parent resolution ----
