@@ -1,6 +1,6 @@
 # IMAP MCP Server: Specification
 
-Status: draft v0.16 (v1 and v2 implemented; v3a specified with all owner decisions taken, implementation in progress; groupId final). Audience: implementation lead and team, who break this down into work items.
+Status: draft v0.17 (v1, v2 and v3a implemented; v3b (http-public) not started; groupId final). Audience: implementation lead and team, who break this down into work items.
 
 ## 1. Purpose and scope
 
