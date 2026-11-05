@@ -31,6 +31,7 @@ public final class WriteCallLog {
             case MOVE, DELETE -> copyFallback ? "copy_fallback" : "move";
             case COPY -> "copy";
             case SET_FLAGS -> "store";
+            case PURGE -> "expunge";
         };
         LOG.info("write call tool={} request_id={} duration_ms={} groups={} path={} outcome={}{}", tool, MDC.get("req"),
                 duration.toMillis(), groups, path, outcome, sb);

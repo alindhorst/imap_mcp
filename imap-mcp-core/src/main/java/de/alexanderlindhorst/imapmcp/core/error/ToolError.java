@@ -28,13 +28,22 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
     public enum PermissionReason {
         ACCOUNT_READ_ONLY("account_read_only"),
         FOLDER_READ_ONLY("folder_read_only"),
-        SERVER_DENIED("server_denied");
+        SERVER_DENIED("server_denied"),
+        PURGE_DISABLED("purge_disabled"),
+        PURGE_SCOPE("purge_scope"),
+        CONFIRMATION_UNAVAILABLE("confirmation_unavailable"),
+        NOT_CONFIRMED("not_confirmed");
 
         private final String wire;
 
         PermissionReason(String wire) {
             this.wire = wire;
         }
+    }
+
+    /** Closed set of {@code details.elicitation} values of a {@code not_confirmed} refusal (SPEC 4, purge_messages). */
+    public enum ElicitationReason {
+        DECLINED, CANCELLED, TIMEOUT, INVALID_ANSWER, ERROR, RECENTLY_DECLINED
     }
 
     public ToolError {
@@ -253,6 +262,37 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         return of(ErrorCode.PERMISSION_DENIED, "The change is not permitted. Do not retry.",
                 "The change was refused by configuration or by the server; do not retry. See details.reason.",
                 detail("reason", reason.wire), requestId);
+    }
+
+    /** purge_messages on an account without {@code allowPurge} (SPEC 4 check order step 3). */
+    public static ToolError purgeDisabled(String requestId) {
+        String hint = "Permanent deletion is off for this account; the operator enables it with accounts[].allowPurge "
+                + "in the configuration. Do not retry.";
+        return of(ErrorCode.PERMISSION_DENIED, "Permanent deletion is not enabled for this account. Do not retry.",
+                hint, detail("reason", PermissionReason.PURGE_DISABLED.wire), requestId);
+    }
+
+    /** purge_messages in a session that cannot ask the user (no form-mode elicitation). */
+    public static ToolError confirmationUnavailable(String requestId) {
+        String hint = "Purging needs a client that supports MCP elicitation; nothing was deleted.";
+        return of(ErrorCode.PERMISSION_DENIED, "The user cannot be asked to confirm. " + hint, hint,
+                detail("reason", PermissionReason.CONFIRMATION_UNAVAILABLE.wire), requestId);
+    }
+
+    /** A handle outside the Trash folder; {@code field} is the client's own position, e.g. handles[3]. */
+    public static ToolError purgeScope(String field, String requestId) {
+        String hint = "Permanent deletion is only possible from Trash; move the messages there with delete_messages "
+                + "first.";
+        return of(ErrorCode.PERMISSION_DENIED, "These messages are not in the Trash folder. " + hint, hint,
+                detail("reason", PermissionReason.PURGE_SCOPE.wire, "field", field), requestId);
+    }
+
+    /** The user did not confirm a purge; nothing was deleted. */
+    public static ToolError notConfirmed(ElicitationReason elicitation, String requestId) {
+        String hint = "The user did not confirm; nothing was deleted. Call again only if the user asks for it.";
+        return of(ErrorCode.PERMISSION_DENIED, "The permanent deletion was not confirmed. Do not retry.", hint,
+                detail("reason", PermissionReason.NOT_CONFIRMED.wire, "elicitation",
+                        elicitation.name().toLowerCase(java.util.Locale.ROOT)), requestId);
     }
 
     public static ToolError quotaExceeded(String requestId) {

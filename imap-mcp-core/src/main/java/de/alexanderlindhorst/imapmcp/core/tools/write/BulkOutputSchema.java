@@ -39,7 +39,8 @@ public final class BulkOutputSchema {
     }
 
     public static Map<String, Object> of(BulkResult.Kind kind) {
-        boolean target = kind != BulkResult.Kind.SET_FLAGS;
+        boolean target = kind.hasTarget();
+        boolean purge = kind == BulkResult.Kind.PURGE;
         Map<String, Object> itemProps = new LinkedHashMap<>();
         itemProps.put("handle", m("type", "string"));
         List<Object> statuses = new ArrayList<>();
@@ -51,7 +52,8 @@ public final class BulkOutputSchema {
             itemProps.put("new_handle", nullableString());
             itemProps.put("note", nullableEnum(BulkResult.NEW_UID_UNKNOWN));
         }
-        itemProps.put("reason", nullableEnum("uidvalidity_changed", "folder_missing"));
+        itemProps.put("reason", purge ? nullableEnum("uidvalidity_changed", "folder_missing", BulkResult.STILL_PRESENT)
+                : nullableEnum("uidvalidity_changed", "folder_missing"));
         itemProps.put("error", errorObject());
         Map<String, Object> item = m("type", "object", "properties", itemProps,
                 "required", new ArrayList<>(itemProps.keySet()), "additionalProperties", false);
@@ -64,13 +66,17 @@ public final class BulkOutputSchema {
 
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("account", m("type", "string"));
+        if (purge) {
+            props.put("confirmation", m("type", "string", "enum",
+                    List.of(BulkResult.ELICITED, BulkResult.SESSION_APPROVAL)));
+        }
         if (target) {
             props.put("target_folder", m("type", "string"));
         }
         props.put("summary", m("type", "object", "properties", summaryProps,
                 "required", new ArrayList<>(summaryProps.keySet()), "additionalProperties", false));
         props.put("results", m("type", "array", "items", item));
-        props.put("notes", m("type", "array", "items", m("type", "string", "enum", BulkResult.NOTES)));
+        props.put("notes", m("type", "array", "items", m("type", "string", "enum", purge ? BulkResult.PURGE_NOTES : BulkResult.NOTES)));
         return m("type", "object", "properties", props, "required", new ArrayList<>(props.keySet()),
                 "additionalProperties", false);
     }
