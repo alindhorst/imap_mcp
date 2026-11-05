@@ -91,6 +91,18 @@ public final class PartFetcher {
         }
     }
 
+    /** One {@code BODY.PEEK[section]<start.BLOCK>}; NO, NIL and a missing item are {@link BlockMissingException}. */
+    private static byte[] fetchBlock(IMAPFolder folder, int seq, String section, long start) throws MessagingException {
+        Object result = folder.doCommand(p -> {
+            BODY body = p.peekBody(seq, section, (int) Math.min(start, Integer.MAX_VALUE), BLOCK);
+            return body == null || body.getByteArray() == null ? null : body.getByteArray().getNewBytes();
+        });
+        if (result == null) {
+            throw new BlockMissingException(start == 0);
+        }
+        return (byte[]) result;
+    }
+
     /** The encoded octets of the part, one fetched block at a time. */
     private static final class Source extends InputStream {
         private final IMAPFolder folder;
@@ -149,15 +161,7 @@ public final class PartFetcher {
         }
 
         private byte[] fetch() throws MessagingException {
-            long start = offset;
-            Object result = folder.doCommand(p -> {
-                BODY body = p.peekBody(seq, section, (int) Math.min(start, Integer.MAX_VALUE), BLOCK);
-                return body == null || body.getByteArray() == null ? null : body.getByteArray().getNewBytes();
-            });
-            if (result == null) {
-                throw new BlockMissingException(start == 0);
-            }
-            return (byte[]) result;
+            return fetchBlock(folder, seq, section, offset);
         }
     }
 }
