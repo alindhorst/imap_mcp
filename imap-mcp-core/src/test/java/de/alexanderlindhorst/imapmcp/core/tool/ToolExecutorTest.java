@@ -212,7 +212,7 @@ class ToolExecutorTest {
     static ToolHandler sleepingAfter(boolean mark, CountDownLatch started) {
         return (cx, a) -> {
             if (mark) {
-                cx.markMutationStarted();
+                cx.tryBeginMutation();
             }
             started.countDown();
             try {
@@ -288,7 +288,7 @@ class ToolExecutorTest {
     @Test
     void uncheckedExceptionAfterMarkAddsOutcomeUnknown() {
         ToolHandler boom = (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             throw new IllegalStateException("marker-secret");
         };
         ToolError idem = errorOf(executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), boom).handle(ctx("r"), Map.of()));
@@ -302,7 +302,7 @@ class ToolExecutorTest {
     @Test
     void connectionFailureAfterMarkKeepsUpstreamUnavailableCodeWithOutcomeUnknown() {
         ToolHandler down = (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             throw new RuntimeException(new java.net.ConnectException("x"));
         };
         ToolError e = errorOf(executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), down).handle(ctx("r"), Map.of()));
@@ -323,7 +323,7 @@ class ToolExecutorTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         ToolOutcome o = executor.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             return stubborn(started, release, new AtomicInteger()).handle(cx, a);
         }).handle(ctx("r"), Map.of());
         release.countDown();
@@ -335,5 +335,84 @@ class ToolExecutorTest {
         ToolOutcome o = executor.wrap(def(ToolHints.READ_ONLY_OPEN_WORLD), sleepingAfter(false, new CountDownLatch(1)))
                 .handle(ctx("r"), Map.of());
         assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r"));
+    }
+
+    /** Blocks until the cancel hooks ran (the executor's own hook first), tolerating the worker interrupt. */
+    private static void awaitDecided(ToolCallContext cx, AtomicInteger interrupts) {
+        CountDownLatch decided = new CountDownLatch(1);
+        cx.onCancel(decided::countDown);
+        while (true) {
+            try {
+                decided.await();
+                return;
+            } catch (InterruptedException e) {
+                interrupts.incrementAndGet();
+            }
+        }
+    }
+
+    @Test
+    void aMutationCannotBeginAfterTheDeadlineDecidedThePlainTimeout() {
+        ToolExecutor fast = new ToolExecutor(Duration.ofMillis(50), logIds);
+        AtomicBoolean began = new AtomicBoolean(true);
+        AtomicInteger interrupts = new AtomicInteger();
+        ToolOutcome o = fast.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            awaitDecided(cx, interrupts);
+            began.set(cx.tryBeginMutation());
+            return ok();
+        }).handle(ctx("r"), Map.of());
+        assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r"));
+        assertThat(began.get()).isFalse();
+    }
+
+    @Test
+    void aMutationCannotBeginAfterAnExternalCancelDecidedThePlainTimeout() throws Exception {
+        AtomicBoolean began = new AtomicBoolean(true);
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch finished = new CountDownLatch(1);
+        AtomicInteger interrupts = new AtomicInteger();
+        ToolCallContext c = ctx("r");
+        AtomicReference<ToolOutcome> outcome = new AtomicReference<>();
+        ToolExecutor slow = new ToolExecutor(Duration.ofSeconds(30), logIds);
+        Thread caller = Thread.ofPlatform().start(() -> outcome.set(slow.wrap(def(ToolHints.WRITE_ADDITIVE), (cx, a) -> {
+            inside.countDown();
+            awaitDecided(cx, interrupts);
+            began.set(cx.tryBeginMutation());
+            finished.countDown();
+            return ok();
+        }).handle(c, Map.of())));
+        assertThat(inside.await(2, TimeUnit.SECONDS)).isTrue();
+        c.cancel();
+        assertThat(finished.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.join(2000);
+        assertThat(errorOf(outcome.get())).isEqualTo(ToolError.timeout("r"));
+        assertThat(began.get()).isFalse();
+    }
+
+    @Test
+    void aMutationBegunBeforeTheDeadlineIsTimeoutWithOutcomeUnknownForAnIdempotentTool() {
+        ToolExecutor fast = new ToolExecutor(Duration.ofMillis(50), logIds);
+        AtomicBoolean began = new AtomicBoolean();
+        AtomicInteger interrupts = new AtomicInteger();
+        ToolError e = errorOf(fast.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            began.set(cx.tryBeginMutation());
+            awaitDecided(cx, interrupts);
+            return ok();
+        }).handle(ctx("r"), Map.of()));
+        assertThat(began.get()).isTrue();
+        assertThat(e.code()).isEqualTo(ErrorCode.TIMEOUT);
+        assertThat(e.details()).containsEntry("outcome", "unknown");
+    }
+
+    @Test
+    void aMutationBegunBeforeTheDeadlineIsOutcomeUnknownForANonIdempotentTool() {
+        ToolExecutor fast = new ToolExecutor(Duration.ofMillis(50), logIds);
+        AtomicInteger interrupts = new AtomicInteger();
+        ToolError e = errorOf(fast.wrap(def(ToolHints.WRITE_ADDITIVE), (cx, a) -> {
+            cx.tryBeginMutation();
+            awaitDecided(cx, interrupts);
+            return ok();
+        }).handle(ctx("r"), Map.of()));
+        assertThat(e).isEqualTo(ToolError.outcomeUnknown("r"));
     }
 }

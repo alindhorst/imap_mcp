@@ -251,7 +251,9 @@ public final class CreateFolderTool implements ToolHandler {
         boolean created = false;
         Optional<Directory.Entry> existing = directory.list(lease, full);
         if (existing.isEmpty() || !selectable(existing.get())) {
-            ctx.markMutationStarted();
+            if (!ctx.tryBeginMutation()) {
+                return cancelled(rid, start);
+            }
             UidCommands.Result result = commands.create(lease, full);
             if (result.ok()) {
                 created = true;
@@ -263,7 +265,9 @@ public final class CreateFolderTool implements ToolHandler {
                 }
             }
         }
-        ctx.markMutationStarted(); // idempotent; for created=false this is the only mutating command
+        if (!ctx.tryBeginMutation()) { // idempotent; for created=false this is the only mutating command
+            return cancelled(rid, start);
+        }
         boolean subscribed;
         try {
             subscribed = commands.subscribe(lease, full).ok();
@@ -280,6 +284,11 @@ public final class CreateFolderTool implements ToolHandler {
         out.put("subscribed", subscribed);
         WriteCallLog.createFolder(NAME, created, subscribed, elapsed(start));
         return new ToolOutcome.Success(out);
+    }
+
+    /** The call was cancelled or its deadline decided before a mutating command: nothing sent; the executor's result wins. */
+    private static ToolOutcome cancelled(String rid, long start) {
+        return fail(ToolError.timeout(rid), start);
     }
 
     private static ToolOutcome fail(ToolError error, long start) {

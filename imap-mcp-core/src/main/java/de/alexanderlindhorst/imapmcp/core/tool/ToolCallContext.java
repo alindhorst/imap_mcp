@@ -23,7 +23,8 @@ public final class ToolCallContext {
     private volatile LogIds logIds;
     private volatile String boundAccountHash;
     private volatile Instant deadline;
-    private volatile boolean mutationStarted;
+    private boolean sealed; // guarded by this, like cancelled
+    private volatile boolean mutationStarted; // written under this lock only
     private volatile boolean authFailureCounted;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
@@ -43,11 +44,27 @@ public final class ToolCallContext {
     }
 
     /**
-     * Write tools call this immediately before the first mutating IMAP command is written. From then on a
-     * deadline, cancel or unchecked failure reports an unknown outcome (SPEC 5.5). Idempotent, thread-safe.
+     * Write tools call this immediately before each mutating IMAP command is written and write only if it returns
+     * true. It sets the mutation mark atomically under the lock that {@link #cancel()} and the executor's decision use
+     * (SPEC 5.5): it returns false once the call is cancelled or its outcome has been decided, so no mutation starts
+     * after the client was told that nothing happened. A caller that gets false writes nothing and unwinds. After the
+     * first true, a deadline, cancel or unchecked failure reports an unknown outcome. Never held across I/O.
      */
-    public void markMutationStarted() {
+    public synchronized boolean tryBeginMutation() {
+        if (cancelled || sealed) {
+            return false;
+        }
         mutationStarted = true;
+        return true;
+    }
+
+    /**
+     * The executor calls this when it decides the outcome of a deadline, cancel or failure: from now on
+     * {@link #tryBeginMutation()} returns false, so the returned flag (a mutation began) cannot change anymore.
+     */
+    synchronized boolean sealMutation() {
+        sealed = true;
+        return mutationStarted;
     }
 
     /**

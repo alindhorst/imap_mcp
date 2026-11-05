@@ -28,7 +28,7 @@ import org.slf4j.MDC;
  * the result future wins, so a result the handler produces after the cancel is never returned. MDC (req, tool,
  * tenant hashed, acct hashed once bound) lives on the worker only and is cleared there.
  *
- * <p>Once a write tool marked {@link ToolCallContext#markMutationStarted()}, a deadline, cancel or unchecked
+ * <p>Once a write tool marked {@link ToolCallContext#tryBeginMutation()}, a deadline, cancel or unchecked
  * failure reports an unknown outcome instead (details.outcome, or OUTCOME_UNKNOWN for non-idempotent tools).
  *
  * <p>An optional {@link OutcomeListener} is told about every outcome of a write tool (readOnlyHint=false) that the
@@ -100,7 +100,7 @@ public final class ToolExecutor {
 
     /** A write may have been applied: OUTCOME_UNKNOWN for a non-idempotent tool, else the error plus details.outcome. */
     private static ToolError afterMutation(ToolError error, boolean idempotent, ToolCallContext ctx) {
-        if (!ctx.mutationStarted()) {
+        if (!ctx.mutationStarted()) { // sealed by the callers below: no mutation can begin after this read
             return error;
         }
         switch (error.code()) {
@@ -227,12 +227,14 @@ public final class ToolExecutor {
     private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx,
             CallState state) {
         state.executorProduced.set(true);
+        ctx.sealMutation();
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
         return new ToolOutcome.Failure(afterMutation(ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
     }
 
     private static ToolOutcome timedOut(boolean idempotent, ToolCallContext ctx) {
+        ctx.sealMutation(); // decide under the context lock; a later tryBeginMutation() returns false
         return new ToolOutcome.Failure(afterMutation(ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }

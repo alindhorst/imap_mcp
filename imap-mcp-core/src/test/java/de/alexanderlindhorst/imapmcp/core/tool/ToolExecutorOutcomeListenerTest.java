@@ -44,7 +44,7 @@ class ToolExecutorOutcomeListenerTest {
     static ToolHandler sleeping(boolean mark) {
         return (cx, a) -> {
             if (mark) {
-                cx.markMutationStarted();
+                cx.tryBeginMutation();
             }
             try {
                 Thread.sleep(10_000);
@@ -77,7 +77,7 @@ class ToolExecutorOutcomeListenerTest {
     @Test
     void uncheckedFailureReportsTheFinalCodeOnce() {
         ToolHandler boom = (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             throw new IllegalStateException("x");
         };
         executor.wrap(def("copy_messages", ToolHints.WRITE_ADDITIVE), boom).handle(ctx(), Map.of());
@@ -93,7 +93,7 @@ class ToolExecutorOutcomeListenerTest {
         CountDownLatch started = new CountDownLatch(1);
         ToolCallContext c = ctx();
         ToolHandler h = ex.wrap(def("copy_messages", ToolHints.WRITE_ADDITIVE), (cx, a) -> {
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             started.countDown();
             try {
                 Thread.sleep(10_000);
@@ -137,7 +137,7 @@ class ToolExecutorOutcomeListenerTest {
                 (tool, rid, code, d) -> mdc.set(org.slf4j.MDC.getCopyOfContextMap()));
         ex.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
             cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("raw-acct"));
-            cx.markMutationStarted();
+            cx.tryBeginMutation();
             try {
                 Thread.sleep(10_000);
             } catch (InterruptedException e) {
