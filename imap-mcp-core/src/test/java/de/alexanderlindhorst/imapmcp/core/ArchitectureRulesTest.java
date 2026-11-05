@@ -40,6 +40,9 @@ class ArchitectureRulesTest {
     @ArchTest
     static final ArchRule noConsoleOutput = ArchitectureRules.NO_CONSOLE_OUTPUT;
 
+    @ArchTest
+    static final ArchRule fileWritesOnlyInDownloadSink = ArchitectureRules.FILE_WRITES_ONLY_IN_DOWNLOAD_SINK;
+
     /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
     @Test
     void rulesFailOnAnEmptyClassSet() {
@@ -47,7 +50,8 @@ class ArchitectureRulesTest {
         assertThatThrownBy(() -> coreHasNoForbiddenDependencies.check(none)).isInstanceOf(AssertionError.class);
         assertThatThrownBy(() -> sdkOnlyInCoreMcp.check(none)).isInstanceOf(AssertionError.class);
         for (ArchRule rule : new ArchRule[] {folderOpenOnlyInLease, readWriteOpenOnlyFromWritePackage, noMutationHelpers,
-                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass, readClassesNeverWrite, noConsoleOutput}) {
+                folderCloseOnlyInLease, rawCommandsOnlyInCommandClass, readClassesNeverWrite, noConsoleOutput,
+                fileWritesOnlyInDownloadSink}) {
             assertThatThrownBy(() -> rule.check(none)).isInstanceOf(AssertionError.class);
         }
     }
@@ -117,5 +121,14 @@ class ArchitectureRulesTest {
     @Test
     void ruleFDetectsConsoleOutputAndPrintStackTrace() {
         assertDetects(noConsoleOutput, "ConsoleOutputFixture", "System.out", "System.err", "printStackTrace");
+    }
+
+    /** #287: file creation, writes, links, moves and deletes only in the download file sink (SPEC 5.8). */
+    @Test
+    void ruleGDetectsFileWritesOutsideTheDownloadSink() {
+        assertDetects(fileWritesOnlyInDownloadSink, "FileWriteFixture", "newOutputStream", "write(", "writeString",
+                "createFile", "createLink", "createSymbolicLink", "createTempFile", "createDirectory",
+                "createDirectories", "move(", "copy(", "delete(", "deleteIfExists", "newByteChannel", "FileChannel.open",
+                "FileOutputStream.<init>");
     }
 }
