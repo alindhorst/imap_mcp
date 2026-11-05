@@ -60,7 +60,7 @@ class ConfigLoaderTest {
         assertThat(c.pool()).isEqualTo(new AppConfig.Pool(3, 8, 64, Duration.ofMinutes(5), Duration.ofSeconds(60),
                 Duration.ofMinutes(30), Duration.ofSeconds(10), Duration.ofMinutes(10)));
         assertThat(c.tools()).isEqualTo(new AppConfig.Tools(Duration.ofSeconds(90), 100000,
-                4L * 1024 * 1024, 100, 10000));
+                4L * 1024 * 1024, 100, 10000, new AppConfig.Download(null, 25L * 1024 * 1024, null)));
         assertThat(c.secrets()).isEqualTo(new AppConfig.Secrets(Duration.ofSeconds(5)));
         assertThat(c.http()).isEqualTo(new AppConfig.Http("127.0.0.1", 8080, false, null,
                 List.of("localhost:*", "127.0.0.1:*", "[::1]:*"), List.of(), 1024L * 1024));
@@ -383,5 +383,57 @@ class ConfigLoaderTest {
                 Arguments.of("security:\n  handleKeys: env:A\n", "security.handleKeys"),
                 Arguments.of("security:\n  signingKeyId: 256\n", "security.signingKeyId"),
                 Arguments.of("security:\n  signingKeyId: -1\n", "security.signingKeyId"));
+    }
+
+    // ---- tools.download.* (SPEC 5.7, v3a) ----
+
+    @Test
+    void downloadDefaultsMeanNotConfigured() throws IOException {
+        AppConfig.Download d = load(ACCOUNT).tools().download();
+
+        assertThat(d.dir()).isNull();
+        assertThat(d.registered()).isFalse();
+        assertThat(d.maxBytes()).isEqualTo(25L * 1024 * 1024);
+        assertThat(d.displayDir()).isNull();
+    }
+
+    @Test
+    void downloadKeysAreParsed() throws IOException {
+        AppConfig.Download d = load(ACCOUNT + "tools:\n  download:\n    dir: /srv/dl\n    maxBytes: 100MiB\n"
+                + "    displayDir: /home/me/Downloads/imap-mcp\n").tools().download();
+
+        assertThat(d.registered()).isTrue();
+        assertThat(d.dir()).isEqualTo(Path.of("/srv/dl"));
+        assertThat(d.maxBytes()).isEqualTo(100L * 1024 * 1024);
+        assertThat(d.displayDir()).isEqualTo(Path.of("/home/me/Downloads/imap-mcp"));
+    }
+
+    @Test
+    void downloadMaxBytesLowerBoundIsOneByte() throws IOException {
+        assertThat(load(ACCOUNT + "tools:\n  download:\n    dir: /srv/dl\n    maxBytes: 1B\n")
+                .tools().download().maxBytes()).isEqualTo(1);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("badDownload")
+    void invalidDownloadKeysNameTheKeyPath(String name, String download, String path) throws IOException {
+        assertThatThrownBy(() -> load(ACCOUNT + "tools:\n  download:\n" + download))
+                .isInstanceOf(ConfigException.class).hasMessageContaining(path);
+    }
+
+    static Stream<Arguments> badDownload() {
+        return Stream.of(
+                Arguments.of("relative dir", "    dir: downloads\n", "tools.download.dir"),
+                Arguments.of("tilde is not expanded", "    dir: ~/dl\n", "tools.download.dir"),
+                Arguments.of("blank dir", "    dir: ' '\n", "tools.download.dir"),
+                Arguments.of("NUL in dir", "    dir: \"/a\\0b\"\n", "tools.download.dir"),
+                Arguments.of("maxBytes above 100MiB", "    dir: /d\n    maxBytes: 101MiB\n", "tools.download.maxBytes"),
+                Arguments.of("maxBytes zero", "    dir: /d\n    maxBytes: 0B\n", "tools.download.maxBytes"),
+                Arguments.of("maxBytes not a size", "    dir: /d\n    maxBytes: 5MB\n", "tools.download.maxBytes"),
+                Arguments.of("relative displayDir", "    dir: /d\n    displayDir: host/dl\n",
+                        "tools.download.displayDir"),
+                Arguments.of("maxBytes without dir", "    maxBytes: 1MiB\n", "tools.download.dir"),
+                Arguments.of("displayDir without dir", "    displayDir: /h\n", "tools.download.dir"),
+                Arguments.of("unknown key", "    dir: /d\n    types: [pdf]\n", "tools.download.types"));
     }
 }

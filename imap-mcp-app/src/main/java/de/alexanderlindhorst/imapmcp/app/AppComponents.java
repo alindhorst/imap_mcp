@@ -7,6 +7,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
+import de.alexanderlindhorst.imapmcp.core.download.DownloadDirectory;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
@@ -54,6 +55,7 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -91,11 +93,12 @@ public final class AppComponents implements AutoCloseable {
     private final StateDirectory state;
     private final Map<ToolDefinition, ToolHandler> tools;
     private final boolean purgeRegistered;
+    private final DownloadDirectory downloadDirectory;
     private boolean closed;
 
     private AppComponents(ImapSessionFactory sessions, StorePool pool, Admission admission,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, StateDirectory state, Map<ToolDefinition, ToolHandler> tools,
-            boolean purgeRegistered) {
+            boolean purgeRegistered, DownloadDirectory downloadDirectory) {
         this.sessions = sessions;
         this.pool = pool;
         this.admission = admission;
@@ -104,6 +107,7 @@ public final class AppComponents implements AutoCloseable {
         this.state = state;
         this.tools = tools;
         this.purgeRegistered = purgeRegistered;
+        this.downloadDirectory = downloadDirectory;
     }
 
     /** The transport the components are built for; {@code purge_messages} exists only in {@link #STDIO} (SPEC 5.3). */
@@ -162,6 +166,8 @@ public final class AppComponents implements AutoCloseable {
             throw new AppStartupException("Cannot set up the key material under " + paths.stateDir() + ": "
                     + e.getMessage(), e);
         }
+        DownloadDirectory downloadDirectory = openDownloadDirectory(config, paths, env, clock);
+        LoggerFactory.getLogger("imapmcp.app").info("download_attachment registered={}", downloadDirectory != null);
         LogIds logIds = new LogIds(keys);
         AccountRepository repository = new ConfiguredAccountRepository(TENANT, accounts, salt);
         Map<String, MailAccount> byId = accounts.stream()
@@ -228,7 +234,7 @@ public final class AppComponents implements AutoCloseable {
 
             metrics.start();
             return new AppComponents(sessions, pool, admission, metrics, executor, state,
-                    java.util.Collections.unmodifiableMap(tools), purge);
+                    java.util.Collections.unmodifiableMap(tools), purge, downloadDirectory);
         } catch (RuntimeException e) {
             if (metrics != null) {
                 metrics.close();
@@ -239,6 +245,18 @@ public final class AppComponents implements AutoCloseable {
             sessions.close();
             throw e;
         }
+    }
+
+    /** SPEC 5.3: the checked download directory, or null when {@code tools.download.dir} is not set. */
+    private static DownloadDirectory openDownloadDirectory(AppConfig config, AppPaths paths, Map<String, String> env,
+            Clock clock) {
+        AppConfig.Download d = config.tools().download();
+        if (!d.registered()) {
+            return null;
+        }
+        return DownloadDirectorySetup.open(d, paths,
+                DownloadDirectorySetup.defaultLocations(env, Path.of(System.getProperty("user.home"))),
+                DownloadDirectorySetup.PROBE, clock.instant());
     }
 
     /**
@@ -363,6 +381,11 @@ public final class AppComponents implements AutoCloseable {
     /** The bearer token for http-local: the configured {@code http.token}, else the persisted one. */
     public char[] httpToken() {
         return state.bearerToken();
+    }
+
+    /** The checked download directory; null when {@code download_attachment} is not registered. */
+    DownloadDirectory downloadDirectory() {
+        return downloadDirectory;
     }
 
     ToolExecutor executor() {

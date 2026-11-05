@@ -307,6 +307,10 @@ class AppComponentsTest {
     // startup INFO line (SPEC 5.3): counts only
 
     private List<String> startupLines(Runnable create) {
+        return startupLines(create, "write tools");
+    }
+
+    private List<String> startupLines(Runnable create, String contains) {
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("imapmcp.app");
         var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
@@ -319,7 +323,7 @@ class AppComponentsTest {
         }
         return appender.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO)
                 .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
-                .filter(m -> m.contains("write tools")).toList();
+                .filter(m -> m.contains(contains)).toList();
     }
 
     @Test
@@ -334,6 +338,51 @@ class AppComponentsTest {
         AppConfig readOnly = config("env:MAIL_PW", "", true);
         assertThat(startupLines(() -> create(readOnly, NO_RUNNER)))
                 .containsExactly("write tools registered=false, read-only accounts=1 of 1");
+    }
+
+    // v3a T6: download directory (SPEC 5.3)
+
+    private List<String> infoLines(String contains, Runnable create) {
+        return startupLines(create, contains);
+    }
+
+    private AppConfig downloadConfig(Path downloadDir) throws IOException {
+        return config("env:MAIL_PW", "tools:\n  download:\n    dir: " + downloadDir + "\n    maxBytes: 5MiB\n");
+    }
+
+    @Test
+    void withoutDownloadDirTheToolDirectoryIsAbsentAndOneInfoLineSaysNo() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig c = config("env:MAIL_PW");
+        AppComponents[] holder = new AppComponents[1];
+
+        assertThat(infoLines("download_attachment", () -> holder[0] = create(c, NO_RUNNER)))
+                .containsExactly("download_attachment registered=false");
+        assertThat(holder[0].downloadDirectory()).isNull();
+    }
+
+    @Test
+    void withDownloadDirTheCheckedDirectoryIsHeldAndTheInfoLineHasNoPath() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        Path dl = Files.createDirectory(dir.resolve("dl"));
+        java.nio.file.Files.setPosixFilePermissions(dl,
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        AppConfig c = downloadConfig(dl);
+        AppComponents[] holder = new AppComponents[1];
+
+        assertThat(infoLines("download_attachment", () -> holder[0] = create(c, NO_RUNNER)))
+                .containsExactly("download_attachment registered=true");
+        assertThat(holder[0].downloadDirectory().path()).isEqualTo(dl.toRealPath());
+        assertThat(holder[0].downloadDirectory().maxBytes()).isEqualTo(5L * 1024 * 1024);
+    }
+
+    @Test
+    void aBadDownloadDirFailsStartupNamingTheKey() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig c = downloadConfig(dir.resolve("missing"));
+
+        assertThatThrownBy(() -> create(c, NO_RUNNER)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("tools.download.dir");
     }
 
     // #195 comment: executor-produced outcomes of write tools get one write-call INFO line
@@ -372,7 +421,7 @@ class AppComponentsTest {
         var t = base.tools();
         AppConfig shortDeadline = new AppConfig(base.accounts(), base.imap(), base.pool(),
                 new AppConfig.Tools(Duration.ofMillis(100), t.maxCharsCap(), t.maxBodyPartBytes(), t.maxFolders(),
-                        t.sinceMaxCandidates()), base.secrets(), base.http(), base.security(), base.mode(),
+                        t.sinceMaxCandidates(), t.download()), base.secrets(), base.http(), base.security(), base.mode(),
                 base.logLevel());
         var ex = create(shortDeadline, NO_RUNNER).executor();
         var ctx = new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(LOCAL, "req-9");

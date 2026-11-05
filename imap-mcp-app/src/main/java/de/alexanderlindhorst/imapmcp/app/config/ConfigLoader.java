@@ -187,9 +187,23 @@ public final class ConfigLoader {
                 s.integer("maxCharsCap", 100000, 1, 100000),
                 s.size("maxBodyPartBytes", 4L * 1024 * 1024, BodyWindowReader.MAX_BODY_PART_BYTES),
                 s.integer("maxFolders", 100, 1, 100000),
-                s.integer("sinceMaxCandidates", 10000, 1, 10_000_000));
+                s.integer("sinceMaxCandidates", 10000, 1, 10_000_000), download(s.section("download")));
         s.finish();
         return r;
+    }
+
+    private static final long DOWNLOAD_DEFAULT_BYTES = 25L * 1024 * 1024;
+    private static final long DOWNLOAD_MAX_BYTES = 100L * 1024 * 1024;
+
+    private static AppConfig.Download download(Section s) {
+        Path dir = s.optionalAbsolutePath("dir");
+        long maxBytes = s.size("maxBytes", DOWNLOAD_DEFAULT_BYTES, DOWNLOAD_MAX_BYTES);
+        Path display = s.optionalAbsolutePath("displayDir");
+        s.finish();
+        if (dir == null && (display != null || maxBytes != DOWNLOAD_DEFAULT_BYTES)) {
+            throw new ConfigException(s.path("dir") + ": required when other tools.download keys are set");
+        }
+        return new AppConfig.Download(dir, maxBytes, display);
     }
 
     private static AppConfig.Http http(Section s) {
@@ -442,6 +456,24 @@ public final class ConfigLoader {
                 throw new ConfigException(path(key) + ": must not exceed " + (max / (1024 * 1024)) + "MiB");
             }
             return bytes;
+        }
+
+        /** An absolute path, not normalised and with no {@code ~} expansion; the value is not echoed. */
+        Path optionalAbsolutePath(String key) {
+            JsonNode n = take(key);
+            if (n == null) {
+                return null;
+            }
+            String v = text(key, n);
+            try {
+                Path p = v.isBlank() ? null : Path.of(v);
+                if (p != null && p.isAbsolute()) {
+                    return p;
+                }
+            } catch (java.nio.file.InvalidPathException ignored) {
+                // reported below without the value
+            }
+            throw new ConfigException(path(key) + ": must be an absolute path (~ is not expanded)");
         }
 
         SecretRef requiredRef(String key) {

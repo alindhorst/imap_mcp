@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.app.config;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
@@ -50,7 +51,19 @@ public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tool
             Duration validateAfterIdle, Duration maxLifetime, Duration acquireTimeout, Duration capabilityTtl) {
     }
 
-    public record Tools(Duration deadline, int maxCharsCap, long maxBodyPartBytes, int maxFolders, int sinceMaxCandidates) {
+    public record Tools(Duration deadline, int maxCharsCap, long maxBodyPartBytes, int maxFolders, int sinceMaxCandidates,
+            Download download) {
+    }
+
+    /**
+     * {@code tools.download.*} (SPEC 5.7). {@code dir} null means {@code download_attachment} is not registered;
+     * {@code displayDir} is configuration shown in the output and never accessed.
+     */
+    public record Download(Path dir, long maxBytes, Path displayDir) {
+
+        public boolean registered() {
+            return dir != null;
+        }
     }
 
     public record Secrets(Duration keyringTimeout) {
