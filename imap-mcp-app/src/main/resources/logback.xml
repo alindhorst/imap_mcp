@@ -30,6 +30,8 @@
   <logger name="jakarta.mail" level="INFO"/>
   <logger name="io.modelcontextprotocol" level="INFO"/>
   <logger name="org.eclipse.jetty" level="INFO"/>
+  <!-- Purge audit line (SPEC 5.6): written at INFO even when the root level is higher. -->
+  <logger name="imapmcp.audit" level="INFO"/>
   <!-- Opt-in IMAP protocol trace (#15, imap.trace: true); events only exist when the trace is enabled. -->
   <logger name="imapmcp.imap.trace" level="DEBUG"/>
 
