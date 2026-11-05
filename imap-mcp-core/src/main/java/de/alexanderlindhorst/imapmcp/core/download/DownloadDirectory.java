@@ -58,6 +58,15 @@ public final class DownloadDirectory {
         return (displayDir != null ? displayDir : path).toString();
     }
 
+    /** Usable space of the file store holding the directory (SPEC 4, step 9). */
+    public long usableSpace() {
+        try {
+            return Files.getFileStore(path).getUsableSpace();
+        } catch (IOException e) {
+            throw new DownloadStorageException(DownloadStorageException.Reason.IO_ERROR, e);
+        }
+    }
+
     /**
      * Call-time check (SPEC 4, step 4): still a directory, reached without a link in the last component, and the
      * same file as at startup. Any failure to look is "not available".

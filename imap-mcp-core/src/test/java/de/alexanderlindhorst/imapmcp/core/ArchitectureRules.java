@@ -128,6 +128,29 @@ final class ArchitectureRules {
             .orShould().callMethodWhere(call("Throwable.printStackTrace", "java.lang.Throwable", "printStackTrace"))
             .as("core must not write to System.out/System.err or print stack traces (stdout is the protocol, SPEC 5.6)");
 
+    private static final String DOWNLOAD_SINK = ROOT + ".core.download.DownloadSink";
+
+    /** Static {@code Files} / {@code FileChannel} calls that create, write, link, move or delete (SPEC 5.8). */
+    private static final DescribedPredicate<JavaMethodCall> FILE_MUTATION = call("Files mutation", "java.nio.file.Files",
+            "newOutputStream", "write", "writeString", "createFile", "createLink", "createSymbolicLink",
+            "createTempFile", "createDirectory", "createDirectories", "createTempDirectory", "move", "copy", "delete",
+            "deleteIfExists", "newByteChannel", "setPosixFilePermissions", "setAttribute")
+            .or(call("FileChannel.open", "java.nio.channels.FileChannel", "open"));
+
+    private static final DescribedPredicate<com.tngtech.archunit.core.domain.JavaConstructorCall> FILE_STREAM_CONSTRUCTOR =
+            new DescribedPredicate<>("a file output stream, writer or random access file is constructed") {
+                @Override
+                public boolean test(com.tngtech.archunit.core.domain.JavaConstructorCall c) {
+                    return Set.of("java.io.FileOutputStream", "java.io.FileWriter", "java.io.RandomAccessFile").contains(c.getTargetOwner().getName());
+                }
+            };
+
+    static final ArchRule FILE_WRITES_ONLY_IN_DOWNLOAD_SINK = noClasses()
+            .that().doNotHaveFullyQualifiedName(DOWNLOAD_SINK)
+            .should().callMethodWhere(FILE_MUTATION)
+            .orShould().callConstructorWhere(FILE_STREAM_CONSTRUCTOR)
+            .as("file creation, writes, links, moves and deletes may only happen in the download file sink");
+
     private static DescribedPredicate<JavaClass> haveFullyQualifiedNameIn(String... names) {
         Set<String> n = Set.of(names);
         return new DescribedPredicate<>("have a fully qualified name in " + n) {
