@@ -46,6 +46,11 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         DECLINED, CANCELLED, TIMEOUT, INVALID_ANSWER, ERROR, RECENTLY_DECLINED
     }
 
+    /** Closed set of LOCAL_STORAGE_ERROR reasons (details.reason); never a path or exception text. */
+    public enum StorageReason {
+        DIRECTORY_UNAVAILABLE, NAME_EXHAUSTED, NO_SPACE, IO_ERROR
+    }
+
     public ToolError {
         details = details == null || details.isEmpty() ? null : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(details));
     }
@@ -305,5 +310,55 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 "The outcome of the copy is unknown. Search the target folder before repeating.",
                 "Search the target folder before repeating the call; otherwise the copies are duplicated.", null,
                 requestId);
+    }
+
+    /** The message of a tool's OUTCOME_UNKNOWN; downloads say that the file may exist (SPEC 5.5). */
+    public static ToolError outcomeUnknown(String tool, String requestId) {
+        if (!"download_attachment".equals(tool)) {
+            return outcomeUnknown(requestId);
+        }
+        return of(ErrorCode.OUTCOME_UNKNOWN,
+                "The outcome of the download is unknown: the file may have been saved. Check the download directory "
+                        + "before repeating.",
+                "Check the download directory before repeating the call; otherwise the file is saved twice.", null,
+                requestId);
+    }
+
+    /** {@code size} is the estimated decoded size of the pre-fetch check; null when the streaming check fired. */
+    public static ToolError tooLarge(Long size, long max, String requestId) {
+        String hint = "The attachment is larger than the configured download limit; the operator can raise "
+                + "tools.download.maxBytes. Do not retry.";
+        return of(ErrorCode.TOO_LARGE, "The attachment exceeds the download size limit.", hint,
+                detail("size", size, "max", max), requestId);
+    }
+
+    public static ToolError localStorage(StorageReason reason, String requestId) {
+        return of(ErrorCode.LOCAL_STORAGE_ERROR, "The attachment could not be saved to the download directory.",
+                "Ask the operator to check the download directory; see details.reason. Do not retry.",
+                detail("reason", reason.name().toLowerCase(java.util.Locale.ROOT)), requestId);
+    }
+
+    /** {@code belowRfc822}: the path leads into a message/rfc822 part, which is not descended. */
+    public static ToolError partNotFound(boolean belowRfc822, String requestId) {
+        String hint = belowRfc822
+                ? "Parts inside a message/rfc822 part cannot be addressed; download the message/rfc822 part itself."
+                : "Call list_attachments for the part paths of this message.";
+        return invalidArgumentHint("part", "part_not_found", hint, requestId);
+    }
+
+    public static ToolError notALeaf(String requestId) {
+        return invalidArgumentHint("part", "not_a_leaf",
+                "This part only contains other parts; choose one of them (see list_attachments).", requestId);
+    }
+
+    public static ToolError unsupportedTransferEncoding(String requestId) {
+        return of(ErrorCode.UNSUPPORTED, "The attachment uses a transfer encoding this server cannot decode.",
+                "Only base64, quoted-printable, 7bit, 8bit and binary parts can be downloaded.",
+                detail("reason", "transfer_encoding"), requestId);
+    }
+
+    public static ToolError decodeFailed(String requestId) {
+        return of(ErrorCode.UNSUPPORTED, "The attachment content is malformed and could not be decoded.",
+                "The message part is damaged; it cannot be downloaded.", detail("reason", "decode_failed"), requestId);
     }
 }

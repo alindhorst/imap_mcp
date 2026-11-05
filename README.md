@@ -330,6 +330,8 @@ Payloads carry no stack traces, host names or exception text. Codes:
 | `PERMISSION_DENIED` | no | `details.reason` is `account_read_only`, `folder_read_only` or `server_denied` |
 | `QUOTA_EXCEEDED` | no | the mailbox is over quota; nothing is deleted permanently as a fallback |
 | `OUTCOME_UNKNOWN` | no | `copy_messages` only: the call was cut off after the first mutating command, so the copy may exist; repeating it could duplicate |
+| `TOO_LARGE` | no | `download_attachment`: the attachment exceeds `tools.download.maxBytes` (`details.size`, `details.max`) |
+| `LOCAL_STORAGE_ERROR` | no | `download_attachment`: the file could not be saved; `details.reason` is `directory_unavailable`, `name_exhausted`, `no_space` or `io_error` |
 
 `details` fields: `details.field` names the offending argument (`handles[i]` for the first bad handle), `details.reason` the specific rule, `details.max` the bound that was exceeded. For a write call cut off after the first mutating command (deadline, cancel, unexpected failure), `details.outcome` is `unknown`: the change may or may not have happened; for an idempotent tool the call is retryable, for `copy_messages` it is `OUTCOME_UNKNOWN`.
 

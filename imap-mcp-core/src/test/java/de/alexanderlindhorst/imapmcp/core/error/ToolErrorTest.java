@@ -204,7 +204,7 @@ class ToolErrorTest {
         // every other public factory may only take the documented non-handle values
         Set<Class<?>> allowed = Set.of(String.class, int.class, Integer.class, ToolError.StaleReason.class,
                 ToolError.PermissionReason.class, ToolError.ElicitationReason.class, ToolError.StorageReason.class,
-                long.class, Long.class);
+                long.class, Long.class, boolean.class);
         for (Method m : ToolError.class.getDeclaredMethods()) {
             if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers())
                     && m.getReturnType() == ToolError.class) {
@@ -394,7 +394,7 @@ class ToolErrorTest {
         assertThat(before).contains("\"code\":\"TOO_LARGE\"").contains("\"retryable\":false")
                 .contains("\"details\":{\"size\":30,\"max\":25}").contains("tools.download.maxBytes");
         String streaming = json(ToolError.tooLarge(null, 25L, RID));
-        assertThat(streaming).contains("\"details\":{\"max\":25}").doesNotContain("size");
+        assertThat(streaming).contains("\"details\":{\"max\":25}").doesNotContain("\"size\"");
         assertThat(ErrorCode.TOO_LARGE.retryable()).isFalse();
     }
 

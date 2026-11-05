@@ -99,13 +99,13 @@ public final class ToolExecutor {
     }
 
     /** A write may have been applied: OUTCOME_UNKNOWN for a non-idempotent tool, else the error plus details.outcome. */
-    private static ToolError afterMutation(ToolError error, boolean idempotent, ToolCallContext ctx) {
+    private static ToolError afterMutation(String tool, ToolError error, boolean idempotent, ToolCallContext ctx) {
         if (!ctx.mutationStarted()) { // sealed by the callers below: no mutation can begin after this read
             return error;
         }
         switch (error.code()) {
             case TIMEOUT, UPSTREAM_UNAVAILABLE, INTERNAL_ERROR -> {
-                return idempotent ? error.withOutcomeUnknown() : ToolError.outcomeUnknown(ctx.requestId());
+                return idempotent ? error.withOutcomeUnknown() : ToolError.outcomeUnknown(tool, ctx.requestId());
             }
             default -> {
                 return error;
@@ -182,7 +182,7 @@ public final class ToolExecutor {
         });
         // First hook: completes the result before the interrupt, so nothing the worker produces afterwards is returned.
         ctx.onCancel(() -> {
-            if (future.complete(timedOut(idempotent, ctx))) {
+            if (future.complete(timedOut(toolName, idempotent, ctx))) {
                 state.executorProduced.set(true);
                 state.cancelled.set(true);
                 LOG.info("tool {} cancelled, request_id={}", toolName, ctx.requestId());
@@ -196,14 +196,14 @@ public final class ToolExecutor {
         try {
             return future.get(deadline.toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
-            if (future.complete(timedOut(idempotent, ctx))) {
+            if (future.complete(timedOut(toolName, idempotent, ctx))) {
                 state.executorProduced.set(true);
                 LOG.warn("tool {} exceeded deadline, request_id={}", toolName, ctx.requestId());
             }
             ctx.cancel();
             return result(future, toolName, idempotent, ctx, state);
         } catch (InterruptedException e) {
-            if (future.complete(timedOut(idempotent, ctx))) {
+            if (future.complete(timedOut(toolName, idempotent, ctx))) {
                 state.executorProduced.set(true);
             }
             ctx.cancel();
@@ -230,11 +230,11 @@ public final class ToolExecutor {
         ctx.sealMutation();
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
-        return new ToolOutcome.Failure(afterMutation(ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
+        return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
     }
 
-    private static ToolOutcome timedOut(boolean idempotent, ToolCallContext ctx) {
+    private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
         ctx.sealMutation(); // decide under the context lock; a later tryBeginMutation() returns false
-        return new ToolOutcome.Failure(afterMutation(ToolError.timeout(ctx.requestId()), idempotent, ctx));
+        return new ToolOutcome.Failure(afterMutation(toolName, ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }
