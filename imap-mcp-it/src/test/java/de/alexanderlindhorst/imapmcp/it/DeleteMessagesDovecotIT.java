@@ -52,7 +52,7 @@ class DeleteMessagesDovecotIT {
             Pattern.compile(" imapmcp\\.imap\\.trace - ([A-Z]+\\d+) (?!(?:OK|NO|BAD)\\b)([A-Z][A-Z.]*\\b.*)$");
 
     private static final String ALREADY_IN_TRASH =
-            "Some messages were already in Trash and were left unchanged; permanent deletion is not available.";
+            "Some messages were already in Trash and were left unchanged.";
     private static final String ALREADY_GONE = "Some messages are no longer in their source folder; if this call "
             + "repeats an earlier one, they were already moved. Search the target folder for their new handles.";
 
