@@ -196,7 +196,10 @@ class V3aLogAuditIT {
         assertThat(downloadLines).filteredOn(l -> l.contains("error_code=")).hasSize(2);
         List<String> audit = log.lines().filter(l -> l.contains("imapmcp.audit")).toList();
         assertThat(audit).as("one audit line per purge call, INFO").anyMatch(l -> l.contains("confirmation=elicited"));
-        assertThat(audit.stream().filter(l -> l.contains("tool=purge_messages")).count()).isEqualTo(purgeCalls);
+        assertThat(audit.stream().filter(l -> l.contains("purge call tool=purge_messages")).count())
+                .isEqualTo(purgeCalls);
+        assertThat(audit.stream().filter(l -> l.contains("purge approval created")).count())
+                .as("the accepted session approval is one more audit line").isEqualTo(1);
         assertThat(audit).allMatch(l -> l.contains(" INFO "));
         dovecot.stop();
     }
