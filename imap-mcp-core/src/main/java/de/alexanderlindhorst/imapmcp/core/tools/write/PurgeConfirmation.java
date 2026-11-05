@@ -37,6 +37,13 @@ public interface PurgeConfirmation {
             }
         }
 
+        /**
+         * Too little time (less than the minimum wait window, or the worker was interrupted by the deadline or a
+         * cancel): no dialog, or none that counts. The tool answers with the plain v1 {@code TIMEOUT}, nothing changed.
+         */
+        record Expired() implements Decision {
+        }
+
         /** Anything but an accepted answer; becomes {@code PERMISSION_DENIED} / {@code not_confirmed}. */
         record Refused(ToolError.ElicitationReason reason) implements Decision {
             public Refused {

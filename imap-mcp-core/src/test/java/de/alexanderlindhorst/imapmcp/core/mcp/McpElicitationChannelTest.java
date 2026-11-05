@@ -83,7 +83,7 @@ class McpElicitationChannelTest {
 
     @Test
     void errorAnswerAndSendFailureAreFailed() throws Exception {
-        when(exchange.createElicitation(any())).thenThrow(new McpError("rpc error"))
+        when(exchange.createElicitation(any())).thenThrow(new McpError(new McpSchema.JSONRPCResponse.JSONRPCError(-32000, "rpc error", null)))
                 .thenThrow(new IllegalStateException("client declared no elicitation"));
         assertThat(channel().ask("m", schema, Duration.ofSeconds(5))).isEqualTo(new Answer.Failed());
         assertThat(channel().ask("m", schema, Duration.ofSeconds(5))).isEqualTo(new Answer.Failed());

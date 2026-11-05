@@ -4,6 +4,7 @@ import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
+import de.alexanderlindhorst.imapmcp.core.tool.ElicitationChannel;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
@@ -82,13 +83,15 @@ public final class McpToolAdapter {
     /** Stateful (stdio) flavour; the account context comes from the exchange's transport context. */
     public McpServerFeatures.SyncToolSpecification stateful(ToolDefinition def, ToolHandler handler) {
         return McpServerFeatures.SyncToolSpecification.builder().tool(tool(def))
-                .callHandler((exchange, request) -> call(validating(def, handler), exchange.transportContext(), request)).build();
+                .callHandler((exchange, request) -> call(validating(def, handler), exchange.transportContext(), request,
+                        new McpElicitationChannel(exchange))).build();
     }
 
     /** Stateless (HTTP) flavour. */
     public McpStatelessServerFeatures.SyncToolSpecification stateless(ToolDefinition def, ToolHandler handler) {
         return McpStatelessServerFeatures.SyncToolSpecification.builder().tool(tool(def))
-                .callHandler((transportContext, request) -> call(validating(def, handler), transportContext, request)).build();
+                .callHandler((transportContext, request) -> call(validating(def, handler), transportContext, request, null))
+                .build();
     }
 
     private static LogIds randomLogIds() {
@@ -105,12 +108,16 @@ public final class McpToolAdapter {
         return executor.wrap(def, new ValidatingToolHandler(def, handler));
     }
 
+    /** @param elicitation the stateful session's way to ask the user; null for the stateless server (SPEC 5.5) */
     private McpSchema.CallToolResult call(ToolHandler handler, McpTransportContext transportContext,
-            McpSchema.CallToolRequest request) {
+            McpSchema.CallToolRequest request, ElicitationChannel elicitation) {
         String requestId = requestIds.get();
         ToolOutcome outcome;
         try {
             ToolCallContext ctx = new ToolCallContext(accountResolver.apply(transportContext), requestId);
+            if (elicitation != null) {
+                ctx.bindElicitation(elicitation);
+            }
             Map<String, Object> args = request.arguments() == null ? Map.of() : request.arguments();
             outcome = handler.handle(ctx, args);
         } catch (RuntimeException e) {

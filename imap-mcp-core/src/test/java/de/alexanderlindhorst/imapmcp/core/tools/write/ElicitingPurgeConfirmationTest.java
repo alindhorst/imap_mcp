@@ -155,7 +155,7 @@ class ElicitingPurgeConfirmationTest {
         confirm(ctx(T1, null), request("a1", "Wo\nrk\r‮", longName, 1));
         String m = script.messages.get(0);
         assertThat(m).doesNotContain("\n").doesNotContain("\r").doesNotContain("‮");
-        assertThat(m).contains("of account \"Work\"");
+        assertThat(m).contains("of account \"Wo rk\"");
         assertThat(m).doesNotContain("x".repeat(201)).contains("x".repeat(150));
     }
 
