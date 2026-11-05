@@ -103,13 +103,13 @@ public final class AttachmentClassifier {
         return "base64".equalsIgnoreCase(part.encoding) ? size * 3 / 4 : size;
     }
 
-    private static String contentType(BODYSTRUCTURE part) {
+    static String contentType(BODYSTRUCTURE part) {
         String type = part.type == null ? "" : part.type.toLowerCase(Locale.ROOT);
         String sub = part.subtype == null ? "" : part.subtype.toLowerCase(Locale.ROOT);
         return TOKEN.matcher(type).matches() && TOKEN.matcher(sub).matches() ? type + "/" + sub : FALLBACK_TYPE;
     }
 
-    private static String filename(BODYSTRUCTURE part) {
+    static String filename(BODYSTRUCTURE part) {
         String raw = param(part.dParams, "filename");
         if (raw == null) {
             raw = param(part.cParams, "name");

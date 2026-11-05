@@ -26,7 +26,7 @@ class PartResolverTest {
     private GreenMailUser user;
 
     @BeforeEach
-    void purge() {
+    void purge() throws Exception {
         GREEN_MAIL.purgeEmailFromAllMailboxes();
         user = GREEN_MAIL.setUser("user@localhost", "user", "secret");
     }
@@ -45,8 +45,11 @@ class PartResolverTest {
         mp.addBodyPart(altPart);
         mp.addBodyPart(binary("application/pdf", new byte[300], "attachment; filename=\"Report.PDF\""));
         MimeBodyPart inner = new MimeBodyPart();
-        inner.setContent("Subject: inner\r\n\r\nbody", "message/rfc822");
-        inner.setHeader("Content-Type", "message/rfc822");
+        MimeMessage encapsulated = new MimeMessage(jakarta.mail.Session.getInstance(new java.util.Properties()));
+        encapsulated.setSubject("inner");
+        encapsulated.setText("inner body");
+        encapsulated.saveChanges();
+        inner.setContent(encapsulated, "message/rfc822");
         mp.addBodyPart(inner);
         return structureOf(message(mp));
     }
