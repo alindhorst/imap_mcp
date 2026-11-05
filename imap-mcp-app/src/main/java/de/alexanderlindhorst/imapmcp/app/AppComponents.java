@@ -28,6 +28,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import de.alexanderlindhorst.imapmcp.core.tools.DownloadAttachmentTool;
 import de.alexanderlindhorst.imapmcp.core.tools.GetMessageTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAccountsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool;
@@ -239,6 +240,11 @@ public final class AppComponents implements AutoCloseable {
                 // elicit gets confirmation_unavailable.
                 tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(new WritePreflight(account, locator),
                         leases, clock, new ElicitingPurgeConfirmation(clock)));
+            }
+
+            if (downloadDirectory != null) { // SPEC 5.3: independent of readOnly and of the write gate
+                tools.put(DownloadAttachmentTool.DEFINITION,
+                        new DownloadAttachmentTool(account, locator, leases, downloadDirectory));
             }
 
             metrics.start();

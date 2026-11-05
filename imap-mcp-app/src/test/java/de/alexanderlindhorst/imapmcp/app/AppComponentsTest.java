@@ -182,6 +182,101 @@ class AppComponentsTest {
                 .containsExactlyElementsOf(all);
     }
 
+    // v3a download_attachment registration (#288)
+
+    private AppConfig withDownload(boolean readOnly) throws IOException {
+        Path dl = Files.createDirectories(dir.resolve("dl-" + readOnly));
+        Files.setPosixFilePermissions(dl, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        return config("env:MAIL_PW", "tools:\n  download:\n    dir: " + dl + "\n", readOnly);
+    }
+
+    @Test
+    void downloadAttachmentIsRegisteredOnlyWithADownloadDirectory() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        List<String> all = new ArrayList<>(TOOLS);
+        all.addAll(WRITE_TOOLS);
+        List<String> with = new ArrayList<>(all);
+        with.add("download_attachment");
+
+        AppComponents c = create(withDownload(false), NO_RUNNER);
+
+        assertThat(c.statefulToolSpecs()).extracting(s -> s.tool().name()).containsExactlyElementsOf(with);
+        assertThat(c.statelessToolSpecs(ctx -> LOCAL)).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(with);
+        assertThat(create(config("env:MAIL_PW"), NO_RUNNER).statefulToolSpecs()).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(all);
+    }
+
+    @Test
+    void downloadAttachmentIsRegisteredWhenEveryAccountIsReadOnly() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        List<String> expected = new ArrayList<>(TOOLS);
+        expected.add("download_attachment");
+
+        assertThat(create(withDownload(true), NO_RUNNER).statefulToolSpecs()).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(expected);
+    }
+
+    @Test
+    void downloadAttachmentAnnotationsSchemaAndDescriptionReachTheMcpLayer() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppComponents c = create(withDownload(false), NO_RUNNER);
+        var spec = c.statefulToolSpecs().stream().filter(s -> s.tool().name().equals("download_attachment"))
+                .findFirst().orElseThrow();
+
+        McpSchema.ToolAnnotations a = spec.tool().annotations();
+        assertThat(a).extracting(McpSchema.ToolAnnotations::readOnlyHint, McpSchema.ToolAnnotations::destructiveHint,
+                McpSchema.ToolAnnotations::idempotentHint, McpSchema.ToolAnnotations::openWorldHint)
+                .containsExactly(false, false, false, true);
+        assertThat(spec.tool().outputSchema()).isNotEmpty();
+        assertThat(c.definitions()).allSatisfy(d ->
+                assertThat(de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules.violations(d)).as(d.name()).isEmpty());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void downloadAttachmentRunsEndToEndAndIsRecognisedByTheExecutor() throws Exception {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig cfg = withDownload(false);
+        AppComponents c = create(cfg, NO_RUNNER);
+        jakarta.mail.internet.MimeMultipart mp = new jakarta.mail.internet.MimeMultipart("mixed");
+        jakarta.mail.internet.MimeBodyPart text = new jakarta.mail.internet.MimeBodyPart();
+        text.setText("see attached");
+        mp.addBodyPart(text);
+        jakarta.mail.internet.MimeBodyPart att = new jakarta.mail.internet.MimeBodyPart();
+        att.setDataHandler(new jakarta.activation.DataHandler(new jakarta.mail.util.ByteArrayDataSource(
+                "attachment bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8), "application/pdf")));
+        att.setFileName("doc.pdf");
+        att.setDisposition("attachment");
+        mp.addBodyPart(att);
+        jakarta.mail.internet.MimeMessage m = new jakarta.mail.internet.MimeMessage(
+                jakarta.mail.Session.getInstance(new java.util.Properties()));
+        m.setFrom("from@example.org");
+        m.setRecipients(jakarta.mail.Message.RecipientType.TO, "user@localhost");
+        m.setSubject("with attachment");
+        m.setContent(mp);
+        m.saveChanges();
+        GREEN_MAIL.setUser("user@localhost", "user", "pw").deliver(m);
+        var byName = new java.util.HashMap<String, McpServerFeatures.SyncToolSpecification>();
+        c.statefulToolSpecs().forEach(s -> byName.put(s.tool().name(), s));
+        McpSyncServerExchange ex = mock(McpSyncServerExchange.class);
+        when(ex.transportContext()).thenReturn(McpTransportContext.EMPTY);
+        Map<String, Object> accounts = call(byName, ex, "list_accounts", Map.of());
+        String acct = (String) ((List<Map<String, Object>>) accounts.get("accounts")).get(0).get("account");
+        Map<String, Object> found = call(byName, ex, "search_messages", Map.of("account", acct, "folder", "INBOX"));
+        String handle = (String) ((List<Map<String, Object>>) found.get("messages")).get(0).get("handle");
+
+        Map<String, Object> out = call(byName, ex, "download_attachment",
+                Map.of("account", acct, "message", handle, "part", "2"));
+
+        assertThat(out).containsEntry("bytes", 16L).containsEntry("delivery", "file");
+        assertThat(Files.readString(cfg.tools().download().dir().resolve("doc.pdf"))).isEqualTo("attachment bytes");
+        Map<String, Object> bad = new java.util.HashMap<>(Map.of("account", acct, "message", handle, "part", "0"));
+        McpSchema.CallToolResult r = byName.get("download_attachment").callHandler()
+                .apply(ex, new McpSchema.CallToolRequest("download_attachment", bad));
+        assertThat(r.isError()).isTrue();
+    }
+
     // v3a purge gate (#282)
 
     private static final String PURGE = "    allowPurge: true\n";

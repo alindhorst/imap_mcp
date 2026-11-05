@@ -61,7 +61,8 @@ final class ArchitectureRules {
             ROOT + ".core.mime.BodyWindowReader",
             ROOT + ".core.tools.GetMessageTool",
             ROOT + ".core.tools.ListAttachmentsTool",
-            ROOT + ".core.tools.StatusCountEnricher"};
+            ROOT + ".core.tools.StatusCountEnricher",
+            ROOT + ".core.download.PartFetcher"};
 
     /** A call whose target owner is (a subtype of) {@code owner} and whose name is one of {@code names}. */
     private static DescribedPredicate<JavaMethodCall> call(String desc, String owner, String... names) {
