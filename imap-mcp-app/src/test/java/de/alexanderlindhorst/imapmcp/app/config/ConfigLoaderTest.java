@@ -186,6 +186,41 @@ class ConfigLoaderTest {
                 .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].readOnly");
     }
 
+    private static final String PURGE_ACCOUNT = ACCOUNT + "    allowPurge: true\n";
+
+    @Test
+    void allowPurgeDefaultsToFalseAndIsMappedToMailAccount() throws IOException {
+        AppConfig c = load(ACCOUNT);
+        assertThat(c.accounts().get(0).allowPurge()).isFalse();
+        assertThat(c.accounts().get(0).toMailAccount().allowPurge()).isFalse();
+        assertThat(c.purgeAccounts()).isZero();
+
+        AppConfig p = load(PURGE_ACCOUNT);
+        assertThat(p.accounts().get(0).allowPurge()).isTrue();
+        assertThat(p.accounts().get(0).toMailAccount().allowPurge()).isTrue();
+        assertThat(p.purgeAccounts()).isEqualTo(1);
+    }
+
+    @Test
+    void allowPurgeMustBeBoolean() {
+        assertThatThrownBy(() -> load(ACCOUNT + "    allowPurge: maybe\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].allowPurge");
+    }
+
+    @Test
+    void allowPurgeTogetherWithReadOnlyFailsStartupNamingThePath() {
+        assertThatThrownBy(() -> load(ACCOUNT + "    readOnly: true\n    allowPurge: true\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].allowPurge")
+                .hasMessageContaining("readOnly");
+    }
+
+    @Test
+    void allowPurgeStaysValidWithTheShortDeadlineBecauseTheGuardDependsOnTheMode() throws IOException {
+        // the 60 s guard applies only while purge_messages is registered (stdio), so it lives in AppComponents
+        assertThat(load(PURGE_ACCOUNT + "tools: {deadline: 30s}\n").tools().deadline())
+                .isEqualTo(Duration.ofSeconds(30));
+    }
+
     @Test
     void writeToolsUsableIsTrueIfAnyAccountIsWritable() throws IOException {
         AppConfig c = load(READ_ONLY_ACCOUNT

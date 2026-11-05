@@ -82,6 +82,8 @@ public final class AppComponents implements AutoCloseable {
 
     private static final AccountContext LOCAL = new AccountContext(TENANT);
     private static final int LIST_ACCOUNTS_PARALLELISM = 4;
+    /** SPEC 5.7: the user needs time to answer the purge confirmation inside the deadline. */
+    private static final Duration PURGE_MIN_DEADLINE = Duration.ofSeconds(60);
 
     private final ImapSessionFactory sessions;
     private final StorePool pool;
@@ -90,12 +92,13 @@ public final class AppComponents implements AutoCloseable {
     private final ToolExecutor executor;
     private final StateDirectory state;
     private final Map<ToolDefinition, ToolHandler> tools;
+    private final boolean purgeRegistered;
     private final DownloadDirectory downloadDirectory;
     private boolean closed;
 
     private AppComponents(ImapSessionFactory sessions, StorePool pool, Admission admission,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, StateDirectory state, Map<ToolDefinition, ToolHandler> tools,
-            DownloadDirectory downloadDirectory) {
+            boolean purgeRegistered, DownloadDirectory downloadDirectory) {
         this.sessions = sessions;
         this.pool = pool;
         this.admission = admission;
@@ -103,17 +106,43 @@ public final class AppComponents implements AutoCloseable {
         this.executor = executor;
         this.state = state;
         this.tools = tools;
+        this.purgeRegistered = purgeRegistered;
         this.downloadDirectory = downloadDirectory;
     }
 
-    public static AppComponents create(AppConfig config, AppPaths paths, Clock clock, Map<String, String> env) {
+    /** The transport the components are built for; {@code purge_messages} exists only in {@link #STDIO} (SPEC 5.3). */
+    public enum Mode { STDIO, HTTP_LOCAL }
+
+    /** SPEC 5.3: stdio only, and only if at least one account has {@code allowPurge}; fixed at startup. */
+    static boolean purgeRegistered(AppConfig config, Mode mode) {
+        return mode == Mode.STDIO && config.purgeAccounts() > 0;
+    }
+
+    /** True iff {@code purge_messages} is registered in this instance. */
+    boolean purgeRegistered() {
+        return purgeRegistered;
+    }
+
+    public static AppComponents create(AppConfig config, AppPaths paths, Clock clock, Map<String, String> env,
+            Mode mode) {
         return create(config, paths, clock, env, p -> p, Platform.current(), new ProcessCommandRunner(),
-                BinaryProbe.system(env));
+                BinaryProbe.system(env), mode);
     }
 
     /** Test seam: JavaMail property hook (GreenMail trust) and keyring fakes. Not reachable from config. */
     static AppComponents create(AppConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe) {
+        return create(config, paths, clock, env, sessionHook, platform, runner, probe, Mode.STDIO);
+    }
+
+    static AppComponents create(AppConfig config, AppPaths paths, Clock clock, Map<String, String> env,
+            UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
+            Mode mode) {
+        boolean purge = purgeRegistered(config, mode);
+        if (purge && config.tools().deadline().compareTo(PURGE_MIN_DEADLINE) < 0) {
+            throw new AppStartupException("tools.deadline in " + paths.configFile()
+                    + ": must be at least 60s while purge_messages is registered (an account has allowPurge)");
+        }
         List<MailAccount> accounts = config.accounts().stream().map(AppConfig.Account::toMailAccount).toList();
 
         RefCredentialStore credentials = RefCredentialStore.withEnvAndKeyring(TENANT, accounts, env, platform,
@@ -195,9 +224,17 @@ public final class AppComponents implements AutoCloseable {
                 tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
             }
 
+            var appLog = LoggerFactory.getLogger("imapmcp.app");
+            appLog.info("purge_messages registered={}, accounts with allowPurge={} of {}", purge,
+                    config.purgeAccounts(), config.accounts().size());
+            if (mode == Mode.HTTP_LOCAL && config.purgeAccounts() > 0) {
+                appLog.warn("accounts with allowPurge are configured, but purge_messages is not available in "
+                        + "http-local mode (it needs MCP elicitation, stdio only)");
+            }
+
             metrics.start();
             return new AppComponents(sessions, pool, admission, metrics, executor, state,
-                    java.util.Collections.unmodifiableMap(tools), downloadDirectory);
+                    java.util.Collections.unmodifiableMap(tools), purge, downloadDirectory);
         } catch (RuntimeException e) {
             if (metrics != null) {
                 metrics.close();

@@ -48,7 +48,8 @@ public final class HttpLocalMain {
                 System.err.println("imap-mcp: warning: cannot write logs to " + paths.logDir() + "; logging disabled");
             }
             AppConfig config = ConfigLoader.load(paths.configFile(), System.getenv());
-            components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv());
+            components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv(),
+                    AppComponents.Mode.HTTP_LOCAL);
             AppConfig.Http h = config.http();
 
             // The token comes from http.token or the state dir (generated on first start); never logged here.

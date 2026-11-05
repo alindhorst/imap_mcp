@@ -61,10 +61,11 @@ public final class ListAccountsTool implements ToolHandler {
                     "address", schema("type", List.of("string", "null")),
                     "provider", schema("type", "string", "enum", List.of("generic", "gmail")),
                     "read_only", schema("type", "boolean"),
+                    "allow_purge", schema("type", "boolean"),
                     "status", schema("type", "string", "enum", List.of("ok", "auth_failed", "unreachable", "unknown")),
                     "capabilities", CAPABILITIES_SCHEMA,
                     "capabilities_detected_at", schema("type", List.of("string", "null"))),
-            "required", List.of("account", "label", "address", "provider", "read_only", "status",
+            "required", List.of("account", "label", "address", "provider", "read_only", "allow_purge", "status",
                     "capabilities", "capabilities_detected_at"));
 
     static final Map<String, Object> OUTPUT_SCHEMA = schema("type", "object",
@@ -158,6 +159,7 @@ public final class ListAccountsTool implements ToolHandler {
         m.put("address", a.address());
         m.put("provider", a.flavor() == MailAccount.Flavor.GMAIL ? "gmail" : "generic");
         m.put("read_only", a.readOnly());
+        m.put("allow_purge", a.allowPurge());
         m.put("status", status);
         m.put("capabilities", caps == null ? null : capabilityMap(caps));
         m.put("capabilities_detected_at", detectedAt == null ? null : detectedAt.truncatedTo(ChronoUnit.SECONDS).toString());

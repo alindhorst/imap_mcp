@@ -45,7 +45,8 @@ public final class StdioMain {
             }
             // 4. config and wiring.
             AppConfig config = ConfigLoader.load(paths.configFile(), System.getenv());
-            components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv());
+            components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv(),
+                    AppComponents.Mode.STDIO);
             // 5. serve until stdin reaches EOF.
             StdioServer server = StdioServer.start(streams, McpJsonDefaults.getMapper(),
                     components.statefulToolSpecs(), AppVersion.serverInfo());
