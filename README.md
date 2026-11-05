@@ -318,6 +318,8 @@ accounts:
 
 Manual smoke checklist, to be run by the owner against a test Gmail account (use `example.com`-style test data, never a real mailbox):
 
+**Status: pending, not yet run, because no test accounts are available.**
+
 - COPYUID on labels: copy a message into a label and check the returned handle opens the message.
 - Copy into a label the message already has: no duplicate, handle points to the existing message.
 - Move into and out of All Mail: archives, and the message stays in All Mail after moving out.
@@ -331,6 +333,8 @@ Manual smoke checklist, to be run by the owner against a test Gmail account (use
 ### Smoke checklist for v3a
 
 Manual checks for the owner, with test data only (the automated smoke run above does not cover them):
+
+**Status: pending, not yet run, because no test accounts are available.**
 
 - Gmail Trash purge: `delete_messages` a test message, then `purge_messages` it from `[Gmail]/Trash`; the message is gone from All Mail too.
 - Microsoft 365 Deleted Items: purge a test message from Deleted Items (the Trash role there); it is gone from the folder.
