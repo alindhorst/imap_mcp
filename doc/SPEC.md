@@ -1,6 +1,6 @@
 # IMAP MCP Server: Specification
 
-Status: draft v0.15 (v1 and v2 implemented; v3a specified with all owner decisions taken, implementation in progress; groupId final). Audience: implementation lead and team, who break this down into work items.
+Status: draft v0.16 (v1 and v2 implemented; v3a specified with all owner decisions taken, implementation in progress; groupId final). Audience: implementation lead and team, who break this down into work items.
 
 ## 1. Purpose and scope
 
@@ -113,7 +113,7 @@ Bulk output (all fields present; inapplicable values `null`): `account`, `target
 `notes` contains, in this order, the sentence of each condition that occurred at least once (exact text, asserted by tests):
 
 1. `already_in_target` (move): "Some messages were already in the target folder and were left unchanged."
-2. `already_in_target` (delete): "Some messages were already in Trash and were left unchanged; permanent deletion is not available."
+2. `already_in_target` (delete): "Some messages were already in Trash and were left unchanged."
 3. `already_gone`: "Some messages are no longer in their source folder; if this call repeats an earlier one, they were already moved. Search the target folder for their new handles."
 4. `ok` with `note` `new_uid_unknown`: "The server did not report the new UIDs of some messages; search the target folder for their handles."
 5. `not_found`: "Some messages no longer exist; re-run search_messages."
