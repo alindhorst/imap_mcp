@@ -152,9 +152,9 @@ class ElicitingPurgeConfirmationTest {
     void trashNameAndLabelAreSingleLineAndCappedAt200CodePoints() throws Exception {
         script.answers.add(new ElicitationChannel.Answer.Accepted(null));
         String longName = "T" + "x".repeat(300);
-        confirm(ctx(T1, null), request("a1", "Wo\nrk\r‮", longName, 1));
+        confirm(ctx(T1, null), request("a1", "Wo\nrk\r\u202e", longName, 1));
         String m = script.messages.get(0);
-        assertThat(m).doesNotContain("\n").doesNotContain("\r").doesNotContain("‮");
+        assertThat(m).doesNotContain("\n").doesNotContain("\r").doesNotContain("\u202e");
         assertThat(m).contains("of account \"Wo rk\"");
         assertThat(m).doesNotContain("x".repeat(201)).contains("x".repeat(150));
     }
