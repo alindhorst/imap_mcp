@@ -283,11 +283,11 @@ class DownloadAttachmentToolTest {
 
     @Test
     void quotedPrintableAttachmentIsSavedByteExact() throws Exception {
-        String h = deliver(mixed(textAttachment("note.txt", "café = ok", "ISO-8859-1")));
+        String h = deliver(mixed(textAttachment("note.txt", "caf\u00e9 = ok", "ISO-8859-1")));
 
         Map<String, Object> out = ok(call(h, "2"));
 
-        byte[] expected = "café = ok".getBytes(StandardCharsets.ISO_8859_1);
+        byte[] expected = "caf\u00e9 = ok".getBytes(StandardCharsets.ISO_8859_1);
         assertThat(Files.readAllBytes(dir.resolve("note.txt"))).isEqualTo(expected);
         assertThat(out).containsEntry("sha256", sha(expected));
     }
@@ -529,12 +529,12 @@ class DownloadAttachmentToolTest {
 
     @Test
     void anUnsafeNameIsSanitizedAndMarkedRenamed() throws Exception {
-        String h = deliver(mixed(attachment("application/pdf", "résumé:1.pdf", random(100))));
+        String h = deliver(mixed(attachment("application/pdf", "r\u00e9sum\u00e9:1.pdf", random(100))));
 
         Map<String, Object> out = ok(call(h, "2"));
 
-        assertThat(untrusted(out)).containsEntry("filename", "résumé:1.pdf")
-                .containsEntry("saved_as", "résumé_1.pdf");
+        assertThat(untrusted(out)).containsEntry("filename", "r\u00e9sum\u00e9:1.pdf")
+                .containsEntry("saved_as", "r\u00e9sum\u00e9_1.pdf");
         assertThat(out).containsEntry("renamed", true);
     }
 
