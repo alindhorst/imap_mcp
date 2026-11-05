@@ -28,6 +28,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import de.alexanderlindhorst.imapmcp.core.tools.DownloadAttachmentTool;
 import de.alexanderlindhorst.imapmcp.core.tools.GetMessageTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAccountsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool;
@@ -238,6 +239,11 @@ public final class AppComponents implements AutoCloseable {
                 // T4 supplies the elicitation-backed confirmation; until then no session can confirm (SPEC 4)
                 tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(new WritePreflight(account, locator),
                         leases, clock, PurgeConfirmation.UNAVAILABLE));
+            }
+
+            if (downloadDirectory != null) { // SPEC 5.3: independent of readOnly and of the write gate
+                tools.put(DownloadAttachmentTool.DEFINITION,
+                        new DownloadAttachmentTool(account, locator, leases, downloadDirectory));
             }
 
             metrics.start();

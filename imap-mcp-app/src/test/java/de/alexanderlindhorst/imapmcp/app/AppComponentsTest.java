@@ -256,7 +256,6 @@ class AppComponentsTest {
         m.setSubject("with attachment");
         m.setContent(mp);
         m.saveChanges();
-        GREEN_MAIL.getUserManager().getUser("user@localhost");
         GREEN_MAIL.setUser("user@localhost", "user", "pw").deliver(m);
         var byName = new java.util.HashMap<String, McpServerFeatures.SyncToolSpecification>();
         c.statefulToolSpecs().forEach(s -> byName.put(s.tool().name(), s));
@@ -270,7 +269,7 @@ class AppComponentsTest {
         Map<String, Object> out = call(byName, ex, "download_attachment",
                 Map.of("account", acct, "message", handle, "part", "2"));
 
-        assertThat(out).containsEntry("bytes", 16).containsEntry("delivery", "file");
+        assertThat(out).containsEntry("bytes", 16L).containsEntry("delivery", "file");
         assertThat(Files.readString(cfg.tools().download().dir().resolve("doc.pdf"))).isEqualTo("attachment bytes");
         Map<String, Object> bad = new java.util.HashMap<>(Map.of("account", acct, "message", handle, "part", "0"));
         McpSchema.CallToolResult r = byName.get("download_attachment").callHandler()
