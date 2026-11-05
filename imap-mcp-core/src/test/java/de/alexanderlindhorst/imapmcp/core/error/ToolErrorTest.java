@@ -203,7 +203,7 @@ class ToolErrorTest {
         }
         // every other public factory may only take the documented non-handle values
         Set<Class<?>> allowed = Set.of(String.class, int.class, Integer.class, ToolError.StaleReason.class,
-                ToolError.PermissionReason.class);
+                ToolError.PermissionReason.class, ToolError.ElicitationReason.class);
         for (Method m : ToolError.class.getDeclaredMethods()) {
             if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers())
                     && m.getReturnType() == ToolError.class) {
@@ -283,7 +283,29 @@ class ToolErrorTest {
                 .contains("\"details\":{\"reason\":\"folder_read_only\"}");
         assertThat(json(ToolError.permissionDenied(ToolError.PermissionReason.SERVER_DENIED, RID)))
                 .contains("\"details\":{\"reason\":\"server_denied\"}");
-        assertThat(ToolError.PermissionReason.values()).hasSize(3);
+        assertThat(ToolError.PermissionReason.values()).hasSize(7);
+    }
+
+    @Test
+    void goldenPurgePermissionDenied() {
+        String disabled = json(ToolError.purgeDisabled(RID));
+        assertThat(disabled).contains("\"code\":\"PERMISSION_DENIED\"").contains("\"retryable\":false")
+                .contains("\"details\":{\"reason\":\"purge_disabled\"}").contains("accounts[].allowPurge");
+        String unavailable = json(ToolError.confirmationUnavailable(RID));
+        assertThat(unavailable).contains("\"details\":{\"reason\":\"confirmation_unavailable\"}")
+                .contains("Purging needs a client that supports MCP elicitation; nothing was deleted.");
+        String scope = json(ToolError.purgeScope("handles[2]", RID));
+        assertThat(scope).contains("\"details\":{\"reason\":\"purge_scope\",\"field\":\"handles[2]\"}")
+                .contains("Permanent deletion is only possible from Trash; move the messages there with "
+                        + "delete_messages first.");
+        for (ToolError.ElicitationReason r : ToolError.ElicitationReason.values()) {
+            String nc = json(ToolError.notConfirmed(r, RID));
+            assertThat(nc).contains("\"details\":{\"reason\":\"not_confirmed\",\"elicitation\":\""
+                    + r.name().toLowerCase() + "\"}")
+                    .contains("The user did not confirm; nothing was deleted. Call again only if the user asks for it.")
+                    .contains("\"retryable\":false");
+        }
+        assertThat(ToolError.ElicitationReason.values()).hasSize(6);
     }
 
     @Test
