@@ -18,7 +18,7 @@ import java.util.List;
  */
 public final class FaultingImapProxy implements AutoCloseable {
 
-    public enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION, ANSWER_NIL_BODY }
+    public enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION, ANSWER_NIL_BODY, SERVE_BODY }
 
     private final ServerSocket server;
     private final int targetPort;
@@ -26,6 +26,7 @@ public final class FaultingImapProxy implements AutoCloseable {
     private volatile Mode mode = Mode.NONE;
     private volatile String needle = "BODYSTRUCTURE";
     private volatile String noText = "rejected";
+    private volatile byte[] served = new byte[0];
     private final java.util.concurrent.atomic.AtomicInteger skip = new java.util.concurrent.atomic.AtomicInteger();
 
     public FaultingImapProxy(int targetPort) throws IOException {
@@ -66,6 +67,17 @@ public final class FaultingImapProxy implements AutoCloseable {
         this.needle = needle;
         this.skip.set(skip);
         this.mode = Mode.ANSWER_NIL_BODY;
+    }
+
+    /**
+     * Answers every matching {@code FETCH n (BODY.PEEK[s]<o.l>)} itself, with the {@code o..o+l} slice of
+     * {@code content} (an empty string past its end), whatever the real message holds.
+     */
+    public void serveBody(String needle, byte[] content) {
+        this.needle = needle;
+        this.served = content.clone();
+        this.skip.set(0);
+        this.mode = Mode.SERVE_BODY;
     }
 
     public void relay() {
@@ -120,6 +132,23 @@ public final class FaultingImapProxy implements AutoCloseable {
                         return;
                     }
                     String tag = cmd.substring(0, cmd.indexOf(' '));
+                    if (mode == Mode.SERVE_BODY) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("FETCH (\\d+) .*BODY\\.PEEK\\[([^\\]]*)\\]<(\\d+)\\.(\\d+)>").matcher(cmd);
+                        if (m.find()) {
+                            int from = (int) Math.min(Long.parseLong(m.group(3)), served.length);
+                            int to = (int) Math.min((long) from + Long.parseLong(m.group(4)), served.length);
+                            ByteArrayOutputStream resp = new ByteArrayOutputStream();
+                            resp.write(("* " + m.group(1) + " FETCH (BODY[" + m.group(2) + "]<" + m.group(3) + "> {"
+                                    + (to - from) + "}\r\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                            resp.write(served, from, to - from);
+                            resp.write((")\r\n" + tag + " OK FETCH completed\r\n")
+                                    .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                            toClient.write(resp.toByteArray());
+                            toClient.flush();
+                            continue;
+                        }
+                    }
                     if (mode == Mode.ANSWER_NIL_BODY) {
                         String num = cmd.split(" ")[2];
                         toClient.write(("* " + num + " FETCH (BODY[1]<0> NIL)\r\n" + tag + " OK FETCH completed\r\n")

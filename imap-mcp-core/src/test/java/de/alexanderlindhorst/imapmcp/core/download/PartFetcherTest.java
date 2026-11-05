@@ -7,14 +7,13 @@ import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.user.GreenMailUser;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy;
-import jakarta.activation.DataHandler;
 import jakarta.mail.Folder;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import jakarta.mail.Store;
+import jakarta.activation.DataHandler;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.util.ByteArrayDataSource;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -38,8 +37,9 @@ class PartFetcherTest {
     @RegisterExtension
     static final GreenMailExtension GREEN_MAIL = new GreenMailExtension(ServerSetupTest.IMAPS.dynamicPort());
 
-    private static final Session MAIL = Session.getInstance(new Properties());
     private static final int BLOCK = 1024 * 1024;
+
+    private static final Session MAIL = Session.getInstance(new Properties());
 
     @TempDir
     Path tmp;
@@ -74,23 +74,24 @@ class PartFetcherTest {
         }
     }
 
-    private static MimeMessage raw(String contentType, byte[] bytes, String cte) throws Exception {
+    private static byte[] ascii(String s) {
+        return s.getBytes(StandardCharsets.ISO_8859_1);
+    }
+
+    private static MimeMessage message(DataHandler data, String contentType) throws Exception {
         MimeMessage m = new MimeMessage(MAIL);
         m.setFrom("a@localhost");
         m.setSubject("fixture");
-        m.setDataHandler(new DataHandler(new ByteArrayDataSource(bytes, contentType)));
-        m.setHeader("Content-Transfer-Encoding", cte);
+        m.setDataHandler(data);
         m.saveChanges();
         return m;
     }
 
-    /** A message with a hand-written single-part body, as it is on the wire. */
-    private static MimeMessage wire(String cte, String body) throws Exception {
-        String text = "From: a@localhost\r\nSubject: fixture\r\nMIME-Version: 1.0\r\nContent-Type: application/octet-stream\r\n"
-                + "Content-Transfer-Encoding: " + cte + "\r\n\r\n" + body;
-        return new MimeMessage(MAIL, new ByteArrayInputStream(text.getBytes(StandardCharsets.ISO_8859_1)));
+    private static MimeMessage binaryMessage(byte[] data) throws Exception {
+        return message(new DataHandler(new ByteArrayDataSource(data, "application/octet-stream")), null);
     }
 
+    /** Delivers the message and opens INBOX READ_ONLY with the wire captured (directly or through the proxy). */
     private void open(MimeMessage msg, boolean viaProxy) throws Exception {
         user.deliver(msg);
         int port = GREEN_MAIL.getImaps().getPort();
@@ -109,6 +110,12 @@ class PartFetcherTest {
         folder = (IMAPFolder) store.getFolder("INBOX");
         folder.open(Folder.READ_ONLY);
         seq = folder.getMessage(1).getMessageNumber();
+    }
+
+    /** The part bytes come from the script, not from GreenMail (which re-encodes bodies): exact wire control. */
+    private void openScripted(byte[] partOnTheWire) throws Exception {
+        open(binaryMessage(new byte[] {1}), true);
+        proxy.serveBody("BODY.PEEK", partOnTheWire);
     }
 
     private DownloadSink sink(long max) throws Exception {
@@ -131,6 +138,12 @@ class PartFetcherTest {
         return debug.toString(StandardCharsets.UTF_8).lines().filter(l -> l.contains("BODY.PEEK[")).toList();
     }
 
+    private static byte[] textBytes(int n) {
+        byte[] b = new byte[n];
+        java.util.Arrays.fill(b, (byte) 'y');
+        return b;
+    }
+
     private static byte[] random(int n) {
         byte[] b = new byte[n];
         new Random(42).nextBytes(b);
@@ -140,41 +153,64 @@ class PartFetcherTest {
     @Test
     void base64PartIsByteExactAndFetchedInOneMiBPeekBlocks() throws Exception {
         byte[] data = random(2 * BLOCK + 12345);
-        open(raw("application/octet-stream", data, "base64"), false);
+        open(binaryMessage(data), false);
 
         assertThat(fetchAndPublish("base64", 100L * BLOCK)).isEqualTo(sha(data));
 
         List<String> peeks = peekLines();
-        assertThat(peeks).hasSizeGreaterThanOrEqualTo(4);
+        assertThat(peeks).hasSize(3);
         assertThat(peeks.get(0)).contains("BODY.PEEK[1]<0.1048576>");
         assertThat(peeks.get(1)).contains("BODY.PEEK[1]<1048576.1048576>");
         assertThat(peeks).allMatch(l -> l.matches(".*BODY\\.PEEK\\[1\\]<\\d+\\.1048576>.*"));
-        assertThat(debug.toString(StandardCharsets.UTF_8).lines()).noneMatch(
-                l -> l.contains("FETCH") && l.contains("BODY[") && !l.contains("BODY.PEEK[") || l.contains("BINARY"));
+        // client commands only (responses echo BODY[...] labels): never BODY[...] without PEEK, never BINARY
+        assertThat(debug.toString(StandardCharsets.UTF_8).lines().filter(l -> l.matches("[A-Z]+\\d+ .*")))
+                .noneMatch(l -> l.contains("BODY[") || l.contains("BINARY"));
     }
 
     @Test
     void quotedPrintablePartIsByteExact() throws Exception {
-        byte[] data = new byte[20000];
-        for (int i = 0; i < data.length; i++) {
-            data[i] = (byte) (i % 7 == 0 ? '=' : i % 5 == 0 ? 0xE9 : 'a' + i % 20);
-        }
-        open(raw("application/octet-stream", data, "quoted-printable"), false);
+        byte[] expected = ascii("caf\u00e9 = ok");
+        MimeMessage m = new MimeMessage(MAIL);
+        m.setFrom("a@localhost");
+        m.setText("caf\u00e9 = ok", "ISO-8859-1");
+        m.saveChanges();
+        open(m, false);
 
-        assertThat(fetchAndPublish("quoted-printable", 100L * BLOCK)).isEqualTo(sha(data));
+        assertThat(fetchAndPublish("quoted-printable", 1000)).isEqualTo(sha(expected));
     }
 
     @Test
-    void eightBitAndSevenBitPartsAreWrittenAsTheServerSendsThem() throws Exception {
-        byte[] data = "plain 7bit text\r\nsecond line\r\n".getBytes(StandardCharsets.US_ASCII);
-        open(raw("text/plain", data, "7bit"), false);
+    void quotedPrintableEscapesAndSoftBreaksOnTheWireAreDecoded() throws Exception {
+        byte[] expected = {'a', 'b', 'c', '=', 'd', 'e', 'f', (byte) 0xE9, '\r', '\n', 's', 'e', 'c', 'o', 'n', 'd', ' ',
+            'l', 'i', 'n', 'e', '\r', '\n'};
+        openScripted(ascii("abc=3Ddef=E9\r\nsecond =\r\nline\r\n"));
+
+        assertThat(fetchAndPublish("quoted-printable", 1000)).isEqualTo(sha(expected));
+    }
+
+    @Test
+    void sevenBitPartIsWrittenAsTheServerSendsIt() throws Exception {
+        byte[] data = ascii("plain text, one line");
+        MimeMessage m = new MimeMessage(MAIL);
+        m.setFrom("a@localhost");
+        m.setText("plain text, one line");
+        m.saveChanges();
+        open(m, false);
 
         assertThat(fetchAndPublish("7bit", 1000)).isEqualTo(sha(data));
     }
 
     @Test
+    void eightBitPartIsWrittenAsTheServerSendsIt() throws Exception {
+        byte[] eight = {'c', 'a', 'f', (byte) 0xE9, '\r', '\n', (byte) 0xFF, 'x', '\r', '\n'};
+        openScripted(eight);
+
+        assertThat(fetchAndPublish("8bit", 1000)).isEqualTo(sha(eight));
+    }
+
+    @Test
     void aPartOfZeroOctetsGivesAnEmptyResult() throws Exception {
-        open(wire("base64", ""), false);
+        openScripted(new byte[0]);
 
         try (DownloadSink s = sink(1000)) {
             PartFetcher.stream(folder, seq, "1", "base64", s);
@@ -184,16 +220,16 @@ class PartFetcherTest {
 
     @Test
     void aPartOfExactlyOneBlockEndsAtTheEmptyFollowingBlock() throws Exception {
-        byte[] data = random(BLOCK);
-        open(raw("application/octet-stream", data, "binary"), false);
+        byte[] data = textBytes(BLOCK);
+        openScripted(data);
 
-        assertThat(fetchAndPublish("binary", 100L * BLOCK)).isEqualTo(sha(data));
+        assertThat(fetchAndPublish("8bit", 100L * BLOCK)).isEqualTo(sha(data));
         assertThat(peekLines()).anyMatch(l -> l.contains("<1048576.1048576>"));
     }
 
     @Test
     void aTruncatedBase64QuantumIsDecodeFailed() throws Exception {
-        open(wire("base64", "AAAABB"), false);
+        openScripted(ascii("AAAABB"));
 
         try (DownloadSink s = sink(1000)) {
             assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "base64", s))
@@ -203,7 +239,7 @@ class PartFetcherTest {
 
     @Test
     void charactersOutsideTheBase64AlphabetAreSkipped() throws Exception {
-        open(wire("base64", "aGVs bG8h\r\n!!\r\n"), false);
+        openScripted(ascii("aGVs bG8h\r\n!!\r\n"));
 
         assertThat(fetchAndPublish("base64", 1000)).isEqualTo(sha("hello!".getBytes(StandardCharsets.US_ASCII)));
     }
@@ -211,7 +247,7 @@ class PartFetcherTest {
     @Test
     void theDecodedCountIsEnforcedWhileStreaming() throws Exception {
         byte[] data = random(5000);
-        open(raw("application/octet-stream", data, "base64"), false);
+        open(binaryMessage(data), false);
 
         try (DownloadSink s = sink(4000)) {
             assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "base64", s))
@@ -221,11 +257,11 @@ class PartFetcherTest {
 
     @Test
     void aNoAnswerAtOffsetZeroIsAMissingMessage() throws Exception {
-        open(raw("application/octet-stream", random(100), "binary"), true);
+        open(binaryMessage(random(100)), true);
         proxy.rejectWithNo("BODY.PEEK", "gone");
 
         try (DownloadSink s = sink(1000)) {
-            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "binary", s))
+            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "8bit", s))
                     .isInstanceOf(PartFetcher.BlockMissingException.class)
                     .satisfies(e -> assertThat(((PartFetcher.BlockMissingException) e).atStart()).isTrue());
         }
@@ -233,36 +269,35 @@ class PartFetcherTest {
 
     @Test
     void aNilBodyAtOffsetZeroIsAMissingMessage() throws Exception {
-        open(raw("application/octet-stream", random(100), "binary"), true);
+        open(binaryMessage(random(100)), true);
         proxy.answerNilBodyAfter("BODY.PEEK", 0);
 
         try (DownloadSink s = sink(1000)) {
-            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "binary", s))
+            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "8bit", s))
                     .isInstanceOf(PartFetcher.BlockMissingException.class)
                     .satisfies(e -> assertThat(((PartFetcher.BlockMissingException) e).atStart()).isTrue());
         }
     }
 
     @Test
-    void aNoOrNilAnswerLaterIsNotAtStart() throws Exception {
-        open(raw("application/octet-stream", random(2 * BLOCK + 10), "binary"), true);
+    void aNoAnswerLaterIsNotAtStart() throws Exception {
+        open(binaryMessage(random(2 * BLOCK + 10)), true);
         proxy.rejectWithNoAfter("BODY.PEEK", "gone", 1);
 
         try (DownloadSink s = sink(100L * BLOCK)) {
-            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "binary", s))
+            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "8bit", s))
                     .isInstanceOf(PartFetcher.BlockMissingException.class)
                     .satisfies(e -> assertThat(((PartFetcher.BlockMissingException) e).atStart()).isFalse());
         }
-        proxy.answerNilBodyAfter("BODY.PEEK", 1);
     }
 
     @Test
     void aConnectionResetMidPartIsAMessagingException() throws Exception {
-        open(raw("application/octet-stream", random(2 * BLOCK + 10), "binary"), true);
+        open(binaryMessage(random(2 * BLOCK + 10)), true);
         proxy.dropConnectionAfter("BODY.PEEK", 1);
 
         try (DownloadSink s = sink(100L * BLOCK)) {
-            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "binary", s))
+            assertThatThrownBy(() -> PartFetcher.stream(folder, seq, "1", "8bit", s))
                     .isInstanceOf(MessagingException.class);
         }
     }
