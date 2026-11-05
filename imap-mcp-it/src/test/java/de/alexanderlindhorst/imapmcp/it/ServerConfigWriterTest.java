@@ -101,6 +101,19 @@ class ServerConfigWriterTest {
     }
 
     @Test
+    void allowPurgeIsWrittenPerAccount() throws Exception {
+        ServerConfig cfg = new ServerConfigWriter(dir)
+                .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw")
+                .account("home", "localhost", 31143, MailAccount.Security.STARTTLS, "bob", "pw")
+                .allowPurge("work").write();
+
+        AppConfig loaded = ConfigLoader.load(cfg.configFile(), cfg.env());
+        assertThat(loaded.accounts()).extracting(AppConfig.Account::id, AppConfig.Account::allowPurge)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("work", true),
+                        org.assertj.core.groups.Tuple.tuple("home", false));
+    }
+
+    @Test
     void readOnlyOfAnUnknownAccountIsRejected() {
         ServerConfigWriter w = new ServerConfigWriter(dir)
                 .account("work", "localhost", 31993, MailAccount.Security.IMPLICIT_TLS, "alice", "pw");
