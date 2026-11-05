@@ -38,7 +38,7 @@ class StdioServerTest {
     private StdioServer server;
 
     private List<McpServerFeatures.SyncToolSpecification> tools() {
-        return List.of(
+        return List.of(askTool(),
                 adapter.stateful(COUNT, (c, a) -> new ToolOutcome.Success(Map.of("count", 3))),
                 adapter.stateful(SLOW, (c, a) -> {
                     try {
@@ -48,6 +48,28 @@ class StdioServerTest {
                     }
                     return new ToolOutcome.Success(Map.of("count", 1));
                 }));
+    }
+
+    private static final ToolDefinition ASK =
+            new ToolDefinition("ask_things", "Ask things", DESC, Map.of("type", "object", "additionalProperties", false),
+                    Map.of("type", "object"), ToolHints.READ_ONLY_OPEN_WORLD);
+
+    /** Asks the user through the session's channel and reports what it got; the window is 60 s. */
+    private McpServerFeatures.SyncToolSpecification askTool() {
+        return adapter.stateful(ASK, (c, a) -> {
+            var channel = c.elicitation().orElse(null);
+            if (channel == null || !channel.supportsFormMode()) {
+                return new ToolOutcome.Success(Map.of("answer", "unavailable"));
+            }
+            try {
+                var answer = channel.ask("Delete?", Map.of("type", "object", "properties", Map.of()),
+                        Duration.ofSeconds(60));
+                return new ToolOutcome.Success(Map.of("answer", answer.getClass().getSimpleName()));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return new ToolOutcome.Success(Map.of("answer", "interrupted"));
+            }
+        });
     }
 
     private StdioServer startServer() {
@@ -87,6 +109,80 @@ class StdioServerTest {
         Map<String, Object> call = client.awaitResponse(
                 client.request("tools/call", Map.of("name", "count_things", "arguments", Map.of())));
         assertThat(map(map(call.get("result")).get("structuredContent"))).containsEntry("count", 3);
+    }
+
+    // ---- elicitation (SPEC 5.5): the server keeps reading stdin while a tool call waits ----
+
+    @Test
+    void elicitationRequestIsSentWhileTheCallWaitsAndTheAnswerArrives() throws Exception {
+        startServer();
+        client.initialize(Map.of("elicitation", Map.of()));
+        int call = client.request("tools/call", Map.of("name", "ask_things", "arguments", Map.of()));
+        Map<String, Object> req = client.awaitServerRequest("elicitation/create", 10);
+        assertThat(map(req.get("params"))).containsEntry("message", "Delete?").containsEntry("mode", "form");
+        client.respond(req.get("id"), Map.of("action", "accept", "content", Map.of()));
+        Map<String, Object> done = client.awaitResponse(call);
+        assertThat(map(map(done.get("result")).get("structuredContent"))).containsEntry("answer", "Accepted");
+    }
+
+    @Test
+    void declineAndCancelActionsReachTheTool() throws Exception {
+        startServer();
+        client.initialize(Map.of("elicitation", Map.of()));
+        for (String action : List.of("decline", "cancel")) {
+            int before = (int) client.lines().stream().filter(l -> l.contains("elicitation/create")).count();
+            int call = client.request("tools/call", Map.of("name", "ask_things", "arguments", Map.of()));
+            Map<String, Object> req = awaitNthServerRequest(before + 1);
+            client.respond(req.get("id"), Map.of("action", action));
+            Map<String, Object> done = client.awaitResponse(call);
+            assertThat(map(map(done.get("result")).get("structuredContent")))
+                    .containsEntry("answer", action.equals("decline") ? "Declined" : "Cancelled");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> awaitNthServerRequest(int n) throws Exception {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            var found = client.lines().stream().filter(l -> l.contains("elicitation/create")).toList();
+            if (found.size() >= n) {
+                return StdioClientHarness.MAPPER.readValue(found.get(n - 1), Map.class);
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("no elicitation request " + n);
+    }
+
+    @Test
+    void clientWithoutElicitationCapabilityCannotBeAsked() throws Exception {
+        startServer();
+        client.initialize();
+        int call = client.request("tools/call", Map.of("name", "ask_things", "arguments", Map.of()));
+        Map<String, Object> done = client.awaitResponse(call);
+        assertThat(map(map(done.get("result")).get("structuredContent"))).containsEntry("answer", "unavailable");
+        assertThat(client.rawOutput()).doesNotContain("elicitation/create");
+    }
+
+    @Test
+    void urlOnlyElicitationIsNotFormMode() throws Exception {
+        startServer();
+        client.initialize(Map.of("elicitation", Map.of("url", Map.of())));
+        int call = client.request("tools/call", Map.of("name", "ask_things", "arguments", Map.of()));
+        Map<String, Object> done = client.awaitResponse(call);
+        assertThat(map(map(done.get("result")).get("structuredContent"))).containsEntry("answer", "unavailable");
+    }
+
+    /** The SDK's session request timeout (default 10 s) must not end the wait: only our window does. */
+    @Test
+    void anAnswerAfterTheSdkDefaultRequestTimeoutStillCounts() throws Exception {
+        startServer();
+        client.initialize(Map.of("elicitation", Map.of()));
+        int call = client.request("tools/call", Map.of("name", "ask_things", "arguments", Map.of()));
+        Map<String, Object> req = client.awaitServerRequest("elicitation/create", 10);
+        Thread.sleep(12_000);
+        client.respond(req.get("id"), Map.of("action", "accept", "content", Map.of()));
+        Map<String, Object> done = client.awaitResponse(call, 10);
+        assertThat(map(map(done.get("result")).get("structuredContent"))).containsEntry("answer", "Accepted");
     }
 
     @Test

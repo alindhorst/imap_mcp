@@ -152,6 +152,9 @@ public final class PurgeMessagesTool implements ToolHandler {
         ok.groups().forEach(g -> items.addAll(g.items()));
         PurgeConfirmation.Decision decision = confirmation.confirm(ctx,
                 new PurgeConfirmation.Request(ok.account(), lease, trashName, items));
+        if (decision instanceof PurgeConfirmation.Decision.Expired) {
+            return failure(ToolError.timeout(rid), null, start);
+        }
         if (decision instanceof PurgeConfirmation.Decision.Refused refused) {
             return failure(ToolError.notConfirmed(refused.reason(), rid), refused.reason(), start);
         }

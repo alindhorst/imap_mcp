@@ -95,6 +95,35 @@ final class StdioClientHarness {
         sendRaw(MAPPER.writeValueAsString(Map.of("jsonrpc", "2.0", "method", method)));
     }
 
+    /** Initializes with the given client capabilities (e.g. {@code elicitation: {}}). */
+    void initialize(Map<String, Object> capabilities) throws Exception {
+        int id = request("initialize", Map.of("protocolVersion", io.modelcontextprotocol.spec.ProtocolVersions.MCP_2025_11_25,
+                "capabilities", capabilities, "clientInfo", Map.of("name", "test", "version", "1")));
+        awaitResponse(id);
+        notification("notifications/initialized");
+    }
+
+    /** The first request the server sent to the client with this method (waits up to {@code seconds}). */
+    @SuppressWarnings("unchecked")
+    Map<String, Object> awaitServerRequest(String method, int seconds) throws Exception {
+        long deadline = System.nanoTime() + seconds * 1_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            for (String line : lines()) {
+                Map<String, Object> msg = MAPPER.readValue(line, Map.class);
+                if (method.equals(msg.get("method")) && msg.containsKey("id")) {
+                    return msg;
+                }
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("no server request " + method + " within " + seconds + " s");
+    }
+
+    /** Answers a server-to-client request. */
+    void respond(Object id, Map<String, Object> result) throws IOException {
+        sendRaw(MAPPER.writeValueAsString(Map.of("jsonrpc", "2.0", "id", id, "result", result)));
+    }
+
     void closeInput() {
         queue.add(EOF);
     }
@@ -123,7 +152,12 @@ final class StdioClientHarness {
 
     @SuppressWarnings("unchecked")
     Map<String, Object> awaitResponse(int id) throws Exception {
-        long deadline = System.nanoTime() + 10_000_000_000L;
+        return awaitResponse(id, 10);
+    }
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> awaitResponse(int id, int seconds) throws Exception {
+        long deadline = System.nanoTime() + seconds * 1_000_000_000L;
         while (System.nanoTime() < deadline) {
             for (String line : lines()) {
                 Map<String, Object> msg = MAPPER.readValue(line, Map.class);
@@ -133,6 +167,6 @@ final class StdioClientHarness {
             }
             Thread.sleep(10);
         }
-        throw new AssertionError("no response for id " + id + " within 10 s");
+        throw new AssertionError("no response for id " + id + " within " + seconds + " s");
     }
 }

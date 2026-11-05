@@ -9,6 +9,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -27,6 +28,9 @@ import java.util.concurrent.CountDownLatch;
 public final class StdioServer {
 
     public static final String VIRTUAL_THREADS_PROPERTY = "reactor.schedulers.defaultBoundedElasticOnVirtualThreads";
+
+    /** Session request timeout: at least the maximum {@code tools.deadline} (10 min). */
+    static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(11);
 
     private final McpSyncServer server;
     private final CountDownLatch inputClosed;
@@ -55,6 +59,9 @@ public final class StdioServer {
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
                 // Input validation is ours (ValidatingToolHandler): the SDK's own error has another shape.
                 .validateToolInputs(false)
+                // Server-to-client requests (elicitation) wait for a person: the SDK's session-wide default of 10 s
+                // must not end the wait, only the tool's own window does (SPEC 5.5). Above the 10 min maximum deadline.
+                .requestTimeout(REQUEST_TIMEOUT)
                 .tools(tools)
                 .build();
         return new StdioServer(server, inputClosed);

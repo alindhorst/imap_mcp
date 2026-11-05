@@ -26,6 +26,7 @@ public final class ToolCallContext {
     private boolean sealed; // guarded by this, like cancelled
     private volatile boolean mutationStarted; // written under this lock only
     private volatile boolean authFailureCounted;
+    private volatile ElicitationChannel elicitation;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -36,6 +37,16 @@ public final class ToolCallContext {
     public ToolCallContext(AccountContext accountContext, String requestId, Instant deadline) {
         this(accountContext, requestId);
         this.deadline = Objects.requireNonNull(deadline, "deadline");
+    }
+
+    /** Set once by the stateful adapter before the handler runs; the stateless one leaves it empty. */
+    public void bindElicitation(ElicitationChannel channel) {
+        this.elicitation = Objects.requireNonNull(channel, "channel");
+    }
+
+    /** The session's way to ask the user, or empty when the transport cannot (SPEC 5.5). */
+    public Optional<ElicitationChannel> elicitation() {
+        return Optional.ofNullable(elicitation);
     }
 
     /** The instant at which the executor gives up on this call; empty outside an executor. */
