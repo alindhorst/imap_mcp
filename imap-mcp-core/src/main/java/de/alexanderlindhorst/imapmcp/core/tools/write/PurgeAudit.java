@@ -35,6 +35,12 @@ public final class PurgeAudit {
                 sb);
     }
 
+    /** A session approval was created (SPEC 5.6): expiry and budget only; tenant and account are the hashed MDC keys. */
+    public static void approvalCreated(java.time.Instant expiresAt, int budget) {
+        LOG.info("purge approval created tool={} request_id={} expires_at={} budget={}", PurgeMessagesTool.NAME,
+                MDC.get("req"), expiresAt, budget);
+    }
+
     /** A whole-call error; {@code confirmation} is the {@code details.elicitation} value of a not_confirmed refusal. */
     public static void error(ErrorCode code, ToolError.ElicitationReason elicitation, Duration duration) {
         if (elicitation == null) {

@@ -108,4 +108,26 @@ class ToolCallContextTest {
         assertThat(c.tryBeginMutation()).isFalse();
         assertThat(c.mutationStarted()).isTrue();
     }
+
+    @Test
+    void mutationHooksRunOnceOnTheFirstSuccessfulBeginAndNeverAfterACancel() {
+        ToolCallContext c = new ToolCallContext(new AccountContext(new TenantId("t")), "r");
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        c.onMutationBegun(runs::incrementAndGet);
+        c.onMutationBegun(() -> {
+            throw new IllegalStateException("a failing hook must not break the others");
+        });
+        c.onMutationBegun(runs::incrementAndGet);
+        assertThat(runs).hasValue(0);
+        assertThat(c.tryBeginMutation()).isTrue();
+        assertThat(runs).hasValue(2);
+        assertThat(c.tryBeginMutation()).isTrue();
+        assertThat(runs).hasValue(2);
+
+        ToolCallContext cancelled = new ToolCallContext(new AccountContext(new TenantId("t")), "r2");
+        cancelled.onMutationBegun(runs::incrementAndGet);
+        cancelled.cancel();
+        assertThat(cancelled.tryBeginMutation()).isFalse();
+        assertThat(runs).hasValue(2);
+    }
 }

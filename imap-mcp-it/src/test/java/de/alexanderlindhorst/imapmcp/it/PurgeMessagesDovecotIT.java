@@ -54,7 +54,7 @@ class PurgeMessagesDovecotIT {
     private static final String NOT_CONFIRMED_HINT =
             "The user did not confirm; nothing was deleted. Call again only if the user asks for it.";
     private static final List<String> IDS = List.of("accept", "decline", "cancel", "invalid", "rpcerror", "late",
-            "noelicit", "scope", "wire", "foreign", "swapped");
+            "noelicit", "scope", "sess", "sess2", "wire", "foreign", "swapped");
     /** The account that runs against the container without UIDPLUS. */
     private static final String NO_UIDPLUS_ID = "nouidplus";
 
@@ -553,5 +553,48 @@ class PurgeMessagesDovecotIT {
         assertThat(storesOrExpunges(commands)).isFalse();
         assertThat(requests).isEmpty();
         assertThat(subjects(NO_UIDPLUS_ID, trash)).containsExactlyInAnyOrder("nu-1", "nu-2");
+    }
+
+    // ---- session approval (SPEC 4 v3a "Session approval") ----
+
+    private static final Pattern STATUS_BEFORE_DIALOG = Pattern.compile("^STATUS .*\\(UIDVALIDITY UIDNEXT\\)$");
+
+    @Test
+    void aSessionApprovalCoversTheNextCallWithoutADialogButNotLaterArrivalsOrOtherAccounts() throws Exception {
+        seedTrash("sess", "s1", "s2", "s3");
+        seedTrash("sess2", "other-1");
+        String trash = trashFolder("sess");
+        Map<String, String> h = handlesBySubject("sess", trash);
+        user = req -> answer(McpSchema.ElicitResult.Action.ACCEPT, Map.of("allow_for_session", true));
+        requests.clear();
+        long log = logSize();
+
+        Result first = purge(client, "sess", h.get("s1"));
+        assertThat(first.error()).as("%s", first.structured()).isFalse();
+        assertThat(first.structured).containsEntry("confirmation", "elicited");
+        assertThat(requests).hasSize(1);
+        assertThat(commandsSince(log)).anyMatch(c -> STATUS_BEFORE_DIALOG.matcher(c).find());
+
+        // covered: no dialog, reported as session_approval, deleted
+        Result second = purge(client, "sess", h.get("s2"));
+        assertThat(second.error()).as("%s", second.structured()).isFalse();
+        assertThat(second.structured).containsEntry("confirmation", "session_approval");
+        assertThat(requests).hasSize(1);
+        assertThat(subjects("sess", trash)).containsExactly("s3");
+
+        // a message that reaches Trash after the approval always gets a dialog
+        try (MailSeeder s = seeder("sess")) {
+            s.appendPlain(trash, "late-arrival", "body");
+        }
+        Map<String, String> after = handlesBySubject("sess", trash);
+        Result third = purge(client, "sess", after.get("late-arrival"));
+        assertThat(third.structured).containsEntry("confirmation", "elicited");
+        assertThat(requests).hasSize(2);
+
+        // another account is never covered
+        Result other = purge(client, "sess2", handlesBySubject("sess2", trashFolder("sess2")).get("other-1"));
+        assertThat(other.structured).containsEntry("confirmation", "elicited");
+        assertThat(requests).hasSize(3);
+        assertNoPlainExpunge(commandsSince(log));
     }
 }

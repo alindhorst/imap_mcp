@@ -131,6 +131,21 @@ public final class UidCommands {
     }
 
     /**
+     * {@code STATUS <name> (UIDVALIDITY UIDNEXT)} as a store-level command on a folder object that is never opened
+     * (read-only, no SELECT; SPEC 4 purge confirmation). Same lease rules as {@link #create}.
+     */
+    static long[] statusUidState(ImapLease lease, String name) throws MessagingException {
+        String n = requireName(name);
+        IMAPFolder f = (IMAPFolder) storeFolder(lease).getStore().getFolder(n);
+        org.eclipse.angus.mail.imap.protocol.Status st = (org.eclipse.angus.mail.imap.protocol.Status)
+                ImapLease.timedWrite("status", () -> f.doCommand(p -> p.status(n, new String[] {"UIDVALIDITY", "UIDNEXT"})));
+        if (st == null || st.uidvalidity <= 0 || st.uidnext <= 0) {
+            throw new MessagingException("STATUS returned no UIDVALIDITY/UIDNEXT");
+        }
+        return new long[] {st.uidvalidity, st.uidnext};
+    }
+
+    /**
      * CREATE on the lease's own connection. Only while no folder is open on the lease ({@code lease.store()}
      * refuses otherwise with IllegalStateException): with a folder open, Angus would log in a second connection.
      */
