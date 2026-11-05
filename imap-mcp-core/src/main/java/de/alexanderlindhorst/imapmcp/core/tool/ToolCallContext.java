@@ -19,6 +19,7 @@ public final class ToolCallContext {
     private final AccountContext accountContext;
     private final String requestId;
     private final List<Runnable> callbacks = new ArrayList<>();
+    private final List<Runnable> mutationHooks = new ArrayList<>();
     private boolean cancelled;
     private volatile LogIds logIds;
     private volatile String boundAccountHash;
@@ -61,12 +62,33 @@ public final class ToolCallContext {
      * after the client was told that nothing happened. A caller that gets false writes nothing and unwinds. After the
      * first true, a deadline, cancel or unchecked failure reports an unknown outcome. Never held across I/O.
      */
-    public synchronized boolean tryBeginMutation() {
-        if (cancelled || sealed) {
-            return false;
+    public boolean tryBeginMutation() {
+        List<Runnable> hooks;
+        synchronized (this) {
+            if (cancelled || sealed) {
+                return false;
+            }
+            boolean first = !mutationStarted;
+            mutationStarted = true;
+            hooks = first ? List.copyOf(mutationHooks) : List.of();
+            mutationHooks.clear();
         }
-        mutationStarted = true;
+        hooks.forEach(ToolCallContext::run); // outside the lock; a failing hook does not stop the others
         return true;
+    }
+
+    /**
+     * Runs {@code hook} once, on the thread of the first {@link #tryBeginMutation()} that returns true, right after
+     * the mark is set; never if the call is cancelled or decided first. For effects that may exist only once the
+     * deletion has really begun (a purge session approval, SPEC 4).
+     */
+    public synchronized void onMutationBegun(Runnable hook) {
+        Objects.requireNonNull(hook, "hook");
+        if (!mutationStarted) {
+            mutationHooks.add(hook);
+        } else {
+            run(hook);
+        }
     }
 
     /**

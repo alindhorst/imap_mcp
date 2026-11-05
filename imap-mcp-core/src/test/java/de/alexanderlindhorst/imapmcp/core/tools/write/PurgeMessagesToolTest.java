@@ -501,6 +501,29 @@ class PurgeMessagesToolTest {
         assertThat(uids("Trash")).hasSize(3);
     }
 
+    @Test
+    void aCoveringSessionApprovalIsReportedAsSessionApprovalAndStillDeletes() throws Exception {
+        confirmation = new PurgeConfirmation() {
+            @Override
+            public boolean available(ToolCallContext ctx) {
+                return true;
+            }
+
+            @Override
+            public Decision confirm(ToolCallContext ctx, Request request) {
+                confirms++;
+                return new Decision.Confirmed(BulkResult.SESSION_APPROVAL);
+            }
+        };
+        rebuild();
+        List<Long> t = uids("Trash");
+        Map<String, Object> out = ok(call(T1, args(T1, List.of(handle(T1, "Trash", t.get(0))))));
+        assertThat(out).containsEntry("confirmation", "session_approval");
+        assertThat(results(out).get(0)).containsEntry("status", "ok");
+        assertThat(uids("Trash")).doesNotContain(t.get(0));
+        assertThat(audit.list.get(0).getFormattedMessage()).contains("confirmation=session_approval");
+    }
+
     // ---- the purge ----
 
     @Test
