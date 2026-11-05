@@ -97,6 +97,8 @@ class DownloadAttachmentToolTest {
     String acctHandle;
     boolean readOnly;
     long maxBytes = 10_000_000;
+    /** Free-space reading of the download directory; null reads the real file store. */
+    java.util.function.LongSupplier freeSpace;
 
     MailAccount account(AccountId id) {
         return new MailAccount(id, id.value(), null, "127.0.0.1", proxy.port(), Security.IMPLICIT_TLS, Flavor.GENERIC,
@@ -130,7 +132,8 @@ class DownloadAttachmentToolTest {
         InMemoryAccountRepository repo = new InMemoryAccountRepository(Map.of(A, List.of(acct), B, List.of(acct)));
         pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("secret".toCharArray())),
                 new CapabilityCache(), k -> acct, PoolSettings.DEFAULTS);
-        directory = DownloadDirectory.of(dir.toRealPath(), true, maxBytes, null);
+        directory = freeSpace == null ? DownloadDirectory.of(dir.toRealPath(), true, maxBytes, null)
+                : DownloadDirectory.of(dir.toRealPath(), true, maxBytes, null, freeSpace);
         StoreLeases leases = new StoreLeases(pool, Duration.ofSeconds(10));
         AccountArgument accounts = new AccountArgument(repo);
         MessageLocator locator = new MessageLocator(handles);
@@ -427,6 +430,33 @@ class DownloadAttachmentToolTest {
         assertThat((Long) d.get("size")).isBetween(4900L, 5100L);
         assertThat(traceLines()).noneMatch(l -> l.contains("BODY.PEEK["));
         assertThat(filesInDir()).isEmpty();
+    }
+
+    /** SPEC 4 step 9: the usable-space check runs before the first body block is fetched. */
+    @Test
+    void tooLittleFreeSpaceIsNoSpaceBeforeAnyBodyFetch() throws Exception {
+        freeSpace = () -> 1000;
+        build(null);
+        String h = deliver(mixed(attachment("application/pdf", "big.pdf", random(5000))));
+        trace.list.clear();
+
+        Map<String, Object> e = error(call(h, "2"));
+
+        assertThat(e).containsEntry("code", "LOCAL_STORAGE_ERROR").containsEntry("retryable", false);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> d = (Map<String, Object>) e.get("details");
+        assertThat(d).containsEntry("reason", "no_space");
+        assertThat(traceLines()).noneMatch(l -> l.contains("BODY.PEEK["));
+        assertThat(filesInDir()).isEmpty();
+    }
+
+    @Test
+    void enoughFreeSpaceDownloads() throws Exception {
+        freeSpace = () -> 1_000_000;
+        build(null);
+        String h = deliver(mixed(attachment("application/pdf", "ok.pdf", random(5000))));
+
+        assertThat(ok(call(h, "2"))).containsEntry("bytes", 5000L);
     }
 
     @Test

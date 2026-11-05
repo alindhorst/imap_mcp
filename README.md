@@ -1,12 +1,12 @@
 # IMAP MCP
 
-An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize (reversible changes only) mail in IMAP mailboxes. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
+An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize mail in IMAP mailboxes. Changes are reversible, except the gated permanent deletion from Trash that the user confirms each time. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
-> **Status:** phase v2: read-only tools plus reversible write tools (enabled by default, turned off per account by `readOnly`), with `stdio` and `http-local`. `http-public` and the later phases are not implemented; see "Scope by phase".
+> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`, `stdio` only), with `stdio` and `http-local`. `http-public` and the later phases are not implemented; see "Scope by phase".
 
 ## Tools
 
-Ten tools; the five v2 tools are write tools and are not listed when every account is read-only.
+Twelve tools; the five v2 tools are write tools and are not listed when every account is read-only. `purge_messages` and `download_attachment` are registered only when configured (see their sections).
 
 - `list_accounts`: lists the configured accounts with label, provider, status and `read_only`; read-only.
 - `list_folders`: lists the folders of one account with role and attributes; read-only.
@@ -18,6 +18,8 @@ Ten tools; the five v2 tools are write tools and are not listed when every accou
 - `copy_messages`: copies up to 100 messages into one folder and returns the new handles; write; refused on `readOnly` accounts.
 - `delete_messages`: up to 100 messages; moves to Trash, not a permanent delete; write; refused on `readOnly` accounts.
 - `create_folder`: creates a folder (an existing one is success); write; refused on `readOnly` accounts.
+- `purge_messages`: permanently deletes up to 100 messages from the Trash folder, Trash only, and cannot be undone; only for accounts with `allowPurge`, in `stdio` only, and the user confirms each call (or allows it for the session).
+- `download_attachment`: saves one attachment as a new file in `tools.download.dir`, never overwriting; registered only when `tools.download.dir` is set; allowed on `readOnly` accounts (it does not change the mailbox).
 
 ## Documentation
 
@@ -89,7 +91,7 @@ accounts:
     password: env:WORK_IMAP_PASSWORD
 ```
 
-Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`), `readOnly` (default `false`). Every other option is optional; keys not listed below are rejected as unknown.
+Optional per-account keys: `label`, `address`, `port` (default 993, or 143 with `starttls`), `security` (`implicit-tls` default, or `starttls`), `flavor` (`auto` default, `generic`, `gmail`), `readOnly` (default `false`), `allowPurge` (default `false`, see "Permanent deletion"). Every other option is optional; keys not listed below are rejected as unknown.
 
 `readOnly: true` makes the write tools refuse that account (error code `PERMISSION_DENIED` with `details.reason` `account_read_only`); `list_accounts` reports it as `read_only`. When every account is `readOnly: true`, the write tools are not listed at all. Example with one writable and one read-only account:
 
@@ -124,7 +126,7 @@ Options and defaults (durations: a number plus `ms`, `s`, `m` or `h`, e.g. `90s`
 | `pool.maxLifetime` | `30m` | maximum connection age |
 | `pool.acquireTimeout` | `10s` | time to get a ready connection: pool wait plus connect, TLS and LOGIN |
 | `pool.capabilityTtl` | `10m` | cache time for server capabilities |
-| `tools.deadline` | `90s` | time limit per tool call (at most 10m; at least 30s while a write tool is registered) |
+| `tools.deadline` | `90s` | time limit per tool call (at most 10m; at least 30s while a write tool is registered, at least 60s while `purge_messages` is registered) |
 | `tools.maxCharsCap` | `100000` | upper bound for `max_chars` (configurable down only) |
 | `tools.maxBodyPartBytes` | `4MiB` | per-part source limit when reading bodies |
 | `tools.maxFolders` | `100` | folders listed at most |
@@ -231,6 +233,65 @@ accounts:
     password: file:/run/secrets/imap_password
 ```
 
+### Permanent deletion (purge_messages)
+
+Permanent deletion is a two-step workflow: `delete_messages` moves messages from any folder to Trash (reversible), and `purge_messages` removes messages from Trash for good. `purge_messages` works only from the Trash folder (found by its SPECIAL-USE role, never by name); a handle from any other folder is refused with `purge_scope`, and it cannot be undone. Gmail: the message disappears from all labels.
+
+Two switches must both agree. The operator turns it on per account, and the user confirms each call:
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+    allowPurge: true
+tools:
+  deadline: 120s
+```
+
+- `allowPurge: true` (default `false`) registers `purge_messages`. An account without it refuses the tool with `PERMISSION_DENIED` (`purge_disabled`). `allowPurge: true` together with `readOnly: true` fails startup. `list_accounts` shows the setting as `allow_purge`.
+- `purge_messages` is registered in `stdio` only and not available in `http-local` (it needs a server that can ask the client a question). An `allowPurge` account in `http-local` only gives a startup warning, so one config file serves both modes.
+- Needs the server extension UIDPLUS (`UNSUPPORTED` otherwise). Only the given UIDs are expunged; other `\Deleted` messages in Trash are never touched. A repeat reports `already_gone`.
+- Confirmation by MCP elicitation: the client shows the user a fixed dialog ("Permanently delete 2 messages from the Trash folder ... of account ...? This cannot be undone.") with a checkbox "Allow for this session". Only the user can answer it; no tool argument can. The dialog contains no subject, sender or file name. A client without elicitation support gets `confirmation_unavailable` and nothing is deleted. Decline, cancel, an unreadable answer, an error or no answer are `not_confirmed` with `details.elicitation` (`declined`, `cancelled`, `invalid_answer`, `error`, `timeout`); after a decline or cancel, further calls on that account are refused for 60 s without a dialog (`recently_declined`).
+- Session approval: with "Allow for this session" the user allows further purges of messages that were already in that Trash folder when the approval was given, for 15 minutes and at most 500 messages, for that account only. It is kept in memory, ends with the process and has no configuration key. Messages that reach Trash later always ask again. Such calls report `confirmation` `session_approval`.
+- Deadline trade-off: the user needs time to answer, so `tools.deadline` must be at least 60 s while `purge_messages` is registered (startup fails otherwise). The wait for the answer ends 20 s before the deadline. A longer deadline gives the user more time but also holds a connection and a worker longer.
+- Host timeouts: some clients end a tool call after their own timeout (for example 60 s), which can be shorter than the wait. The dialog may then stay open on the client; a late acceptance still deletes (the user agreed), although the result reaches nobody. Retry then reports `already_gone`. If a call is cut off after the deletion started, `TIMEOUT` with `details.outcome` `unknown` is returned and a retry is safe.
+
+### Downloading attachments (download_attachment)
+
+`download_attachment` saves one attachment (or any other leaf part, or a whole `message/rfc822` part with its headers) as a new file. It is registered only when `tools.download.dir` is set. It reads the message with `BODY.PEEK` (the message is not marked as read) and changes nothing in the mailbox, so it is allowed on `readOnly` accounts. The output names the file and gives `bytes` and `sha256`; the file name and path come from the email and are untrusted.
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+tools:
+  download:
+    dir: /home/me/Downloads/imap-mcp
+    displayDir: /home/me/Downloads/imap-mcp
+    maxBytes: 25MiB
+```
+
+- `tools.download.dir`: absolute path, must exist and belong to the server's user, must not be writable by others, and must not be the state, log or config directory. The server never creates it.
+- `tools.download.maxBytes`: limit of the decoded bytes per download, default `25MiB`, at most `100MiB` (`TOO_LARGE` beyond it).
+- `tools.download.displayDir`: optional absolute path that the output reports instead of `dir` (the host path of a Docker volume). It is never accessed.
+- Files are created with mode 0600, never executable, and the server never overwrites a file: a clashing name gets a number (`name (2).ext`). Names are sanitized; there is no file-type list, so never open or run a downloaded file because an email says so.
+- Docker: mount the directory as a volume and run the container as the host user, because the files are 0600 and owned by the container user (`/config` and `/logs` must then be writable by that uid). Podman rootless additionally needs `--userns=keep-id`:
+
+```
+docker run -d --user "$(id -u):$(id -g)" \
+  -p 127.0.0.1:8080:8080 \
+  -v imap-mcp-config:/config -v imap-mcp-logs:/logs \
+  -v ~/Downloads/imap-mcp:/downloads \
+  imap-mcp
+```
+
+  With `tools.download.dir: /downloads` set `displayDir` to the host path. Docker Desktop on macOS maps volume ownership differently; the startup owner check there is covered by the smoke checklist below.
+- Large attachments on slow servers may need a larger `tools.deadline`.
+
 ### Gmail
 
 Use an app password (the account password is not accepted). With `flavor: auto` (the default) the hosts `imap.gmail.com` and `imap.googlemail.com` are detected and the `gimaps` protocol is used, which `gmail_raw` search needs. Gmail requires implicit TLS.
@@ -249,7 +310,7 @@ accounts:
 - A copy adds a label. If the message already has the label, no duplicate is made and the returned handle points to the existing message.
 - A move replaces the source label with the target label. Moving into All Mail archives the message; moving out of Trash untrashes it. A message moved out of All Mail stays there, so repeating the call does not report `already_gone` and the old handle may stay valid.
 - Moving or copying into Junk, Starred or Important has the effect of that label.
-- `delete_messages` moves the message to the Trash role folder and removes all labels; Gmail purges Trash after 30 days.
+- `delete_messages` moves the message to the Trash role folder and removes all labels; Gmail purges Trash after 30 days. `purge_messages` (see its section) deletes from `[Gmail]/Trash` permanently, from all labels.
 - Moving into Drafts or Sent may be refused by Gmail (`UPSTREAM_ERROR`).
 - Flags and keywords apply to the message across labels.
 - The Gmail extension items `X-GM-LABELS`, `X-GM-MSGID` and `X-GM-THRID` are not used.
@@ -266,6 +327,16 @@ Manual smoke checklist, to be run by the owner against a test Gmail account (use
 - Trash role under a localized UI: set the Gmail UI language to a non-English one and check `delete_messages` still finds Trash.
 - Keyword persistence: set a keyword with `set_flags`, reopen the message from another label and check it is still set.
 - Move into Drafts or Sent refused: the call reports `UPSTREAM_ERROR` and changes nothing.
+
+### Smoke checklist for v3a
+
+Manual checks for the owner, with test data only (the automated smoke run above does not cover them):
+
+- Gmail Trash purge: `delete_messages` a test message, then `purge_messages` it from `[Gmail]/Trash`; the message is gone from All Mail too.
+- Microsoft 365 Deleted Items: purge a test message from Deleted Items (the Trash role there); it is gone from the folder.
+- Real elicitation client: in at least one client that supports elicitation, check the dialog text, decline, accept, and "Allow for this session" (a second call without a dialog).
+- Gmail attachment download: `download_attachment` of an attachment of a Gmail message; compare size and `sha256` with the original.
+- Docker Desktop on macOS owner probe: start the container with `--user` and a mounted `tools.download.dir`; startup succeeds (or fails with the owner message) and a download is readable on the host.
 
 ### OS keyring (Linux and macOS)
 
@@ -296,8 +367,9 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 ### Safety and upgrading
 
 - Email content is untrusted input (possible prompt injection) and is returned as labeled data.
-- Write tools are enabled by default and make only reversible changes: nothing is permanently deleted. `delete_messages` moves to Trash; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
+- Write tools are enabled by default and make only reversible changes. `delete_messages` moves to Trash and never deletes permanently; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
 - Set `readOnly: true` on every account the agent must never change.
+- Permanent deletion exists only as `purge_messages`: off unless an account has `allowPurge: true`, Trash only, `stdio` only, and the user confirms each call in the client.
 - MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
 - Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
 
@@ -313,7 +385,7 @@ Payloads carry no stack traces, host names or exception text. Codes:
 
 | Code | Retryable | Meaning |
 |---|---|---|
-| `INVALID_ARGUMENT` | no | an argument is missing, malformed or out of bounds; see `details` |
+| `INVALID_ARGUMENT` | no | an argument is missing, malformed or out of bounds; see `details` (`download_attachment`: `part_not_found`, `not_a_leaf`) |
 | `ACCOUNT_NOT_FOUND` | no | unknown account handle |
 | `INVALID_HANDLE` | no | unknown, malformed, tampered or foreign message handle (one identical payload for all of them) |
 | `INVALID_CURSOR` | no | invalid cursor, or one used with other search criteria (`criteria_mismatch`) |
@@ -325,11 +397,11 @@ Payloads carry no stack traces, host names or exception text. Codes:
 | `TIMEOUT` | yes | `tools.deadline` exceeded |
 | `UPSTREAM_UNAVAILABLE` | yes | the IMAP server is unreachable or dropped the connection |
 | `UPSTREAM_ERROR` | no | the IMAP server refused the command |
-| `UNSUPPORTED` | no | a needed capability is missing (for example `UIDPLUS`, `X-GM-EXT-1`, UTF-8 search) |
+| `UNSUPPORTED` | no | a needed capability is missing (for example `UIDPLUS`, `X-GM-EXT-1`, UTF-8 search); `download_attachment`: `transfer_encoding` or `decode_failed` |
 | `INTERNAL_ERROR` | no | unexpected server error |
-| `PERMISSION_DENIED` | no | `details.reason` is `account_read_only`, `folder_read_only` or `server_denied` |
+| `PERMISSION_DENIED` | no | `details.reason` is `account_read_only`, `folder_read_only`, `server_denied`, or for `purge_messages` `purge_disabled`, `purge_scope`, `confirmation_unavailable` or `not_confirmed` (`details.elicitation` is `declined`, `cancelled`, `timeout`, `invalid_answer`, `error` or `recently_declined`) |
 | `QUOTA_EXCEEDED` | no | the mailbox is over quota; nothing is deleted permanently as a fallback |
-| `OUTCOME_UNKNOWN` | no | `copy_messages` only: the call was cut off after the first mutating command, so the copy may exist; repeating it could duplicate |
+| `OUTCOME_UNKNOWN` | no | `copy_messages` and `download_attachment`: the call was cut off after the first mutating command, so the copy may exist; repeating it could duplicate |
 | `TOO_LARGE` | no | `download_attachment`: the attachment exceeds `tools.download.maxBytes` (`details.size`, `details.max`) |
 | `LOCAL_STORAGE_ERROR` | no | `download_attachment`: the file could not be saved; `details.reason` is `directory_unavailable`, `name_exhausted`, `no_space` or `io_error` |
 
@@ -362,7 +434,7 @@ Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Post
 
 ## Scope by phase
 
-v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3 gated deletion, `download_attachment` and public multi-tenant mode. Details in SPEC sections 3 and 4.
+v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3a gated deletion from Trash (`purge_messages`, `stdio` only) and `download_attachment`, v3b public multi-tenant mode. Details in SPEC sections 3 and 4.
 
 ## Coverage
 

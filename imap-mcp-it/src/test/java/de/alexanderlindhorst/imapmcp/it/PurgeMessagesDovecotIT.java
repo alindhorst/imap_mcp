@@ -11,7 +11,10 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
+import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,6 +24,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -48,10 +54,16 @@ class PurgeMessagesDovecotIT {
     private static final String NOT_CONFIRMED_HINT =
             "The user did not confirm; nothing was deleted. Call again only if the user asks for it.";
     private static final List<String> IDS = List.of("accept", "decline", "cancel", "invalid", "rpcerror", "late",
-            "noelicit", "scope", "sess", "sess2");
+            "noelicit", "scope", "sess", "sess2", "wire", "foreign", "swapped");
+    /** The account that runs against the container without UIDPLUS. */
+    private static final String NO_UIDPLUS_ID = "nouidplus";
 
     @Container
     static final DovecotContainer DOVECOT = new DovecotContainer(DovecotContainer.Profile.FULL);
+
+    /** SPEC 5.8: the {@code UIDPLUS = no} fixture (the refusal comes before any SELECT and any dialog). */
+    @Container
+    static final DovecotContainer NO_UIDPLUS = new DovecotContainer(DovecotContainer.Profile.NO_MOVE_NO_UIDPLUS);
 
     @TempDir
     static Path dir;
@@ -94,6 +106,9 @@ class PurgeMessagesDovecotIT {
                     DovecotContainer.PASSWORD);
             writer.allowPurge(id);
         }
+        writer.account(NO_UIDPLUS_ID, NO_UIDPLUS.getHost(), NO_UIDPLUS.imapsPort(), MailAccount.Security.IMPLICIT_TLS,
+                "purge-" + NO_UIDPLUS_ID, DovecotContainer.PASSWORD);
+        writer.allowPurge(NO_UIDPLUS_ID);
         config = writer.write();
         client = newClient(McpSchema.ClientCapabilities.builder().elicitation(true, false).build(), req -> {
             requests.add(req);
@@ -154,7 +169,7 @@ class PurgeMessagesDovecotIT {
     }
 
     private static MailSeeder seeder(String id) throws MessagingException {
-        return DOVECOT.seeder("purge-" + id);
+        return (NO_UIDPLUS_ID.equals(id) ? NO_UIDPLUS : DOVECOT).seeder("purge-" + id);
     }
 
     private static String trashFolder(String id) {
@@ -391,6 +406,153 @@ class PurgeMessagesDovecotIT {
         Thread.sleep(10_000); // the late acceptance has been delivered by now
         assertThat(storesOrExpunges(commandsSince(log))).isFalse();
         assertThat(subjects("late", trash)).containsExactly("keep-1");
+    }
+
+    // ---- v3a T9: wire audit, tenant isolation, UIDPLUS ---------------------------------------------------
+
+    /** Expands a UID set such as {@code 4:6,9} (also the reversed range form). */
+    private static Set<Long> uidSet(String set) {
+        Set<Long> out = new TreeSet<>();
+        for (String part : set.split(",")) {
+            String[] bounds = part.split(":");
+            long a = Long.parseLong(bounds[0]);
+            long b = Long.parseLong(bounds[bounds.length - 1]);
+            for (long u = Math.min(a, b); u <= Math.max(a, b); u++) {
+                out.add(u);
+            }
+        }
+        return out;
+    }
+
+    private static int indexOf(List<String> commands, int from, String prefix) {
+        for (int i = from; i < commands.size(); i++) {
+            if (commands.get(i).startsWith(prefix)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Appends without APPENDUID (the no-UIDPLUS profile does not report it). */
+    private static void appendWithoutAppendUid(MailSeeder s, String folder, String subject) throws MessagingException {
+        MimeMessage m = new MimeMessage(jakarta.mail.Session.getInstance(new Properties()));
+        m.setFrom(new InternetAddress("sender@example.org"));
+        m.setRecipient(Message.RecipientType.TO, new InternetAddress("recipient@example.org"));
+        m.setSubject(subject, "UTF-8");
+        m.setText("body", "UTF-8");
+        s.store().getFolder(folder).appendMessages(new Message[] {m});
+    }
+
+    /**
+     * SPEC 5.8: the wire shows SELECT of Trash, the existence pre-check, {@code UID STORE +FLAGS.SILENT (\Deleted)} and
+     * {@code UID EXPUNGE} of exactly the given UIDs, then the post-check {@code UID FETCH} of the same set, in this
+     * order, and never a plain EXPUNGE. A repeat finds everything gone and sends no mutating command.
+     */
+    @Test
+    void wireShowsStoreAndUidExpungeOfExactlyTheGivenUidsThenThePostCheck() throws Exception {
+        String trash = trashFolder("wire");
+        long u1;
+        long u3;
+        long foreign;
+        try (MailSeeder s = seeder("wire")) {
+            u1 = s.appendPlain(trash, "wire-1", "body");
+            s.appendPlain(trash, "wire-2", "body");
+            u3 = s.appendPlain(trash, "wire-3", "body");
+            foreign = s.appendPlain(trash, "wire-foreign", "body");
+            IMAPFolder f = (IMAPFolder) s.store().getFolder(trash);
+            f.open(Folder.READ_WRITE);
+            f.getMessageByUID(foreign).setFlag(Flags.Flag.DELETED, true);
+            f.close(false);
+        }
+        Map<String, String> handles = handlesBySubject("wire", trash);
+        user = req -> answer(McpSchema.ElicitResult.Action.ACCEPT, Map.of());
+        long log = logSize();
+
+        Result r = purge(client, "wire", handles.get("wire-1"), handles.get("wire-3"));
+
+        assertThat(r.error()).as("%s", r.structured()).isFalse();
+        List<String> commands = commandsSince(log);
+        int select = indexOf(commands, 0, "SELECT ");
+        int store = indexOf(commands, 0, "UID STORE ");
+        int expunge = indexOf(commands, 0, "UID EXPUNGE ");
+        int pre = indexOf(commands, select, "UID FETCH ");
+        int post = indexOf(commands, expunge, "UID FETCH ");
+        assertThat(select).isNotNegative();
+        assertThat(commands.get(select)).contains(trash);
+        assertThat(select).isLessThan(pre);
+        assertThat(pre).isLessThan(store);
+        assertThat(store).isLessThan(expunge);
+        assertThat(expunge).isLessThan(post);
+        assertThat(commands.get(store)).endsWith("+FLAGS.SILENT (\\Deleted)");
+        assertThat(uidSet(commands.get(store).split(" ")[2])).containsExactlyInAnyOrder(u1, u3);
+        assertThat(commands.stream().filter(c -> c.startsWith("UID STORE ") || c.contains("EXPUNGE"))).hasSize(2);
+        assertThat(uidSet(commands.get(expunge).split(" ")[2])).containsExactlyInAnyOrder(u1, u3);
+        assertThat(uidSet(commands.get(post).split(" ")[2])).containsExactlyInAnyOrder(u1, u3);
+        assertThat(ImapWireAudit.violations(commands)).isEmpty();
+        assertThat(subjects("wire", trash)).containsExactlyInAnyOrder("wire-2", "wire-foreign");
+        try (MailSeeder s = seeder("wire")) { // the foreign \Deleted message was not expunged and keeps its flag
+            IMAPFolder f = (IMAPFolder) s.store().getFolder(trash);
+            f.open(Folder.READ_ONLY);
+            assertThat(f.getMessageByUID(foreign).getFlags().contains(Flags.Flag.DELETED)).isTrue();
+            f.close(false);
+        }
+
+        long repeatLog = logSize();
+        Result again = purge(client, "wire", handles.get("wire-1"), handles.get("wire-3"));
+        assertThat(again.error()).isFalse();
+        assertThat(list(again.structured, "results")).extracting(i -> i.get("status"))
+                .containsExactly("already_gone", "already_gone");
+        assertThat(storesOrExpunges(commandsSince(repeatLog))).isFalse();
+    }
+
+    /** Tenant isolation: a handle of another account at any position is INVALID_HANDLE with zero I/O and no dialog. */
+    @Test
+    void aHandleOfAnotherAccountAtAnyPositionIsInvalidHandleWithZeroIoAndNoDialog() throws Exception {
+        seedTrash("foreign", "mine-1", "mine-2");
+        seedTrash("swapped", "theirs");
+        String foreignHandle = handlesBySubject("swapped", trashFolder("swapped")).get("theirs");
+        Map<String, String> mine = handlesBySubject("foreign", trashFolder("foreign"));
+        user = req -> answer(McpSchema.ElicitResult.Action.ACCEPT, Map.of());
+        requests.clear();
+        long log = logSize();
+
+        Result r = purge(client, "foreign", mine.get("mine-1"), foreignHandle, mine.get("mine-2"));
+
+        assertThat(r.error()).isTrue();
+        assertThat(r.errorCode()).isEqualTo("INVALID_HANDLE");
+        assertThat(r.detail("field")).isEqualTo("handles[1]");
+        assertThat(commandsSince(log)).isEmpty();
+        assertThat(requests).isEmpty();
+        assertThat(subjects("foreign", trashFolder("foreign"))).containsExactlyInAnyOrder("mine-1", "mine-2");
+        assertThat(subjects("swapped", trashFolder("swapped"))).containsExactly("theirs");
+    }
+
+    /**
+     * SPEC 5.8: without UIDPLUS the refusal comes after the lease and before any SELECT and before the dialog;
+     * nothing is stored or expunged.
+     */
+    @Test
+    void withoutUidplusThePurgeIsRefusedBeforeAnySelectAndAnyDialog() throws Exception {
+        String trash = trashFolder(NO_UIDPLUS_ID);
+        try (MailSeeder s = seeder(NO_UIDPLUS_ID)) {
+            appendWithoutAppendUid(s, trash, "nu-1");
+            appendWithoutAppendUid(s, trash, "nu-2");
+        }
+        String h = handlesBySubject(NO_UIDPLUS_ID, trash).get("nu-1");
+        user = req -> answer(McpSchema.ElicitResult.Action.ACCEPT, Map.of());
+        requests.clear();
+        long log = logSize();
+
+        Result r = purge(client, NO_UIDPLUS_ID, h);
+
+        assertThat(r.error()).isTrue();
+        assertThat(r.errorCode()).isEqualTo("UNSUPPORTED");
+        assertThat(r.detail("capability")).isEqualTo("UIDPLUS");
+        List<String> commands = commandsSince(log);
+        assertThat(commands).noneMatch(c -> c.startsWith("SELECT ") || c.startsWith("EXAMINE "));
+        assertThat(storesOrExpunges(commands)).isFalse();
+        assertThat(requests).isEmpty();
+        assertThat(subjects(NO_UIDPLUS_ID, trash)).containsExactlyInAnyOrder("nu-1", "nu-2");
     }
 
     // ---- session approval (SPEC 4 v3a "Session approval") ----
