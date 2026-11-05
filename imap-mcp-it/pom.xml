@@ -6,7 +6,7 @@
   <parent>
     <groupId>de.alexanderlindhorst.imapmcp</groupId>
     <artifactId>imap-mcp-parent</artifactId>
-    <version>0.1.1-SNAPSHOT</version>
+    <version>0.2.0</version>
   </parent>
   <artifactId>imap-mcp-it</artifactId>
   <name>IMAP MCP :: Integration tests</name>
