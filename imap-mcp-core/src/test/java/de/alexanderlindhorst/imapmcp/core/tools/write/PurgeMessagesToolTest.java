@@ -477,6 +477,30 @@ class PurgeMessagesToolTest {
         }
     }
 
+    @Test
+    void expiredConfirmationIsThePlainTimeoutAndNothingIsSentOrMarked() throws Exception {
+        confirmation = new PurgeConfirmation() {
+            @Override
+            public boolean available(ToolCallContext ctx) {
+                return true;
+            }
+
+            @Override
+            public Decision confirm(ToolCallContext ctx, Request request) {
+                return new Decision.Expired();
+            }
+        };
+        rebuild();
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-e");
+        trace.list.clear();
+        var e = err(handler.handle(ctx, args(T1, List.of(handle(T1, "Trash", uids("Trash").get(0))))));
+        assertThat(e.code()).isEqualTo(ErrorCode.TIMEOUT);
+        assertThat(e.details()).isNull();
+        assertThat(ctx.mutationStarted()).isFalse();
+        assertThat(wire()).doesNotContainPattern("(?m)^\\S+ (UID )?(STORE|EXPUNGE)\\b");
+        assertThat(uids("Trash")).hasSize(3);
+    }
+
     // ---- the purge ----
 
     @Test

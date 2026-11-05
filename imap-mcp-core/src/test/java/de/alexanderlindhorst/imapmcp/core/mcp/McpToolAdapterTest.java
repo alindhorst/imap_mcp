@@ -175,6 +175,14 @@ class McpToolAdapterTest {
         assertThat(seen.get(0).accountContext().tenantId()).isEqualTo(new TenantId("tenant-from-transport"));
     }
 
+    @Test
+    void statefulHandlerGetsTheSessionsElicitationChannelAndStatelessGetsNone() {
+        new InMemoryMcp.Stateful(adapter.stateful(SAMPLE, this::ok)).call("count_things", Map.of());
+        assertThat(seen.get(0).elicitation()).isPresent().get().isInstanceOf(McpElicitationChannel.class);
+        new InMemoryMcp.Stateless(adapter.stateless(SAMPLE, this::ok)).call("count_things", Map.of(), TCTX);
+        assertThat(seen.get(1).elicitation()).isEmpty();
+    }
+
     // --- through real SDK servers (AC3, AC4) ---
 
     @Test
