@@ -256,7 +256,7 @@ class ReadmeTest {
                         .contains("`tools.download.dir`").doesNotContain("refused on `readOnly`");
             } else if (d.name().equals("purge_messages")) {
                 assertThat(lines.get(d.name())).as(d.name()).contains("permanent").contains("Trash only")
-                        .contains("`allowPurge`").contains("stdio only").contains("confirm");
+                        .contains("`allowPurge`").contains("`stdio` only").contains("confirm");
             } else {
                 assertThat(lines.get(d.name())).as(d.name()).contains("write; refused on `readOnly` accounts");
             }

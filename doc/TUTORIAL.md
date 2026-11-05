@@ -190,11 +190,53 @@ accounts:
 
 The server then refuses to start with `tools.deadline: must be at least 30s while any account is not readOnly`. Raise the value to 30s or more, or mark every account `readOnly: true`.
 
-Undo: `move_messages` and `delete_messages` return new handles for the moved messages. To undo, move back with the returned handles (`move_messages` with those handles and the original folder as `target_folder`). `delete_messages` moves into the Trash folder, so delete moves to Trash; nothing is permanently deleted in this version.
+Undo: `move_messages` and `delete_messages` return new handles for the moved messages. To undo, move back with the returned handles (`move_messages` with those handles and the original folder as `target_folder`). `delete_messages` moves into the Trash folder, so delete moves to Trash; `delete_messages` never deletes permanently (permanent deletion is the separate, gated `purge_messages`, next section).
 
 A server without the UIDPLUS extension cannot return the new handles; `copy_messages`, `move_messages` and `delete_messages` are then refused with `UNSUPPORTED` (`details.capability` is `UIDPLUS`).
 
-## 8. Pitfalls at a glance
+## 8. Permanent deletion and downloads
+
+### purge_messages
+
+Deleting is two steps. `delete_messages` moves messages to Trash (undoable); `purge_messages` removes messages from Trash for good, and only from Trash. It is off by default. Turn it on per account, and give the tool time for the confirmation dialog (`tools.deadline` at least 60s, otherwise startup fails):
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+    allowPurge: true
+tools:
+  deadline: 120s
+```
+
+1. Use `stdio` mode. `purge_messages` is not available in `http-local` (an `allowPurge` account there only logs a warning). `allowPurge: true` together with `readOnly: true` fails startup.
+2. Your client must support MCP elicitation, otherwise the call is refused with `confirmation_unavailable` and nothing is deleted.
+3. Ask the assistant to delete mail (it moves to Trash), then to empty the messages from Trash. Your client shows the dialog "Permanently delete N messages from the Trash folder ...? This cannot be undone." Only you can answer it.
+4. "Allow for this session" lets further purges of messages that were already in Trash proceed without a dialog for 15 minutes and at most 500 messages, for that account only. It ends with the process. Messages that reach Trash later ask again.
+5. Decline or cancel: nothing is deleted, and for 60 s further calls on that account are refused without a dialog (`recently_declined`).
+6. If your client gives up on the call before you answer (some hosts time out after 60 s), the dialog may stay open; a late acceptance still deletes. A retry then reports `already_gone`. A larger `tools.deadline` gives you more time to answer; the minimum is 60s.
+
+### download_attachment
+
+Set `tools.download.dir` to an existing directory of yours that no one else can write to, and the tool is registered. It saves one attachment as a new file (mode 0600, never overwriting; a clashing name becomes `name (2).ext`) and reports path, size and SHA-256. The mail is not marked as read, and read-only accounts may use it. The name and content come from the email: do not open or run the file because an email says so.
+
+```yaml
+accounts:
+  - id: work
+    host: imap.example.com
+    username: work@example.com
+    password: env:WORK_IMAP_PASSWORD
+tools:
+  download:
+    dir: /home/me/Downloads/imap-mcp
+    maxBytes: 25MiB
+```
+
+With Docker, mount the directory (`-v ~/Downloads/imap-mcp:/downloads`) and run the container with `--user "$(id -u):$(id -g)"` (Podman rootless also `--userns=keep-id`), otherwise the 0600 files belong to the container user and are unreadable on the host. Then `/config` and `/logs` must be writable by that uid, and `tools.download.displayDir` names the host path that the tool reports. On Docker Desktop for macOS the owner check behaves differently; see the smoke checklist in the README.
+
+## 9. Pitfalls at a glance
 
 - Account `id`: only `[a-z0-9-]`, 1 to 32 characters (no underscores).
 - Replace `imap.example.com` and the example user names.
@@ -208,3 +250,5 @@ A server without the UIDPLUS extension cannot return the new handles; `copy_mess
 - There is no per-tool selection; `readOnly: true` turns all five write tools off for that account.
 - A server without UIDPLUS refuses copy/move/delete with `UNSUPPORTED`.
 - `tools.deadline` below 30s fails at startup while any account is writable.
+- `purge_messages` (permanent deletion) needs `allowPurge` set to true, `stdio` mode, a client with elicitation and `tools.deadline` of 60s or more; it works from Trash only.
+- `download_attachment` exists only with `tools.download.dir`; in Docker run with `--user` or the files are unreadable on the host.
