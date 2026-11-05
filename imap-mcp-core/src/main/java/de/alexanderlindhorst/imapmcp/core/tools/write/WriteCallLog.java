@@ -42,6 +42,12 @@ public final class WriteCallLog {
                 duration.toMillis(), created, subscribed);
     }
 
+    /** download_attachment succeeded (SPEC 5.6): no names, paths, content types or digests. */
+    public static void download(String tool, long bytes, boolean renamed, Duration duration) {
+        LOG.info("write call tool={} request_id={} duration_ms={} bytes={} renamed={}", tool, MDC.get("req"),
+                duration.toMillis(), bytes, renamed);
+    }
+
     /** The whole call failed; no counts. */
     public static void error(String tool, ErrorCode code, Duration duration) {
         if (PurgeMessagesTool.NAME.equals(tool)) { // the audit record of a permanent deletion (SPEC 5.6)

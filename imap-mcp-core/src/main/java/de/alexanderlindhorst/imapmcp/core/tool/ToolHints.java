@@ -14,4 +14,7 @@ public record ToolHints(boolean readOnly, boolean destructive, boolean idempoten
 
     /** v2 create_folder: additive only, repeating it changes nothing further. */
     public static final ToolHints WRITE_ADDITIVE_IDEMPOTENT = new ToolHints(false, false, true, true);
+
+    /** v3a download_attachment: writes a new local file, never overwrites or deletes; a repeat saves another copy. */
+    public static final ToolHints WRITE_LOCAL_FILE = new ToolHints(false, false, false, true);
 }

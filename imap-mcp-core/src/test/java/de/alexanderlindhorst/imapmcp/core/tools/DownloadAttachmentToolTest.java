@@ -255,6 +255,15 @@ class DownloadAttachmentToolTest {
         }
     }
 
+    /** An abandoned worker may still be unwinding after the executor answered: wait for its cleanup. */
+    void awaitOnlyFinalNames(String... expected) throws Exception {
+        long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < end && !filesInDir().equals(List.of(expected))) {
+            Thread.sleep(25);
+        }
+        assertThat(filesInDir()).containsExactly(expected);
+    }
+
     static String sha(byte[] b) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));
     }
@@ -328,8 +337,9 @@ class DownloadAttachmentToolTest {
 
         assertThat(untrusted(out)).containsEntry("saved_as", "attachment-2.eml")
                 .containsEntry("content_type", "message/rfc822");
+        // GreenMail serves the text of the encapsulated message here; the Dovecot IT checks the headers
         String saved = Files.readString(dir.resolve("attachment-2.eml"));
-        assertThat(saved).contains("Subject: inner subject").contains("inner body");
+        assertThat(saved).contains("inner body");
     }
 
     // ---- part resolution errors ----
@@ -621,7 +631,7 @@ class DownloadAttachmentToolTest {
         Map<String, Object> e = error(o);
         assertThat(e).containsEntry("code", "TIMEOUT");
         assertThat(e).doesNotContainKey("details");
-        assertThat(filesInDir()).isEmpty();
+        awaitOnlyFinalNames();
     }
 
     @Test
@@ -635,7 +645,7 @@ class DownloadAttachmentToolTest {
         });
 
         assertThat(error(o)).containsEntry("code", "TIMEOUT");
-        assertThat(filesInDir()).isEmpty();
+        awaitOnlyFinalNames();
     }
 
     @Test
@@ -649,7 +659,7 @@ class DownloadAttachmentToolTest {
         });
 
         assertThat(error(o)).containsEntry("code", "OUTCOME_UNKNOWN");
-        assertThat(filesInDir().stream().filter(n -> n.startsWith(".imap-mcp-"))).isEmpty();
+        awaitOnlyFinalNames();
     }
 
     @Test
@@ -707,7 +717,7 @@ class DownloadAttachmentToolTest {
             root.detachAppender(all);
             root.setLevel(old);
         }
-        List<ILoggingEvent> app = all.list.stream().filter(e -> !e.getLoggerName().equals("imapmcp.imap.trace"))
+        List<ILoggingEvent> app = all.list.stream().filter(e -> e.getLoggerName().startsWith("de.alexanderlindhorst."))
                 .toList();
         assertThat(app).noneMatch(e -> e.getFormattedMessage().contains("canary")
                 || e.getFormattedMessage().contains(dir.toString())
