@@ -23,7 +23,7 @@ public final class BulkResult {
     /** The nine fixed {@code notes} sentences, in the order the spec lists them. */
     public static final List<String> NOTES = List.of(
             "Some messages were already in the target folder and were left unchanged.",
-            "Some messages were already in Trash and were left unchanged; permanent deletion is not available.",
+            "Some messages were already in Trash and were left unchanged.",
             "Some messages are no longer in their source folder; if this call repeats an earlier one, they were already moved. "
                     + "Search the target folder for their new handles.",
             "The server did not report the new UIDs of some messages; search the target folder for their handles.",
