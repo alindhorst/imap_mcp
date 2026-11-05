@@ -38,7 +38,7 @@ class ElicitingPurgeConfirmationTest {
     private static final Instant NOW = Instant.parse("2026-11-05T12:00:00Z");
 
     /** Scripted channel: records every request, answers with the next scripted answer. */
-    private static final class Script implements ElicitationChannel {
+    private final class Script implements ElicitationChannel {
         boolean form = true;
         final List<Duration> windows = new ArrayList<>();
         final List<String> messages = new ArrayList<>();
@@ -54,6 +54,7 @@ class ElicitingPurgeConfirmationTest {
         @Override
         public Answer ask(String message, Map<String, Object> requestedSchema, Duration window)
                 throws InterruptedException {
+            order.add("ask");
             messages.add(message);
             schemas.add(requestedSchema);
             windows.add(window);
@@ -66,7 +67,16 @@ class ElicitingPurgeConfirmationTest {
 
     private final MutableClock clock = new MutableClock();
     private final Script script = new Script();
-    private final ElicitingPurgeConfirmation confirmation = new ElicitingPurgeConfirmation(clock);
+    private ElicitingPurgeConfirmation.TrashState state = new ElicitingPurgeConfirmation.TrashState(1, 1000);
+    private final List<String> order = new ArrayList<>();
+    private boolean statusFails;
+    private final ElicitingPurgeConfirmation confirmation = new ElicitingPurgeConfirmation(clock, (lease, trash) -> {
+        order.add("status");
+        if (statusFails) {
+            throw new jakarta.mail.MessagingException("status refused");
+        }
+        return state;
+    });
     private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
     private Logger root;
 
@@ -295,5 +305,211 @@ class ElicitingPurgeConfirmationTest {
             root.setLevel(before);
         }
         assertThat(logs.list).isEmpty();
+    }
+
+    // ---- session approval (SPEC 4 v3a "Session approval", #285) ----
+
+    private static final Answer ALLOW = new Answer.Accepted(Map.of("allow_for_session", true));
+
+    /** Asks once with "allow for session" true and lets the call begin its mutation, as the group gate would. */
+    private void giveApproval(String accountId, int count) throws Exception {
+        ToolCallContext c = ctx(T1, null);
+        script.answers.add(ALLOW);
+        assertThat(confirm(c, request(accountId, "L", "Trash", count))).isEqualTo(new Decision.Confirmed("elicited"));
+        assertThat(c.tryBeginMutation()).isTrue();
+    }
+
+    private Decision covered(String accountId, int count) throws Exception {
+        return confirm(ctx(T1, null), request(accountId, "L", "Trash", count));
+    }
+
+    @Test
+    void statusIsReadImmediatelyBeforeTheRequestAndAFailedStatusSendsNoRequest() throws Exception {
+        script.answers.add(new Answer.Accepted(null));
+        confirm(ctx(T1, null), request("a1", "L", "Trash", 1));
+        assertThat(order).containsExactly("status", "ask");
+        order.clear();
+        statusFails = true;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> confirm(ctx(T1, null), request("a1", "L", "Trash", 1)))
+                .isInstanceOf(jakarta.mail.MessagingException.class);
+        assertThat(order).containsExactly("status");
+    }
+
+    @Test
+    void anApprovalExistsOnlyOnceTheCallsMutationBeganAndOnlyForAllowTrue() throws Exception {
+        script.answers.add(ALLOW);
+        ToolCallContext c = ctx(T1, null);
+        confirm(c, request("a1", "L", "Trash", 1));
+        // answer given, but the group has not begun its mutation: nothing yet
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited"));
+        assertThat(script.messages).hasSize(2);
+        c.tryBeginMutation();
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval"));
+        assertThat(script.messages).hasSize(2);
+    }
+
+    @Test
+    void allowFalseOrAbsentCreatesNoApprovalEvenAfterTheMutationBegan() throws Exception {
+        for (Map<String, Object> content : java.util.Arrays.<Map<String, Object>>asList(null, Map.of(),
+                Map.of("allow_for_session", false))) {
+            ToolCallContext c = ctx(T1, null);
+            script.answers.add(new Answer.Accepted(content));
+            confirm(c, request("a1", "L", "Trash", 1));
+            c.tryBeginMutation();
+        }
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited"));
+    }
+
+    @Test
+    void aCallThatLostTheRaceWithTheDeadlineCreatesNoApproval() throws Exception {
+        ToolCallContext c = ctx(T1, null);
+        script.answers.add(ALLOW);
+        confirm(c, request("a1", "L", "Trash", 1));
+        c.cancel(); // the deadline or a cancel was decided first
+        assertThat(c.tryBeginMutation()).isFalse();
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited"));
+        assertThat(script.messages).hasSize(2);
+    }
+
+    @Test
+    void anApprovalNeverCoversAnotherAccountOrTenantOrTrashName() throws Exception {
+        giveApproval("a1", 1);
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a2", 1)).isEqualTo(new Decision.Confirmed("elicited")); // other account
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(confirm(ctx(T2, null), request("a1", "L", "Trash", 1))).isEqualTo(new Decision.Confirmed("elicited"));
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(confirm(ctx(T1, null), request("a1", "L", "Papierkorb", 1)))
+                .isEqualTo(new Decision.Confirmed("elicited")); // Trash resolves to another name
+        assertThat(script.messages).hasSize(4);
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval")); // still there
+    }
+
+    @Test
+    void onlyHandlesBelowTheRecordedUidnextAndOfTheRecordedValidityAreCovered() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 12); // handles are uid 10, 11 for n = 2, 12 for n = 3
+        giveApproval("a1", 2);
+        assertThat(covered("a1", 2)).isEqualTo(new Decision.Confirmed("session_approval")); // uids 10, 11
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 3)).isEqualTo(new Decision.Confirmed("elicited")); // uid 12 arrived later
+        // a handle of another UIDVALIDITY is not covered either
+        PurgeConfirmation.Request other = request("a1", "L", "Trash", 1);
+        PurgeConfirmation.Request reValidated = new PurgeConfirmation.Request(other.account(), other.lease(), "Trash",
+                List.of(new WritePreflight.Item(0, "h0", new MessageRef("Trash", 2, 10))));
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(confirm(ctx(T1, null), reValidated)).isEqualTo(new Decision.Confirmed("elicited"));
+    }
+
+    @Test
+    void theBudgetOf500IsChargedPerCallAndNeverUsedInPart() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 100_000);
+        giveApproval("a1", 1);
+        assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 400 left
+        assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 300 left
+        assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 200 left
+        assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 100 left
+        assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 0 left
+        assertThat(script.messages).hasSize(1); // only the creating dialog so far
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited")); // spent: ask again
+        assertThat(script.messages).hasSize(2);
+    }
+
+    @Test
+    void aCallLargerThanTheRemainingBudgetAsksAndLeavesTheBudgetAlone() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 100_000);
+        giveApproval("a1", 1);
+        for (int i = 0; i < 4; i++) {
+            assertThat(covered("a1", 100)).isEqualTo(new Decision.Confirmed("session_approval")); // 100 left
+        }
+        PurgeConfirmation.Request big = request("a1", "L", "Trash", 100);
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(confirm(ctx(T1, null), request("a1", "L", "Trash", 101))).isEqualTo(new Decision.Confirmed("elicited"));
+        assertThat(confirm(ctx(T1, null), big)).isEqualTo(new Decision.Confirmed("session_approval")); // 100 still there
+    }
+
+    @Test
+    void theApprovalEndsAfter15MinutesAndIsNotExtendedByUse() throws Exception {
+        giveApproval("a1", 1);
+        clock.now = NOW.plus(Duration.ofMinutes(14)).plusSeconds(59);
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval"));
+        clock.now = NOW.plus(Duration.ofMinutes(15));
+        script.answers.add(new Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited"));
+    }
+
+    @Test
+    void oneApprovalPerAccountAndANewOneReplacesTheOldWithAFreshBudget() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 100_000);
+        giveApproval("a1", 1);
+        for (int i = 0; i < 4; i++) {
+            covered("a1", 100); // 100 left
+        }
+        // a call the old approval cannot cover asks and creates the replacement
+        ToolCallContext c = ctx(T1, null);
+        script.answers.add(ALLOW);
+        confirm(c, request("a1", "L", "Trash", 150));
+        c.tryBeginMutation();
+        assertThat(covered("a1", 150)).isEqualTo(new Decision.Confirmed("session_approval"));
+        assertThat(covered("a1", 150)).isEqualTo(new Decision.Confirmed("session_approval"));
+        assertThat(covered("a1", 150)).isEqualTo(new Decision.Confirmed("session_approval")); // 450 charged
+    }
+
+    @Test
+    void twoConcurrentCallsTogetherAboveTheBudgetAreNotBothCovered() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 100_000);
+        giveApproval("a1", 1);
+        script.answers.add(new Answer.Accepted(null));
+        script.answers.add(new Answer.Accepted(null));
+        java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(2);
+        List<Decision> out = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<Thread> threads = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            threads.add(Thread.ofPlatform().start(() -> {
+                try {
+                    ToolCallContext c = ctx(T1, null);
+                    PurgeConfirmation.Request r = request("a1", "L", "Trash", 300);
+                    barrier.await();
+                    out.add(confirmation.confirm(c, r));
+                } catch (Exception e) {
+                    throw new AssertionError(e);
+                }
+            }));
+        }
+        for (Thread t : threads) {
+            t.join();
+        }
+        assertThat(out).filteredOn(d -> d.equals(new Decision.Confirmed("session_approval"))).hasSize(1);
+        assertThat(out).filteredOn(d -> d.equals(new Decision.Confirmed("elicited"))).hasSize(1);
+    }
+
+    @Test
+    void theApprovalIsUsedBeforeTheCooldownAndADeclineOfAnUncoveredCallKeepsIt() throws Exception {
+        state = new ElicitingPurgeConfirmation.TrashState(1, 100_000);
+        giveApproval("a1", 1);
+        script.answers.add(new Answer.Declined());
+        assertThat(covered("a1", 501)).isEqualTo(new Decision.Refused(ElicitationReason.DECLINED));
+        assertThat(covered("a1", 501)).isEqualTo(new Decision.Refused(ElicitationReason.RECENTLY_DECLINED));
+        assertThat(covered("a1", 10)).isEqualTo(new Decision.Confirmed("session_approval"));
+    }
+
+    @Test
+    void creatingAnApprovalIsOneAuditLineWithBudgetAndExpiryAndNoNames() throws Exception {
+        Logger audit = (Logger) LoggerFactory.getLogger("imapmcp.audit");
+        audit.setLevel(Level.INFO);
+        logs.start();
+        audit.addAppender(logs);
+        try {
+            giveApproval("a1", 1);
+        } finally {
+            audit.detachAppender(logs);
+        }
+        assertThat(logs.list).hasSize(1);
+        String m = logs.list.get(0).getFormattedMessage();
+        assertThat(m).contains("purge approval created").contains("budget=500")
+                .contains("expires_at=" + NOW.plus(Duration.ofMinutes(15))).doesNotContain("Trash");
     }
 }
