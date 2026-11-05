@@ -215,6 +215,30 @@ class ListAccountsToolTest {
         assertThat(list(A).get(0)).containsEntry("status", "auth_failed").containsEntry("read_only", true);
     }
 
+    // allow_purge (#282)
+
+    MailAccount purgeAccount(String id, String label, String user) {
+        return new MailAccount(new AccountId(id), label, null, "127.0.0.1", greenMail.getImaps().getPort(),
+                Security.IMPLICIT_TLS, Flavor.GENERIC, user, new SecretRef("env:" + id), false, true);
+    }
+
+    @Test
+    void allowPurgeIsReportedPerAccountAndDefaultsToFalse() {
+        wire(Map.of(A, List.of(purgeAccount("alpha", "Alpha", "alpha"),
+                account("zeta", "Zeta", "zeta", Flavor.GENERIC, null))));
+        List<Map<String, Object>> accounts = list(A);
+        assertThat(accounts.get(0)).containsEntry("allow_purge", true);
+        assertThat(accounts.get(1)).containsEntry("allow_purge", false);
+    }
+
+    @Test
+    void allowPurgeIsRequiredInTheOutputSchema() {
+        @SuppressWarnings("unchecked") Map<String, Object> item = (Map<String, Object>) ((Map<String, Object>)
+                ((Map<String, Object>) ListAccountsTool.OUTPUT_SCHEMA.get("properties")).get("accounts")).get("items");
+        assertThat(((Map<?, ?>) item.get("properties")).get("allow_purge")).isEqualTo(Map.of("type", "boolean"));
+        assertThat(((List<?>) item.get("required")).contains("allow_purge")).isTrue();
+    }
+
     @Test
     void readOnlyIsRequiredInTheOutputSchema() {
         @SuppressWarnings("unchecked") Map<String, Object> item = (Map<String, Object>) ((Map<String, Object>)
