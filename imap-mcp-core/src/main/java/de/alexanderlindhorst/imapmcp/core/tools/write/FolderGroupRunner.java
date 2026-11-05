@@ -24,8 +24,10 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
  *
  * <p>The step calls {@link Gate#beforeWrite()} before every mutating command. For the first command of a group the
  * gate checks the fixed 15 s budget against the call deadline (less remaining: the rest of that group (items the pre-check
- * already settled keep their status) and all later groups are {@code not_attempted}, a normal result); for the first command of the call it then marks
- * {@link ToolCallContext#markMutationStarted()}, so the mark is never set by the pre-check. A started step is never
+ * already settled keep their status) and all later groups are {@code not_attempted}, a normal result); for the first command of the call it then
+ * calls {@link ToolCallContext#tryBeginMutation()}, so the mark is never set by the pre-check. If that returns
+ * false (the call was cancelled or its deadline decided) nothing is written and the group unwinds like a spent budget
+ * ({@code not_attempted}); the executor's plain {@code TIMEOUT} is the call result. A started step is never
  * interrupted by the budget.
  *
  * <p>Failures: a NO or {@code [READ-ONLY]} (mapped by {@link WriteResponses}) fails the items of that group and
@@ -75,7 +77,7 @@ public final class FolderGroupRunner {
                 throws MessagingException;
     }
 
-    /** Internal: the budget ran out before a group's first mutating command. */
+    /** Internal: the budget ran out, or the call was cancelled, before a mutating command; nothing was written. */
     private static final class BudgetExhausted extends RuntimeException {
         BudgetExhausted() {
             super(null, null, false, false);
@@ -224,7 +226,9 @@ public final class FolderGroupRunner {
                 }
             }
             hook.at(HookPoint.BEFORE_WRITE, st.index, command);
-            ctx.markMutationStarted(); // immediately before the command is released
+            if (!ctx.tryBeginMutation()) { // immediately before the command is released; atomic with the cancel
+                throw new BudgetExhausted();
+            }
             st.written = true;
             hook.at(HookPoint.AFTER_WRITE, st.index, command);
         };
