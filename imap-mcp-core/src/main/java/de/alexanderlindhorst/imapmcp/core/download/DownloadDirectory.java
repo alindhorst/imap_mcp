@@ -6,6 +6,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
+import java.util.function.LongSupplier;
 
 /**
  * The resolved download directory of {@code download_attachment} (SPEC 5.3, 5.4, 5.7): the real path resolved
@@ -20,13 +21,16 @@ public final class DownloadDirectory {
     private final boolean hardLinks;
     private final long maxBytes;
     private final Path displayDir;
+    private final LongSupplier usableSpace;
 
-    private DownloadDirectory(Path path, Object fileKey, boolean hardLinks, long maxBytes, Path displayDir) {
+    private DownloadDirectory(Path path, Object fileKey, boolean hardLinks, long maxBytes, Path displayDir,
+            LongSupplier usableSpace) {
         this.path = path;
         this.fileKey = fileKey;
         this.hardLinks = hardLinks;
         this.maxBytes = maxBytes;
         this.displayDir = displayDir;
+        this.usableSpace = usableSpace;
     }
 
     /**
@@ -36,9 +40,15 @@ public final class DownloadDirectory {
      */
     public static DownloadDirectory of(Path realPath, boolean hardLinks, long maxBytes, Path displayDir)
             throws IOException {
+        return of(realPath, hardLinks, maxBytes, displayDir, null);
+    }
+
+    /** Test seam: {@code usableSpace} replaces the free-space reading of step 9; null reads the file store. */
+    public static DownloadDirectory of(Path realPath, boolean hardLinks, long maxBytes, Path displayDir,
+            LongSupplier usableSpace) throws IOException {
         Objects.requireNonNull(realPath);
         BasicFileAttributes a = Files.readAttributes(realPath, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        return new DownloadDirectory(realPath, a.fileKey(), hardLinks, maxBytes, displayDir);
+        return new DownloadDirectory(realPath, a.fileKey(), hardLinks, maxBytes, displayDir, usableSpace);
     }
 
     public Path path() {
@@ -60,6 +70,9 @@ public final class DownloadDirectory {
 
     /** Usable space of the file store holding the directory (SPEC 4, step 9). */
     public long usableSpace() {
+        if (usableSpace != null) {
+            return usableSpace.getAsLong();
+        }
         try {
             return Files.getFileStore(path).getUsableSpace();
         } catch (IOException e) {
