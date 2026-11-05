@@ -89,11 +89,11 @@ class TutorialTest {
     void writeToolsSectionIsDocumentedAndItsYamlLoads(@TempDir Path dir) throws IOException {
         assertThat(tutorial).contains("## 7. Write tools and read-only accounts");
         assertThat(tutorial.indexOf("## 7. Write tools")).isGreaterThan(tutorial.indexOf("## 6. After adding"))
-                .isLessThan(tutorial.indexOf("## 8. Pitfalls at a glance"));
+                .isLessThan(tutorial.indexOf("## 8. Permanent deletion"));
         assertThat(tutorial).contains("set_flags", "move_messages", "copy_messages", "delete_messages",
                 "create_folder", "tools/list", "list_accounts", "read_only", "PERMISSION_DENIED", "account_read_only",
                 "move back with the returned handles",
-                "delete moves to Trash; nothing is permanently deleted in this version");
+                "delete moves to Trash; `delete_messages` never deletes permanently");
         List<String> withReadOnly = yamlBlocks(false).stream().filter(b -> b.contains("readOnly: true")).toList();
         assertThat(withReadOnly).hasSize(1);
         Path f = dir.resolve("two.yaml");
@@ -115,6 +115,31 @@ class TutorialTest {
         assertThat(tutorial).contains(WRONG_DEADLINE_ERROR);
     }
 
+    /** v3a (#289): the tutorial walks through purge, the session approval, the host timeout and the download setup. */
+    @Test
+    void v3aSectionExplainsPurgeAndDownloadAndItsYamlLoads(@TempDir Path dir) throws IOException {
+        assertThat(tutorial).contains("## 8. Permanent deletion and downloads");
+        assertThat(tutorial.indexOf("## 8. Permanent deletion")).isGreaterThan(tutorial.indexOf("## 7. Write tools"))
+                .isLessThan(tutorial.indexOf("## 9. Pitfalls at a glance"));
+        assertThat(tutorial).contains("purge_messages", "allowPurge: true", "delete_messages", "Trash",
+                "elicitation", "Allow for this session", "15 minutes", "500 messages", "`already_gone`",
+                "late acceptance still deletes", "tools.deadline", "60s", "download_attachment",
+                "tools.download.dir", "displayDir", "--user", "http-local");
+        List<String> purge = yamlBlocks(false).stream().filter(b -> b.contains("allowPurge: true")).toList();
+        assertThat(purge).hasSize(1);
+        Path f = dir.resolve("purge.yaml");
+        Files.writeString(f, purge.getFirst());
+        assertThat(ConfigLoader.load(f, Map.of()).accounts()).filteredOn(AppConfig.Account::allowPurge).hasSize(1);
+        List<String> download = yamlBlocks(false).stream().filter(b -> b.contains("tools:") && b.contains("download:"))
+                .toList();
+        assertThat(download).hasSize(1);
+        Path g = dir.resolve("download.yaml");
+        Files.writeString(g, download.getFirst());
+        assertThat(ConfigLoader.load(g, Map.of()).tools().download().dir()).isNotNull();
+        String pitfalls = tutorial.substring(tutorial.indexOf("## 9. Pitfalls at a glance"));
+        assertThat(pitfalls).contains("`allowPurge`").contains("purge_messages").contains("`tools.download.dir`");
+    }
+
     /** #207: SPEC v0.8 has no write-tools switch. */
     @Test
     void doesNotMentionAWriteToolsSwitch() {
@@ -123,7 +148,7 @@ class TutorialTest {
 
     @Test
     void pitfallsListTheWriteToolLines() {
-        String pitfalls = tutorial.substring(tutorial.indexOf("## 8. Pitfalls at a glance"));
+        String pitfalls = tutorial.substring(tutorial.indexOf("## 9. Pitfalls at a glance"));
         assertThat(pitfalls).contains("active on every account without `readOnly: true`")
                 .contains("no per-tool selection").contains("`UNSUPPORTED`");
     }

@@ -151,7 +151,7 @@ class ReadmeTest {
                 .contains("claude mcp add").contains("--transport http").contains("Authorization: Bearer")
                 .contains("flavor: auto").contains("gimaps").contains("secret-tool store")
                 .contains("security add-generic-password").contains("within 5 minutes");
-        assertThat(readme).contains("phase v2").contains("reversible write tools")
+        assertThat(readme).contains("phase v3a").contains("reversible write tools")
                 .contains("enabled by default").contains("`readOnly`")
                 .contains("`http-public` and the later phases are not implemented")
                 .contains("moves to Trash, not a permanent delete")
@@ -159,7 +159,7 @@ class ReadmeTest {
                 .contains("at least 30 s").contains("100 handles").contains("10 folders")
                 .contains("upgrading from 0.1.0").contains("`destructiveHint`")
                 .contains("set_flags, move_messages, copy_messages, delete_messages and create_folder")
-                .doesNotContain("phase v1");
+                .doesNotContain("phase v1").doesNotContain("phase v2");
     }
 
     /**
@@ -244,16 +244,78 @@ class ReadmeTest {
                 de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool.DEFINITION,
                 de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool.DEFINITION,
                 de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool.DEFINITION,
-                de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool.DEFINITION);
+                de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool.DEFINITION,
+                de.alexanderlindhorst.imapmcp.core.tools.DownloadAttachmentTool.DEFINITION);
         assertThat(listed).containsExactlyInAnyOrderElementsOf(defs.stream().map(d -> d.name()).toList());
         for (var d : defs) {
             if (d.hints().readOnly()) {
                 assertThat(lines.get(d.name())).as(d.name()).doesNotContain("write;");
+            } else if (d.name().equals("download_attachment")) { // a local file, allowed on read-only accounts
+                assertThat(lines.get(d.name())).as(d.name()).contains("allowed on `readOnly` accounts")
+                        .contains("`tools.download.dir`").doesNotContain("refused on `readOnly`");
+            } else if (d.name().equals("purge_messages")) {
+                assertThat(lines.get(d.name())).as(d.name()).contains("permanent").contains("Trash only")
+                        .contains("`allowPurge`").contains("stdio only").contains("confirm");
             } else {
                 assertThat(lines.get(d.name())).as(d.name()).contains("write; refused on `readOnly` accounts");
             }
         }
         assertThat(lines.get("delete_messages")).contains("moves to Trash, not a permanent delete");
+    }
+
+    /** v3a (#289): purge workflow, elicitation, session approval, host timeouts, deadline, http-local, download. */
+    @Test
+    void v3aSectionsDocumentPurgeElicitationDownloadAndTheirLimits() {
+        Matcher m = Pattern.compile("(?s)\\n### Permanent deletion \\(purge_messages\\)\\R(.*?)(?=\\n##+ |\\z)")
+                .matcher(readme);
+        assertThat(m.find()).as("README has a '### Permanent deletion (purge_messages)' section").isTrue();
+        assertThat(m.group(1)).contains("`delete_messages`").contains("Trash").contains("only from the Trash")
+                .contains("`allowPurge: true`").contains("`stdio` only").contains("not available in `http-local`")
+                .contains("elicitation").contains("Allow for this session").contains("15 minutes")
+                .contains("500 messages").contains("`recently_declined`").contains("60 s")
+                .contains("`tools.deadline`").contains("at least 60 s").contains("a late acceptance still deletes")
+                .contains("`already_gone`").contains("`confirmation_unavailable`").contains("`purge_scope`")
+                .contains("`purge_disabled`").contains("`not_confirmed`").contains("`readOnly: true`")
+                .contains("UIDPLUS").contains("`allow_purge`").contains("cannot be undone");
+        Matcher d = Pattern.compile("(?s)\\n### Downloading attachments \\(download_attachment\\)\\R(.*?)(?=\\n##+ |\\z)")
+                .matcher(readme);
+        assertThat(d.find()).as("README has a '### Downloading attachments (download_attachment)' section").isTrue();
+        assertThat(d.group(1)).contains("`tools.download.dir`").contains("`tools.download.maxBytes`")
+                .contains("`tools.download.displayDir`").contains("25MiB").contains("100MiB")
+                .contains("--user").contains("--userns=keep-id").contains("0600").contains("never overwrites")
+                .contains("sha256").contains("untrusted").contains("Docker Desktop on macOS");
+    }
+
+    /** v3a (#289): the YAML for allowPurge and the download keys loads, and the keys land in the config. */
+    @Test
+    void v3aYamlExamplesSetAllowPurgeAndTheDownloadKeys(@TempDir Path dir) throws IOException {
+        List<String> purge = yamlBlocks().stream().filter(b -> b.contains("allowPurge: true")).toList();
+        assertThat(purge).hasSize(1);
+        Path f = dir.resolve("purge.yaml");
+        Files.writeString(f, purge.getFirst());
+        AppConfig c = ConfigLoader.load(f, Map.of());
+        assertThat(c.accounts()).filteredOn(AppConfig.Account::allowPurge).hasSize(1);
+        assertThat(c.tools().deadline()).isGreaterThanOrEqualTo(java.time.Duration.ofSeconds(60));
+        List<String> download = yamlBlocks().stream().filter(b -> b.contains("displayDir:")).toList();
+        assertThat(download).hasSize(1);
+        Path g = dir.resolve("download.yaml");
+        Files.writeString(g, download.getFirst());
+        AppConfig.Download dl = ConfigLoader.load(g, Map.of()).tools().download();
+        assertThat(dl.dir()).isNotNull();
+        assertThat(dl.displayDir()).isNotNull();
+        assertThat(dl.maxBytes()).isEqualTo(25L * 1024 * 1024);
+    }
+
+    /** v3a (#289): the smoke checklist names the v3a manual checks. */
+    @Test
+    void smokeChecklistListsTheV3aChecks() {
+        Matcher m = Pattern.compile("(?s)\\n### Smoke checklist for v3a\\R(.*?)(?=\\n##+ |\\z)").matcher(readme);
+        assertThat(m.find()).as("README has a '### Smoke checklist for v3a' section").isTrue();
+        for (String item : List.of("Gmail Trash purge", "Microsoft 365 Deleted Items", "Real elicitation client",
+                "Gmail attachment download", "Docker Desktop on macOS owner probe")) {
+            assertThat(m.group(1)).as("checklist item").contains(item);
+        }
     }
 
     /** #204: SPEC v0.8 has no write-tools switch; the only switch is accounts[].readOnly. */
@@ -307,6 +369,9 @@ class ReadmeTest {
                 .contains("details.field").contains("details.reason").contains("details.max")
                 .contains("isError").contains("no `structuredContent`").contains("request_id")
                 .contains("account_read_only");
+        assertThat(section).contains("purge_disabled").contains("purge_scope").contains("confirmation_unavailable")
+                .contains("not_confirmed").contains("part_not_found").contains("not_a_leaf")
+                .contains("transfer_encoding").contains("decode_failed").contains("details.elicitation");
     }
 
     /** #261: README:95 wording; the old bare error code is gone. */
@@ -322,7 +387,7 @@ class ReadmeTest {
         assertThat(readme).contains("any server that advertises `UTF8=ACCEPT` or `UTF8=ONLY`")
                 .contains("at most 10m")
                 .contains("`\\Deleted` messages are not filtered out")
-                .contains("v3 gated deletion, `download_attachment`")
+                .contains("v3a gated deletion from Trash (`purge_messages`, `stdio` only) and `download_attachment`")
                 .contains("`security -g`").doesNotContain("only ASCII passwords");
         assertThat(readme).contains("mvn -Psmoke -pl imap-mcp-it -am verify")
                 .contains("IMAP_MCP_SMOKE_GMAIL_USER").contains("IMAP_MCP_SMOKE_GMAIL_PASSWORD")
