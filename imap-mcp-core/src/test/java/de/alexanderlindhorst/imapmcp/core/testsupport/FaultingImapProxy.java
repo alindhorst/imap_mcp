@@ -18,7 +18,7 @@ import java.util.List;
  */
 public final class FaultingImapProxy implements AutoCloseable {
 
-    public enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION }
+    public enum Mode { NONE, REJECT_WITH_NO, DROP_CONNECTION, ANSWER_NIL_BODY }
 
     private final ServerSocket server;
     private final int targetPort;
@@ -26,6 +26,7 @@ public final class FaultingImapProxy implements AutoCloseable {
     private volatile Mode mode = Mode.NONE;
     private volatile String needle = "BODYSTRUCTURE";
     private volatile String noText = "rejected";
+    private final java.util.concurrent.atomic.AtomicInteger skip = new java.util.concurrent.atomic.AtomicInteger();
 
     public FaultingImapProxy(int targetPort) throws IOException {
         this.targetPort = targetPort;
@@ -46,6 +47,25 @@ public final class FaultingImapProxy implements AutoCloseable {
     public void dropConnectionOn(String needle) {
         this.needle = needle;
         this.mode = Mode.DROP_CONNECTION;
+    }
+
+    /** Like {@link #rejectWithNo(String, String)}, after {@code skip} matching commands were relayed. */
+    public void rejectWithNoAfter(String needle, String text, int skip) {
+        this.skip.set(skip);
+        rejectWithNo(needle, text);
+    }
+
+    /** Like {@link #dropConnectionOn(String)}, after {@code skip} matching commands were relayed. */
+    public void dropConnectionAfter(String needle, int skip) {
+        this.skip.set(skip);
+        dropConnectionOn(needle);
+    }
+
+    /** Answers a matching {@code FETCH n (BODY.PEEK[...])} with a NIL body item (after {@code skip} relayed ones). */
+    public void answerNilBodyAfter(String needle, int skip) {
+        this.needle = needle;
+        this.skip.set(skip);
+        this.mode = Mode.ANSWER_NIL_BODY;
     }
 
     public void relay() {
@@ -95,11 +115,18 @@ public final class FaultingImapProxy implements AutoCloseable {
                 }
                 String cmd = line.toString(java.nio.charset.StandardCharsets.ISO_8859_1);
                 line.reset();
-                if (mode != Mode.NONE && cmd.contains(needle)) {
+                if (mode != Mode.NONE && cmd.contains(needle) && skip.getAndDecrement() <= 0) {
                     if (mode == Mode.DROP_CONNECTION) {
                         return;
                     }
                     String tag = cmd.substring(0, cmd.indexOf(' '));
+                    if (mode == Mode.ANSWER_NIL_BODY) {
+                        String num = cmd.split(" ")[2];
+                        toClient.write(("* " + num + " FETCH (BODY[1]<0> NIL)\r\n" + tag + " OK FETCH completed\r\n")
+                                .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                        toClient.flush();
+                        continue;
+                    }
                     toClient.write((tag + " NO " + noText + "\r\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
                     toClient.flush();
                     continue;
