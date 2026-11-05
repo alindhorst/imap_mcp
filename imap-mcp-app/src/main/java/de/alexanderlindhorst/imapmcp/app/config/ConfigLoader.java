@@ -127,9 +127,13 @@ public final class ConfigLoader {
             String username = s.string("username", null);
             SecretRef password = s.requiredRef("password");
             boolean readOnly = s.bool("readOnly", false);
+            boolean allowPurge = s.bool("allowPurge", false);
+            if (allowPurge && readOnly) {
+                throw new ConfigException(p + ".allowPurge: cannot be true together with readOnly");
+            }
             s.finish();
             result.add(new AppConfig.Account(id, label, address, host, port, security, flavor, username, password,
-                    readOnly));
+                    readOnly, allowPurge));
         }
         return List.copyOf(result);
     }

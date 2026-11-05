@@ -22,13 +22,18 @@ public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tool
         return accounts.stream().anyMatch(a -> !a.readOnly());
     }
 
+    /** Number of accounts with {@code allowPurge: true} (SPEC 5.3); purge registration and startup line. */
+    public long purgeAccounts() {
+        return accounts.stream().filter(Account::allowPurge).count();
+    }
+
     public record Account(String id, String label, String address, String host, int port,
             MailAccount.Security security, MailAccount.Flavor flavor, String username, SecretRef password,
-            boolean readOnly) {
+            boolean readOnly, boolean allowPurge) {
 
         public MailAccount toMailAccount() {
             return new MailAccount(new AccountId(id), label, address, host, port, security, flavor, username,
-                    password, readOnly);
+                    password, readOnly, allowPurge);
         }
 
         @Override
