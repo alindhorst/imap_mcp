@@ -305,7 +305,7 @@ class AppComponentsTest {
         var t = base.tools();
         AppConfig shortDeadline = new AppConfig(base.accounts(), base.imap(), base.pool(),
                 new AppConfig.Tools(Duration.ofMillis(100), t.maxCharsCap(), t.maxBodyPartBytes(), t.maxFolders(),
-                        t.sinceMaxCandidates()), base.secrets(), base.http(), base.security(), base.mode(),
+                        t.sinceMaxCandidates(), t.download()), base.secrets(), base.http(), base.security(), base.mode(),
                 base.logLevel());
         var ex = create(shortDeadline, NO_RUNNER).executor();
         var ctx = new de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext(LOCAL, "req-9");
