@@ -110,11 +110,16 @@ class AppComponentsTest {
     }
 
     private AppComponents create(AppConfig c, CommandRunner runner, Map<String, String> env) {
+        return create(c, runner, env, AppComponents.Mode.STDIO);
+    }
+
+    private AppComponents create(AppConfig c, CommandRunner runner, Map<String, String> env,
+            AppComponents.Mode mode) {
         AppComponents a = AppComponents.create(c, paths(), Clock.systemUTC(), env, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");
             return p;
-        }, Platform.LINUX, runner, platform -> true);
+        }, Platform.LINUX, runner, platform -> true, mode);
         created.add(a);
         return a;
     }
@@ -175,6 +180,68 @@ class AppComponentsTest {
         assertThat(c.statefulToolSpecs()).extracting(s -> s.tool().name()).containsExactlyElementsOf(all);
         assertThat(c.statelessToolSpecs(ctx -> LOCAL)).extracting(s -> s.tool().name())
                 .containsExactlyElementsOf(all);
+    }
+
+    // v3a purge gate (#282)
+
+    private static final String PURGE = "    allowPurge: true\n";
+
+    @Test
+    void purgeIsRegisteredOnlyInStdioAndOnlyWithAPurgeAccount() throws IOException {
+        AppConfig plain = config("env:MAIL_PW");
+        AppConfig purge = config("env:MAIL_PW", PURGE);
+        assertThat(AppComponents.purgeRegistered(plain, AppComponents.Mode.STDIO)).isFalse();
+        assertThat(AppComponents.purgeRegistered(purge, AppComponents.Mode.STDIO)).isTrue();
+        assertThat(AppComponents.purgeRegistered(purge, AppComponents.Mode.HTTP_LOCAL)).isFalse();
+        assertThat(create(purge, NO_RUNNER).purgeRegistered()).isTrue();
+        assertThat(create(plain, NO_RUNNER).purgeRegistered()).isFalse();
+        assertThat(create(purge, NO_RUNNER, Map.of("MAIL_PW", "pw"), AppComponents.Mode.HTTP_LOCAL)
+                .purgeRegistered()).isFalse();
+    }
+
+    @Test
+    void stdioWithPurgeRequiresADeadlineOfAtLeast60Seconds() throws IOException {
+        AppConfig short45 = config("env:MAIL_PW", PURGE + "tools:\n  deadline: 45s\n");
+        assertThatThrownBy(() -> create(short45, NO_RUNNER)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("tools.deadline").hasMessageContaining("60s");
+        assertThat(create(config("env:MAIL_PW", PURGE + "tools:\n  deadline: 60s\n"), NO_RUNNER)
+                .purgeRegistered()).isTrue();
+        // not registered: the 30 s write guard of the loader is all that applies
+        assertThat(create(short45, NO_RUNNER, Map.of("MAIL_PW", "pw"), AppComponents.Mode.HTTP_LOCAL)
+                .purgeRegistered()).isFalse();
+        assertThat(create(config("env:MAIL_PW", "tools:\n  deadline: 45s\n"), NO_RUNNER).purgeRegistered())
+                .isFalse();
+    }
+
+    @Test
+    void startupLogsPurgeRegistrationAndAWarnInHttpLocal() throws IOException {
+        ch.qos.logback.classic.Logger log =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("imapmcp.app");
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        log.addAppender(appender);
+        try {
+            AppConfig purge = config("env:MAIL_PW", PURGE);
+            create(purge, NO_RUNNER);
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO)
+                    .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .contains("purge_messages registered=true, accounts with allowPurge=1 of 1");
+            appender.list.clear();
+            create(purge, NO_RUNNER, Map.of("MAIL_PW", "pw"), AppComponents.Mode.HTTP_LOCAL);
+            assertThat(appender.list).extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .contains("purge_messages registered=false, accounts with allowPurge=1 of 1");
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .hasSize(1).extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .allSatisfy(m -> assertThat(m).contains("allowPurge").contains("http-local")
+                            .contains("not available").doesNotContain("work"));
+            appender.list.clear();
+            create(config("env:MAIL_PW"), NO_RUNNER);
+            assertThat(appender.list).extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .contains("purge_messages registered=false, accounts with allowPurge=0 of 1")
+                    .noneMatch(m -> m.contains("http-local"));
+        } finally {
+            log.detachAppender(appender);
+        }
     }
 
     @Test
