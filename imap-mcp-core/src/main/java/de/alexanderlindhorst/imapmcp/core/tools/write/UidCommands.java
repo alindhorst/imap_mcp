@@ -107,9 +107,10 @@ public final class UidCommands {
     /**
      * The purge post-check (SPEC 5.4): one read-only {@code UID FETCH <set> (UID)}; returns those of {@code uids}
      * that are still in the selected folder. Not a mutation, but it lives here because it must see the answer after
-     * the UID EXPUNGE without the message cache, and only this class sends raw commands.
+     * the UID EXPUNGE without the message cache, and only this class sends raw commands. Package-private: the
+     * public verb set stays closed (a test pins it).
      */
-    public static java.util.Set<Long> uidFetchPresent(IMAPFolder folder, Collection<Long> uids)
+    static java.util.Set<Long> uidFetchPresent(IMAPFolder folder, Collection<Long> uids)
             throws MessagingException {
         String set = uidSet(uids);
         requireWritable(folder);

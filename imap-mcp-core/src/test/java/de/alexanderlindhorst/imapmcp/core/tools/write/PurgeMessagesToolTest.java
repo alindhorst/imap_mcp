@@ -274,7 +274,16 @@ class PurgeMessagesToolTest {
     }
 
     private String wire() {
-        return String.join("\n", trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+        for (int attempt = 0; ; attempt++) {
+            try { // a cancel hook of the lease can still be logging on another thread
+                return String.join("\n", new ArrayList<>(trace.list).stream().map(ILoggingEvent::getFormattedMessage)
+                        .toList());
+            } catch (java.util.ConcurrentModificationException e) {
+                if (attempt > 20) {
+                    throw e;
+                }
+            }
+        }
     }
 
     private static UidCommands.Result no(String text) {
