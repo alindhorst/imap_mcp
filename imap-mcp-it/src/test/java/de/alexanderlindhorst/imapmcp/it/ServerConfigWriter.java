@@ -26,6 +26,7 @@ public final class ServerConfigWriter {
     private final List<Account> accounts = new ArrayList<>();
     private final Map<String, String> env = new LinkedHashMap<>();
     private final Set<String> readOnly = new LinkedHashSet<>();
+    private final Set<String> allowPurge = new LinkedHashSet<>();
     private Path trustStore;
     private String extraYaml = "";
 
@@ -46,6 +47,15 @@ public final class ServerConfigWriter {
             throw new IllegalArgumentException("no such account: " + accountId);
         }
         readOnly.add(accountId);
+        return this;
+    }
+
+    /** Marks an already added account {@code allowPurge: true} (SPEC 5.3); purge_messages is then registered in stdio. */
+    public ServerConfigWriter allowPurge(String accountId) {
+        if (accounts.stream().noneMatch(a -> a.id().equals(accountId))) {
+            throw new IllegalArgumentException("no such account: " + accountId);
+        }
+        allowPurge.add(accountId);
         return this;
     }
 
@@ -74,6 +84,9 @@ public final class ServerConfigWriter {
                     .append("    password: \"env:").append(passwordVariable(a.id())).append("\"\n");
             if (readOnly.contains(a.id())) {
                 yaml.append("    readOnly: true\n");
+            }
+            if (allowPurge.contains(a.id())) {
+                yaml.append("    allowPurge: true\n");
             }
         }
         yaml.append(extraYaml);
