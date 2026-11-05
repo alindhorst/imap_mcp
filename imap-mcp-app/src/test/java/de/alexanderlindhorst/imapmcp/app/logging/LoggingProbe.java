@@ -22,6 +22,10 @@ public final class LoggingProbe {
                 full();
                 System.err.println("status-errors=" + statusErrors());
             }
+            case "audit" -> {
+                LoggerFactory.getLogger("imapmcp.audit").info("AUDIT-INFO");
+                LoggerFactory.getLogger("imapmcp.other").info("OTHER-INFO");
+            }
             case "unwritable" -> {
                 full();
                 System.err.println("active=" + active);

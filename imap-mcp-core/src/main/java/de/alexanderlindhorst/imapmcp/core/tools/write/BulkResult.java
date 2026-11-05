@@ -23,7 +23,7 @@ public final class BulkResult {
     /** The nine fixed {@code notes} sentences, in the order the spec lists them. */
     public static final List<String> NOTES = List.of(
             "Some messages were already in the target folder and were left unchanged.",
-            "Some messages were already in Trash and were left unchanged; permanent deletion is not available.",
+            "Some messages were already in Trash and were left unchanged.",
             "Some messages are no longer in their source folder; if this call repeats an earlier one, they were already moved. "
                     + "Search the target folder for their new handles.",
             "The server did not report the new UIDs of some messages; search the target folder for their handles.",
@@ -33,18 +33,45 @@ public final class BulkResult {
             "The call stopped before some messages were processed; nothing was changed for them, so repeat the call with their handles.",
             "The outcome for some messages is unknown; check the source and target folders before repeating the call for them.");
 
+    /** Closed {@code reason} of a failed purge item: the STORE succeeded but the message is still in the folder. */
+    public static final String STILL_PRESENT = "still_present";
+
+    /** {@code confirmation} values of a purge result. */
+    public static final String ELICITED = "elicited";
+    public static final String SESSION_APPROVAL = "session_approval";
+
+    /** The seven {@code notes} sentences of purge_messages (SPEC 4 v3a), in spec order. */
+    public static final List<String> PURGE_NOTES = List.of(
+            "These messages are permanently removed from the mailbox; this server cannot restore them.",
+            "Some messages were no longer in their folder; if this call repeats an earlier one, they were already removed.",
+            NOTES.get(5),
+            "Some messages could not be removed and may now be marked as deleted; set_flags with deleted false clears the mark.",
+            NOTES.get(6),
+            NOTES.get(7),
+            "The outcome for some messages is unknown; repeating the call is safe because messages already removed are reported as already_gone.");
+
     /** Which bulk tool produced the result; decides target_folder, new_handle/note and the valid statuses. */
     public enum Kind {
-        SET_FLAGS, MOVE, COPY, DELETE;
+        SET_FLAGS, MOVE, COPY, DELETE, PURGE;
 
         boolean hasTarget() {
-            return this != SET_FLAGS;
+            return this != SET_FLAGS && this != PURGE;
+        }
+
+        /** Whether items carry new_handle and note. */
+        boolean hasNewHandle() {
+            return hasTarget();
         }
     }
 
     /** One result item. {@code reason} only for stale_reference, {@code error} only for failed ({@code new_handle} there only for a copy that was not removed). */
     public record Item(String handle, ItemStatus status, String newHandle, String note,
-            ToolError.StaleReason reason, ToolError error) {
+            ToolError.StaleReason reason, ToolError error, String failReason) {
+
+        public Item(String handle, ItemStatus status, String newHandle, String note, ToolError.StaleReason reason,
+                ToolError error) {
+            this(handle, status, newHandle, note, reason, error, null);
+        }
 
         public Item {
             Objects.requireNonNull(handle, "handle");
@@ -62,6 +89,9 @@ public final class BulkResult {
                     && status != ItemStatus.FAILED) {
                 throw new IllegalArgumentException("new_handle only for ok, already_in_target and failed");
             }
+            if (failReason != null && !(STILL_PRESENT.equals(failReason) && status == ItemStatus.FAILED)) {
+                throw new IllegalArgumentException("failReason is only still_present on failed");
+            }
             if (status == ItemStatus.ALREADY_IN_TARGET && !handle.equals(newHandle)) {
                 throw new IllegalArgumentException("already_in_target echoes the handle as new_handle");
             }
@@ -70,6 +100,17 @@ public final class BulkResult {
         /** set_flags success. */
         public static Item okFlags(String handle) {
             return new Item(handle, ItemStatus.OK, null, null, null, null);
+        }
+
+        /** purge success: the UID is absent after the UID EXPUNGE. */
+        public static Item okPurged(String handle) {
+            return new Item(handle, ItemStatus.OK, null, null, null, null);
+        }
+
+        /** purge: the STORE of {@code \Deleted} succeeded, the message is still in the folder. */
+        public static Item failedStillPresent(String handle, ToolError error) {
+            return new Item(handle, ItemStatus.FAILED, null, null, null,
+                    Objects.requireNonNull(error, "error"), STILL_PRESENT);
         }
 
         /** move/copy/delete success with the minted handle. */
@@ -120,12 +161,32 @@ public final class BulkResult {
     private final String account;
     private final String targetFolder;
     private final List<Item> results;
+    private final String confirmation;
 
-    private BulkResult(Kind kind, String account, String targetFolder, List<Item> results) {
+    private BulkResult(Kind kind, String account, String targetFolder, List<Item> results, String confirmation) {
         this.kind = kind;
         this.account = account;
         this.targetFolder = targetFolder;
         this.results = results;
+        this.confirmation = confirmation;
+    }
+
+    /** purge_messages result; {@code confirmation} is {@link #ELICITED} or {@link #SESSION_APPROVAL}. */
+    public static BulkResult purge(String account, String confirmation, List<Item> results) {
+        Objects.requireNonNull(account, "account");
+        if (!ELICITED.equals(confirmation) && !SESSION_APPROVAL.equals(confirmation)) {
+            throw new IllegalArgumentException("confirmation");
+        }
+        for (Item i : results) {
+            validate(Kind.PURGE, i);
+        }
+        return new BulkResult(Kind.PURGE, account, null, List.copyOf(results), confirmation);
+    }
+
+    /** Like {@link #inInputOrder} for purge_messages. */
+    public static BulkResult purgeInInputOrder(String account, String confirmation, List<String> inputHandles,
+            List<Item> items) {
+        return purge(account, confirmation, ordered(inputHandles, items));
     }
 
     /** Items must already be in input order. */
@@ -138,12 +199,16 @@ public final class BulkResult {
         for (Item i : results) {
             validate(kind, i);
         }
-        return new BulkResult(kind, account, targetFolder, List.copyOf(results));
+        return new BulkResult(kind, account, targetFolder, List.copyOf(results), null);
     }
 
     /** Orders the items (e.g. produced per folder group) by the input handles; each handle needs exactly one item. */
     public static BulkResult inInputOrder(Kind kind, String account, String targetFolder, List<String> inputHandles,
             List<Item> items) {
+        return of(kind, account, targetFolder, ordered(inputHandles, items));
+    }
+
+    private static List<Item> ordered(List<String> inputHandles, List<Item> items) {
         Map<String, Item> byHandle = new HashMap<>();
         for (Item i : items) {
             if (byHandle.put(i.handle(), i) != null) {
@@ -161,20 +226,26 @@ public final class BulkResult {
             }
             ordered.add(i);
         }
-        return of(kind, account, targetFolder, ordered);
+        return ordered;
     }
 
     private static void validate(Kind kind, Item i) {
-        boolean flags = kind == Kind.SET_FLAGS;
+        boolean flags = !kind.hasNewHandle();
         boolean valid = switch (i.status()) {
             case OK -> flags ? i.newHandle() == null && i.note() == null : i.newHandle() != null || i.note() != null;
-            case ALREADY_IN_TARGET, ALREADY_GONE -> kind == Kind.MOVE || kind == Kind.DELETE;
-            case NOT_FOUND -> flags || kind == Kind.COPY;
+            case ALREADY_IN_TARGET -> kind == Kind.MOVE || kind == Kind.DELETE;
+            case ALREADY_GONE -> kind == Kind.MOVE || kind == Kind.DELETE || kind == Kind.PURGE;
+            case NOT_FOUND -> kind == Kind.SET_FLAGS || kind == Kind.COPY;
             default -> true;
         };
         if (!valid) {
             throw new IllegalArgumentException("item status " + i.status().wire() + " is not valid for " + kind);
         }
+    }
+
+    /** The purge {@code confirmation} value; null for the other tools. */
+    public String confirmation() {
+        return confirmation;
     }
 
     public Kind kind() {
@@ -197,6 +268,9 @@ public final class BulkResult {
 
     /** The fixed sentences of the conditions that occurred at least once, in spec order. */
     public List<String> notes() {
+        if (kind == Kind.PURGE) {
+            return purgeNotes();
+        }
         boolean[] occurred = new boolean[NOTES.size()];
         for (Item i : results) {
             switch (i.status()) {
@@ -219,10 +293,38 @@ public final class BulkResult {
         return out;
     }
 
+    private List<String> purgeNotes() {
+        boolean[] occurred = new boolean[PURGE_NOTES.size()];
+        for (Item i : results) {
+            switch (i.status()) {
+                case OK -> occurred[0] = true;
+                case ALREADY_GONE -> occurred[1] = true;
+                case STALE_REFERENCE -> occurred[2] = true;
+                case FAILED -> {
+                    occurred[3] |= STILL_PRESENT.equals(i.failReason());
+                    occurred[4] = true;
+                }
+                case NOT_ATTEMPTED -> occurred[5] = true;
+                case UNKNOWN -> occurred[6] = true;
+                default -> throw new IllegalStateException("status not valid for purge");
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (int n = 0; n < occurred.length; n++) {
+            if (occurred[n]) {
+                out.add(PURGE_NOTES.get(n));
+            }
+        }
+        return out;
+    }
+
     /** Wire shape in spec field order; every field present, inapplicable ones null (new_handle/note absent for set_flags). */
     public Map<String, Object> toMap() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("account", account);
+        if (kind == Kind.PURGE) {
+            out.put("confirmation", confirmation);
+        }
         if (kind.hasTarget()) {
             out.put("target_folder", targetFolder);
         }
@@ -235,11 +337,11 @@ public final class BulkResult {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("handle", i.handle());
             m.put("status", i.status().wire());
-            if (kind.hasTarget()) {
+            if (kind.hasNewHandle()) {
                 m.put("new_handle", i.newHandle());
                 m.put("note", i.note());
             }
-            m.put("reason", i.reason() == null ? null : reasonWire(i.reason()));
+            m.put("reason", i.reason() != null ? reasonWire(i.reason()) : i.failReason());
             m.put("error", i.error() == null ? null : i.error().toItemMap());
             items.add(m);
         }

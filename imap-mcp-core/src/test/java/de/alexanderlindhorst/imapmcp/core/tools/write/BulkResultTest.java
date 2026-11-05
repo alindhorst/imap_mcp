@@ -191,7 +191,7 @@ class BulkResultTest {
     // notes: exact text from SPEC 4
 
     private static final String N1 = "Some messages were already in the target folder and were left unchanged.";
-    private static final String N2 = "Some messages were already in Trash and were left unchanged; permanent deletion is not available.";
+    private static final String N2 = "Some messages were already in Trash and were left unchanged.";
     private static final String N3 = "Some messages are no longer in their source folder; if this call repeats an earlier one, they were already moved. Search the target folder for their new handles.";
     private static final String N4 = "The server did not report the new UIDs of some messages; search the target folder for their handles.";
     private static final String N5 = "Some messages no longer exist; re-run search_messages.";

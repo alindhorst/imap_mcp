@@ -39,6 +39,8 @@ import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
 import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeConfirmation;
+import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.WriteCallLog;
 import de.alexanderlindhorst.imapmcp.core.tools.write.WritePreflight;
@@ -230,6 +232,12 @@ public final class AppComponents implements AutoCloseable {
             if (mode == Mode.HTTP_LOCAL && config.purgeAccounts() > 0) {
                 appLog.warn("accounts with allowPurge are configured, but purge_messages is not available in "
                         + "http-local mode (it needs MCP elicitation, stdio only)");
+            }
+
+            if (purge) {
+                // T4 supplies the elicitation-backed confirmation; until then no session can confirm (SPEC 4)
+                tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(new WritePreflight(account, locator),
+                        leases, clock, PurgeConfirmation.UNAVAILABLE));
             }
 
             metrics.start();

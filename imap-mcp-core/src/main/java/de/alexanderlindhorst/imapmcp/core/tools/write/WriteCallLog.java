@@ -31,6 +31,7 @@ public final class WriteCallLog {
             case MOVE, DELETE -> copyFallback ? "copy_fallback" : "move";
             case COPY -> "copy";
             case SET_FLAGS -> "store";
+            case PURGE -> "expunge";
         };
         LOG.info("write call tool={} request_id={} duration_ms={} groups={} path={} outcome={}{}", tool, MDC.get("req"),
                 duration.toMillis(), groups, path, outcome, sb);
@@ -43,6 +44,10 @@ public final class WriteCallLog {
 
     /** The whole call failed; no counts. */
     public static void error(String tool, ErrorCode code, Duration duration) {
+        if (PurgeMessagesTool.NAME.equals(tool)) { // the audit record of a permanent deletion (SPEC 5.6)
+            PurgeAudit.error(code, null, duration);
+            return;
+        }
         LOG.info("write call tool={} request_id={} duration_ms={} error_code={}", tool, MDC.get("req"),
                 duration.toMillis(), code.name());
     }
