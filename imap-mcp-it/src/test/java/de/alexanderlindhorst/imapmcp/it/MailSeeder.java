@@ -86,6 +86,33 @@ public final class MailSeeder implements AutoCloseable {
         return append(folder, m);
     }
 
+    /**
+     * APPENDs the bytes as they are (no re-encoding by Jakarta Mail), so a test controls the transfer encodings, 8bit
+     * octets and truncated base64 the server stores. Needs UIDPLUS (APPENDUID).
+     */
+    public long appendRfc822(String folderName, byte[] rfc822) throws MessagingException {
+        IMAPFolder f = (IMAPFolder) store.getFolder(folderName);
+        if (!f.exists()) {
+            f.create(Folder.HOLDS_MESSAGES);
+        }
+        org.eclipse.angus.mail.iap.Literal literal = new org.eclipse.angus.mail.iap.Literal() {
+            @Override
+            public int size() {
+                return rfc822.length;
+            }
+
+            @Override
+            public void writeTo(java.io.OutputStream out) throws IOException {
+                out.write(rfc822);
+            }
+        };
+        Object uid = f.doCommand(p -> p.appenduid(folderName, null, null, literal));
+        if (!(uid instanceof AppendUID a)) {
+            throw new MessagingException("server did not report the APPENDUID (UIDPLUS) for " + folderName);
+        }
+        return a.uid;
+    }
+
     /** The complete RFC 822 source of a message (fetched without setting \Seen). */
     public String fetchRaw(String folder, long uid) throws MessagingException, IOException {
         IMAPFolder f = (IMAPFolder) store.getFolder(folder);
