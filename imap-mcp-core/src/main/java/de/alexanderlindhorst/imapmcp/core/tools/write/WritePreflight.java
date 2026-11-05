@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Steps 2 to 5 of the bulk write check order (SPEC 4 "v2 write contract"), with zero IMAP I/O and no lease: the
@@ -58,6 +59,16 @@ public final class WritePreflight {
      *                     role target, which is checked after its resolution)
      */
     public Result check(ToolCallContext ctx, String account, List<String> handles, String targetFolder) {
+        return check(ctx, account, handles, targetFolder, null);
+    }
+
+    /**
+     * @param accountGate checks that come right after the read-only check and before the handles, with no I/O
+     *                    (purge_messages: {@code purge_disabled}, {@code confirmation_unavailable}); returns the
+     *                    refusal or null; may be null
+     */
+    public Result check(ToolCallContext ctx, String account, List<String> handles, String targetFolder,
+            Function<ResolvedAccount, ToolError> accountGate) {
         Objects.requireNonNull(handles, "handles");
         String rid = ctx.requestId();
         ResolvedAccount resolved;
@@ -69,6 +80,12 @@ public final class WritePreflight {
         }
         if (resolved.account().readOnly()) {
             return new Result.Failed(ToolError.permissionDenied(PermissionReason.ACCOUNT_READ_ONLY, rid));
+        }
+        if (accountGate != null) {
+            ToolError refusal = accountGate.apply(resolved);
+            if (refusal != null) {
+                return new Result.Failed(refusal);
+            }
         }
         List<Item> items = new ArrayList<>(handles.size());
         for (int i = 0; i < handles.size(); i++) {

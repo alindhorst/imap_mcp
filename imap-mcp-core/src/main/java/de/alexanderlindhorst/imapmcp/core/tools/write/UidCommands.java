@@ -105,6 +105,31 @@ public final class UidCommands {
     }
 
     /**
+     * The purge post-check (SPEC 5.4): one read-only {@code UID FETCH <set> (UID)}; returns those of {@code uids}
+     * that are still in the selected folder. Not a mutation, but it lives here because it must see the answer after
+     * the UID EXPUNGE without the message cache, and only this class sends raw commands.
+     */
+    public static java.util.Set<Long> uidFetchPresent(IMAPFolder folder, Collection<Long> uids)
+            throws MessagingException {
+        String set = uidSet(uids);
+        requireWritable(folder);
+        Result r = ImapLease.timedWrite("uid_fetch", () -> send(folder, "UID FETCH " + set + " (UID)", null));
+        if (!r.ok()) {
+            throw new MessagingException("UID FETCH refused"); // no server text
+        }
+        java.util.Set<Long> present = new TreeSet<>();
+        for (Response resp : r.responses()) {
+            if (resp instanceof org.eclipse.angus.mail.imap.protocol.FetchResponse fr) {
+                org.eclipse.angus.mail.imap.protocol.UID u = fr.getItem(org.eclipse.angus.mail.imap.protocol.UID.class);
+                if (u != null) {
+                    present.add(u.uid);
+                }
+            }
+        }
+        return present;
+    }
+
+    /**
      * CREATE on the lease's own connection. Only while no folder is open on the lease ({@code lease.store()}
      * refuses otherwise with IllegalStateException): with a folder open, Angus would log in a second connection.
      */

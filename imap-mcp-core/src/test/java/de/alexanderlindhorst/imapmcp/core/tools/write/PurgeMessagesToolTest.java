@@ -652,9 +652,13 @@ class PurgeMessagesToolTest {
             }
         };
         rebuild();
+        String h = handle(T1, "Trash", uids("Trash").get(0));
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-c");
         trace.list.clear();
-        Map<String, Object> out = ok(call(T1, args(T1, List.of(handle(T1, "Trash", uids("Trash").get(0))))));
-        assertThat(results(out).get(0)).containsEntry("status", "not_attempted");
+        // the cancel also runs the lease's hooks, so the result is an error or a not_attempted item; the executor
+        // discards either and reports the plain TIMEOUT. What matters: no mutation mark, no mutating command.
+        handler.handle(ctx, args(T1, List.of(h)));
+        assertThat(ctx.mutationStarted()).isFalse();
         assertThat(wire()).doesNotContainPattern("(?m)^\\S+ (UID )?(STORE|EXPUNGE)\\b");
         assertThat(uids("Trash")).hasSize(3);
     }

@@ -243,6 +243,11 @@ public final class BulkResult {
         }
     }
 
+    /** The purge {@code confirmation} value; null for the other tools. */
+    public String confirmation() {
+        return confirmation;
+    }
+
     public Kind kind() {
         return kind;
     }
