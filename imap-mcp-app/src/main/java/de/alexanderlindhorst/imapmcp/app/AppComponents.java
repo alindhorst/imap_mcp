@@ -37,9 +37,9 @@ import de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.ElicitingPurgeConfirmation;
 import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
 import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
-import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeConfirmation;
 import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.WriteCallLog;
@@ -235,9 +235,10 @@ public final class AppComponents implements AutoCloseable {
             }
 
             if (purge) {
-                // T4 supplies the elicitation-backed confirmation; until then no session can confirm (SPEC 4)
+                // Consent only from the user's answer to an MCP elicitation (SPEC 4); a session whose client cannot
+                // elicit gets confirmation_unavailable.
                 tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(new WritePreflight(account, locator),
-                        leases, clock, PurgeConfirmation.UNAVAILABLE));
+                        leases, clock, new ElicitingPurgeConfirmation(clock)));
             }
 
             metrics.start();
