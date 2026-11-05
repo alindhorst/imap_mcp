@@ -116,6 +116,15 @@ class LoggingBootstrapTest {
         assertThat(log).contains("TRACE-LOGGER-DEBUG").doesNotContain("OTHER-DEBUG");
     }
 
+    /** SPEC 5.6: the purge audit line is written at INFO even when the root level is higher. */
+    @Test
+    void auditLoggerStaysInfoWhileRootIsWarn() throws Exception {
+        Path dir = tmp.resolve("logs");
+        Run r = fork("audit", dir, Map.of("IMAP_MCP_LOG_LEVEL", "WARN"), List.of());
+        assertThat(r.exit()).as(r.stderr()).isZero();
+        assertThat(logText(dir)).contains("AUDIT-INFO").doesNotContain("OTHER-INFO");
+    }
+
     @Test
     void invalidLevelFallsBackToInfo() throws Exception {
         Path dir = tmp.resolve("logs");

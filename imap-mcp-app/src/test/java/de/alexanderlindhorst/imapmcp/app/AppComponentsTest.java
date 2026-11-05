@@ -200,6 +200,35 @@ class AppComponentsTest {
     }
 
     @Test
+    void purgeToolIsRegisteredInStdioWithAPurgeAccountAndNotInHttpLocalOrWithout() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppConfig purge = config("env:MAIL_PW", PURGE);
+        List<String> all = new ArrayList<>(TOOLS);
+        all.addAll(WRITE_TOOLS);
+        List<String> withPurge = new ArrayList<>(all);
+        withPurge.add("purge_messages");
+        assertThat(create(purge, NO_RUNNER).statefulToolSpecs()).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(withPurge);
+        assertThat(create(purge, NO_RUNNER, Map.of("MAIL_PW", "pw"), AppComponents.Mode.HTTP_LOCAL)
+                .statefulToolSpecs()).extracting(s -> s.tool().name()).containsExactlyElementsOf(all);
+        assertThat(create(config("env:MAIL_PW"), NO_RUNNER).statefulToolSpecs()).extracting(s -> s.tool().name())
+                .containsExactlyElementsOf(all);
+    }
+
+    @Test
+    void purgeToolAnnotationsAndSchemasReachTheMcpLayer() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        var spec = create(config("env:MAIL_PW", PURGE), NO_RUNNER).statefulToolSpecs().stream()
+                .filter(s -> s.tool().name().equals("purge_messages")).findFirst().orElseThrow();
+        McpSchema.ToolAnnotations a = spec.tool().annotations();
+        assertThat(a).extracting(McpSchema.ToolAnnotations::readOnlyHint, McpSchema.ToolAnnotations::destructiveHint,
+                McpSchema.ToolAnnotations::idempotentHint, McpSchema.ToolAnnotations::openWorldHint)
+                .containsExactly(false, true, true, true);
+        assertThat(spec.tool().outputSchema()).isNotEmpty();
+        assertThat(spec.tool().description()).contains("This cannot be undone.");
+    }
+
+    @Test
     void stdioWithPurgeRequiresADeadlineOfAtLeast60Seconds() throws IOException {
         AppConfig short45 = config("env:MAIL_PW", PURGE + "tools:\n  deadline: 45s\n");
         assertThatThrownBy(() -> create(short45, NO_RUNNER)).isInstanceOf(AppStartupException.class)
