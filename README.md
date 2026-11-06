@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize mail in IMAP mailboxes. Changes are reversible, except the gated permanent deletion from Trash that the user confirms each time. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
-> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`, `stdio` only), with `stdio` and `http-local`. `http-public` and the later phases are not implemented; see "Scope by phase".
+> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`; `stdio`, and `http-public` with `purge.enabled`), with `stdio` and `http-local`. `http-public` (v3b) is available as described below; the linking surface follows; see "Scope by phase".
 
 ## Tools
 
@@ -18,7 +18,7 @@ Twelve tools; the five v2 tools are write tools and are not listed when every ac
 - `copy_messages`: copies up to 100 messages into one folder and returns the new handles; write; refused on `readOnly` accounts.
 - `delete_messages`: up to 100 messages; moves to Trash, not a permanent delete; write; refused on `readOnly` accounts.
 - `create_folder`: creates a folder (an existing one is success); write; refused on `readOnly` accounts.
-- `purge_messages`: permanently deletes up to 100 messages from the Trash folder, Trash only, and cannot be undone; only for accounts with `allowPurge`, in `stdio` only, and the user confirms each call (or allows it for the session).
+- `purge_messages`: permanently deletes up to 100 messages from the Trash folder, Trash only, and cannot be undone; only for accounts with `allowPurge`, in `stdio` (and in `http-public` when the operator enables `purge.enabled`, see below), and the user confirms each call (or allows it for the session).
 - `download_attachment`: saves one attachment as a new file in `tools.download.dir`, never overwriting; registered only when `tools.download.dir` is set; allowed on `readOnly` accounts (it does not change the mailbox).
 
 ## Documentation
@@ -75,9 +75,9 @@ The same jar runs in two modes in v2 (see SPEC section 2):
 |---|---|---|
 | `stdio` (dev, single user) | Claude Code / Desktop spawn the process | MCP client config with `java -jar ... --mode stdio` |
 | `http-local` (single user, container) | Long-running local server, warm JVM | `http://127.0.0.1:<port>/mcp` with a bearer token |
-| `http-public` (production, multi-tenant) | Not implemented; planned for phase v3 | OAuth 2.1 |
+| `http-public` (production, multi-tenant) | Behind a TLS reverse proxy; accounts, credentials and tenants in Postgres | OAuth 2.1 resource server (JWT access tokens) |
 
-The mode comes from `--mode stdio|http-local` (fallback env `IMAP_MCP_MODE`). Without a mode the jar prints a usage text to stderr and exits with 2.
+The mode comes from `--mode stdio|http-local|http-public` (fallback env `IMAP_MCP_MODE`). Without a mode the jar prints a usage text to stderr and exits with 2.
 
 ### Configuration
 
@@ -252,7 +252,7 @@ tools:
 ```
 
 - `allowPurge: true` (default `false`) registers `purge_messages`. An account without it refuses the tool with `PERMISSION_DENIED` (`purge_disabled`). `allowPurge: true` together with `readOnly: true` fails startup. `list_accounts` shows the setting as `allow_purge`.
-- `purge_messages` is registered in `stdio` only and not available in `http-local` (it needs a server that can ask the client a question). While `http.stateful` is `false`, an `allowPurge` account in `http-local` only gives a startup warning, so one config file serves both modes.
+- `purge_messages` is registered in `stdio` and over the stateful HTTP transport (`http-local` with `http.stateful: true`; `http-public` only with `purge.enabled` and `http.stateful`). Without `http.stateful` it is not available in `http-local` (it needs a server that can ask the client a question), and an `allowPurge` account there only gives a startup warning, so one config file serves both modes.
 - `http.stateful: true` (default `false`) lets `http-local` register `purge_messages` too: the server then runs the stateful Streamable HTTP transport (`GET`, `POST` and `DELETE` on `/mcp`, each through the same Host, Origin and token checks) and the confirmation works as in `stdio`, on the call's event stream. Every MCP session is bound to the principal it was issued to (here the one fixed local principal); a request with an unknown session id gets `404` and the client initializes again. At most 10 sessions per principal (the least recently used is replaced), 1000 per server (`503` with `Retry-After` beyond that), 30 minutes idle. A session approval belongs to its session and ends with it; the decline cooldown stays per account. A reverse proxy in front must keep its read timeout above `tools.deadline`, and `tools.deadline` must be at least 60 s while `purge_messages` is registered.
 - Needs the server extension UIDPLUS (`UNSUPPORTED` otherwise). Only the given UIDs are expunged; other `\Deleted` messages in Trash are never touched. A repeat reports `already_gone`.
 - Confirmation by MCP elicitation: the client shows the user a fixed dialog ("Permanently delete 2 messages from the Trash folder ... of account ...? This cannot be undone.") with a checkbox "Allow for this session". Only the user can answer it; no tool argument can. The dialog contains no subject, sender or file name. A client without elicitation support gets `confirmation_unavailable` and nothing is deleted. Decline, cancel, an unreadable answer, an error or no answer are `not_confirmed` with `details.elicitation` (`declined`, `cancelled`, `invalid_answer`, `error`, `timeout`); after a decline or cancel, further calls on that account are refused for 60 s without a dialog (`recently_declined`).
@@ -383,7 +383,7 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 - Email content is untrusted input (possible prompt injection) and is returned as labeled data.
 - Write tools are enabled by default and make only reversible changes. `delete_messages` moves to Trash and never deletes permanently; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
 - Set `readOnly: true` on every account the agent must never change.
-- Permanent deletion exists only as `purge_messages`: off unless an account has `allowPurge: true`, Trash only, `stdio` only, and the user confirms each call in the client.
+- Permanent deletion exists only as `purge_messages`: off unless an account has `allowPurge: true`, Trash only, `stdio` or (`http-public` with `purge.enabled`), and the user confirms each call in the client.
 - MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
 - Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
 
@@ -444,11 +444,49 @@ Every test is skipped, with a reason, when its credentials are not set.
 
 ### http-public
 
-Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Postgres). Not available yet. See SPEC sections 3 and 5.3.
+The multi-tenant mode for a hosted deployment (what a Claude connector needs): `java -jar imap-mcp.jar --mode http-public --config <file>`. This server is an OAuth 2.1 resource server only; the identity provider (for example Keycloak) is separate and must put the resource URI into the access token's `aud` claim (RFC 8707). Mail accounts are linked per user in the linking surface, not in the config file; a configured `accounts` list fails startup.
+
+```yaml http-public
+db:
+  url: jdbc:postgresql://db.internal:5432/imapmcp   # no password in the URL
+  username: imapmcp
+  password: env:DB_PASSWORD
+oauth:
+  issuer: https://idp.example.com/realms/mail        # https; keys are discovered from <issuer>/.well-known/openid-configuration
+  resource: https://mail.example.com/mcp             # the canonical resource URI, expected in the token's aud
+  requiredRole: imap-mcp-user                        # IdP role needed to get a tenant (or allowWithoutRole: true for development)
+public:
+  baseUrl: https://mail.example.com                  # the linking surface lives at <baseUrl>/accounts
+security:
+  handleKeys:                                        # explicit and identical on every replica; ids 0 to 255
+    - id: 1
+      key: env:HANDLE_KEY_1                          # base64url (no padding) of 32 random bytes
+  signingKeyId: 1
+ssrf:
+  allowedHosts: ["imap.example.com", "*.mail.example.net"]   # IMAP hosts a user may link
+kms:
+  provider: local                                    # credentials are AES-256-GCM encrypted; the key is wrapped by a KEK
+  local:
+    currentKekId: kek-1
+    keks:
+      - id: kek-1
+        key: env:KEK_1                               # base64url (no padding) of 32 random bytes
+```
+
+- **Startup fails** (one line on stderr naming the config key, never a value) without a database, without an explicit key ring, with an empty `ssrf.allowedHosts` unless `ssrf.allowAnyPublicHost: true`, with a non-https issuer or resource, with `tools.download.dir`, `maxBytes` or `displayDir`, with `http.token`, with a password in `db.url`, and with unknown keys. It also logs one fingerprint (12 hex characters) per handle key id and, with `kms.provider: local`, per KEK id, so replicas can be compared; key material is never logged.
+- **Reverse proxy:** terminate TLS there and forward `Host`. `http.allowedHosts` defaults to the host of `public.baseUrl`; bind to a non-loopback address only with `http.allowNonLoopbackBind: true` (or `IMAP_MCP_HTTP_ALLOW_NON_LOOPBACK_BIND`). With `http.stateful: true` (required for `purge.enabled`) a load balancer needs affinity on the `Mcp-Session-Id` header: the user's answer to the purge confirmation is a POST that must reach the replica whose call is waiting, and there is no shared session registry, so a request routed elsewhere gets `404` and the client initializes again (session approvals are lost). The proxy's read timeout must exceed `tools.deadline`, because the call's event stream stays open while the user answers. `purge_messages` stays off (`purge.enabled: false`) until the owner's smoke test with the Claude connector has passed (see the v3b smoke checklist).
+- **Discovery and checks:** `GET /.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` serve the RFC 9728 metadata; a missing or invalid token gets `401` with a `WWW-Authenticate` challenge naming it. The scope `imap-mcp:read` is required for every request (`403 insufficient_scope` otherwise); `imap-mcp:write` is checked per call for the write tools. Tokens are accepted in the `Authorization` header only.
+- **Tenants:** a user who is not yet known sees no accounts (`list_accounts` returns an empty list and the `link_url`); no MCP request creates a tenant. A tenant is created at the first login of the linking surface, and only for users with `oauth.requiredRole`.
+- **Tools:** one fixed list for everybody (read tools, `download_attachment` with the file embedded in the result, and the five write tools). `purge_messages` is registered only with `purge.enabled` (which requires `http.stateful`). Restrictions are refusals at call time: `account_read_only`, `insufficient_scope`, and `relink_required` (an account whose password was refused three times in a row; `list_accounts` shows it as `needs_relink` with the `link_url`).
+- **Purge over HTTP (decision D8):** `purge.enabled` (default `false`) and `http.stateful` (default `false`; `purge.enabled` requires it) turn on `purge_messages` in `http-public`. Enable `purge.enabled` only after the owner's smoke test with the Claude connector (see the v3b smoke checklist); the per-account `allowPurge` switch of the linking surface can only be set while `purge.enabled` is true. While it is false, `purge_messages` is not registered and every account refuses it as `purge_disabled`.
+- **Audit and retention:** every call of a write tool leaves a row in the database (reference hashes only, never folder names, UIDs or message handles); rows are deleted after 180 days. If the audit row cannot be written, the call fails and nothing is changed.
+- **Egress:** the server blocks private and loopback addresses and any host outside `ssrf.allowedHosts`, and only connects to port 993 (implicit TLS) or 143 (STARTTLS). Add an egress network policy as well.
+- **Key wrapping (`kms.provider`):** `local` (shown above; the KEK comes from a reference, startup logs a WARN, for self-hosting and tests) or `vault` (HashiCorp Vault Transit, the production choice). With `kms.provider: vault` the keys are `kms.vault.address` (https; plain http only with `kms.vault.allowInsecureHttp: true`; the key `kms.vault.allowInsecureHttp` logs a WARN at startup when the address really is http, and is for tests), `kms.vault.transitMount` (default `transit`), `kms.vault.keyName`, `kms.vault.auth.method` (`token` with `kms.vault.auth.token`, or `approle` with `kms.vault.auth.roleId`, `secretId` and optionally `path`; all values are secret references), `kms.vault.caCert` (absolute path of a PEM bundle that replaces the JDK trust store for Vault) and `kms.vault.requestTimeout` (1s to 30s, default 5s). `kms.local` and `kms.vault` are mutually exclusive. The Transit key must exist with type `aes256-gcm96`; startup checks it and fails otherwise. The Vault policy needs `update` on `<transitMount>/encrypt/<keyName>` and `<transitMount>/decrypt/<keyName>` and `read` on `<transitMount>/keys/<keyName>` (without the read capability startup fails with `http_403`); it must not grant `create`, so that a mistyped key name cannot silently create a key.
+- **Key rotation:** for the handle keys, add a key under a new id in `security.handleKeys`, switch `signingKeyId`, restart every replica, and remove the old id only when nothing refers to it any more (SPEC 5.4). Rotation with `kms.provider: local`: add the KEK under a new id, switch `currentKekId`, restart every replica, and remove the old id only when no credential row carries it (SPEC 5.7). With `kms.provider: vault` no restart is needed: rotate the Transit key in Vault (`<transitMount>/keys/<keyName>/rotate`); new wraps use the latest version and older versions keep decrypting.
 
 ## Scope by phase
 
-v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3a gated deletion from Trash (`purge_messages`, `stdio` only) and `download_attachment`, v3b public multi-tenant mode. Details in SPEC sections 3 and 4.
+v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3a gated deletion from Trash (`purge_messages`, `stdio`; v3b: also `http-public` with `purge.enabled`) and `download_attachment`, v3b public multi-tenant mode. Details in SPEC sections 3 and 4.
 
 ## Coverage
 

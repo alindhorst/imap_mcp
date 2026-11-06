@@ -46,8 +46,9 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
     public record Ssrf(List<String> allowedHosts, boolean allowAnyPublicHost, List<String> extraBlockedCidrs) {
     }
 
-    /** {@code kms.*} (D6); only the {@code local} provider is implemented in this build. */
-    public record Kms(String provider, String currentKekId, List<Kek> keks) {
+    /** {@code kms.*} (D6): {@code local} (keks) or {@code vault} (Transit). */
+    public record Kms(String provider, String currentKekId, List<Kek> keks,
+            de.alexanderlindhorst.imapmcp.store.crypto.VaultConfig vault) {
     }
 
     public record Kek(String id, SecretRef key) {
