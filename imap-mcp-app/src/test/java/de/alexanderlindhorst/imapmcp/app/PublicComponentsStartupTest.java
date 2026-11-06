@@ -135,9 +135,11 @@ class PublicComponentsStartupTest {
     }
 
     @Test
-    void theStatefulTransportIsRefusedUntilItIsWired() {
+    void theStatefulTransportIsNoLongerRefusedAtStartup() {
+        // the wiring now goes on to open the database (unreachable here), which is the failure that is reported
         String yaml = BASE + "http:\n  stateful: true\n";
-        assertThatThrownBy(() -> start(yaml, env())).hasMessageContaining("http.stateful");
+        assertThatThrownBy(() -> start(yaml, env())).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("database").hasMessageNotContaining("not available in this build");
     }
 
     @Test
