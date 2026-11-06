@@ -41,6 +41,9 @@
     <reactor.version>3.7.19</reactor.version>
     <angus.version>2.0.5</angus.version>
     <slf4j.version>2.0.20</slf4j.version>
+    <hikaricp.version>7.1.0</hikaricp.version>
+    <flyway.version>13.12.1</flyway.version>
+    <pgjdbc.version>42.7.14</pgjdbc.version>
   </properties>
 
   <dependencyManagement>
@@ -164,6 +167,28 @@
         <groupId>org.jsoup</groupId>
         <artifactId>jsoup</artifactId>
         <version>1.23.2</version>
+      </dependency>
+
+      <!-- Persistence (v3b, imap-mcp-store only) -->
+      <dependency>
+        <groupId>com.zaxxer</groupId>
+        <artifactId>HikariCP</artifactId>
+        <version>${hikaricp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-core</artifactId>
+        <version>${flyway.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-database-postgresql</artifactId>
+        <version>${flyway.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>${pgjdbc.version}</version>
       </dependency>
 
       <!-- Test stack (junit-jupiter, mockito-*, testcontainers* versions come from the BOMs) -->
