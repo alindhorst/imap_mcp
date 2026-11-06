@@ -311,4 +311,17 @@ class JdbcWebStoresIT {
         assertThatThrownBy(() -> pending.begin("n", "v")).isInstanceOf(OidcPendingStore.LimitReachedException.class);
         assertThat(count("oidc_pending")).isEqualTo(5);
     }
+
+    @Test
+    void theTenantProvisionerFindsCreatesAndReportsDisabledTenants() throws Exception {
+        var provisioner = new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantProvisioner(
+                new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory(db.dataSource()));
+
+        assertThat(provisioner.find("https://idp.example", "prov-1")).isEmpty();
+        var created = provisioner.create("https://idp.example", "prov-1");
+        assertThat(created.disabled()).isFalse();
+        assertThat(provisioner.find("https://idp.example", "prov-1").orElseThrow().tenantId())
+                .isEqualTo(created.tenantId());
+        assertThat(provisioner.create("https://idp.example", "prov-1").tenantId()).isEqualTo(created.tenantId());
+    }
 }

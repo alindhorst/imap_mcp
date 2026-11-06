@@ -11,6 +11,9 @@ public final class ItImages {
     public static final String POSTGRES =
             "postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
 
+    public static final String KEYCLOAK =
+            "quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007";
+
     private ItImages() {
     }
 }

@@ -58,7 +58,15 @@ public final class HttpOidcProvider implements OidcProvider {
         return new HttpOidcProvider(config, keys, false);
     }
 
-    /** Test seam: loopback {@code http} endpoints. */
+    /**
+     * With {@code allowInsecureHttp} the discovery document may name {@code http} endpoints. For tests against a
+     * local identity provider only; the application never passes {@code true}.
+     */
+    public static HttpOidcProvider create(WebConfig config, JWKSource<SecurityContext> keys,
+            boolean allowInsecureHttp) {
+        return new HttpOidcProvider(config, keys, allowInsecureHttp);
+    }
+
     static HttpOidcProvider forTest(WebConfig config, JWKSource<SecurityContext> keys, boolean allowHttp) {
         return new HttpOidcProvider(config, keys, allowHttp);
     }
