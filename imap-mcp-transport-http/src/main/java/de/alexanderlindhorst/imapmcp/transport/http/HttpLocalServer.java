@@ -188,6 +188,14 @@ public final class HttpLocalServer {
         }
 
         public HttpLocalServer build() {
+            // http-public wiring invariant (SPEC 5.3): a token filter that validates JWTs without the filter that
+            // maps the principal to a tenant would leave the AccountContext unset, and the reverse is meaningless
+            if (bearerFilter instanceof JwtTokenFilter && principalFilter == null) {
+                throw new IllegalStateException("a JwtTokenFilter needs a principalFilter");
+            }
+            if (principalFilter != null && bearerFilter == null) {
+                throw new IllegalStateException("a principalFilter needs a token filter before it");
+            }
             return new HttpLocalServer(this);
         }
     }
