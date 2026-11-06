@@ -152,6 +152,25 @@ final class ArchitectureRules {
             .orShould().callConstructorWhere(FILE_STREAM_CONSTRUCTOR)
             .as("file creation, writes, links, moves and deletes may only happen in the download file sink");
 
+    /** The classes that may name the extra content block types: the outcome itself, its adapter and the one tool. */
+    private static final DescribedPredicate<JavaClass> EXTRA_BLOCK_USERS =
+            new DescribedPredicate<>("are ToolOutcome, McpToolAdapter or DownloadAttachmentTool") {
+                @Override
+                public boolean test(JavaClass c) {
+                    String n = c.getName();
+                    return n.equals(ROOT + ".core.tool.ToolOutcome") || n.startsWith(ROOT + ".core.tool.ToolOutcome$")
+                            || n.equals(ROOT + ".core.mcp.McpToolAdapter")
+                            || n.equals(ROOT + ".core.tools.DownloadAttachmentTool")
+                            || n.startsWith(ROOT + ".core.tools.DownloadAttachmentTool$");
+                }
+            };
+
+    static final ArchRule EXTRA_CONTENT_BLOCKS_ONLY_FROM_DOWNLOAD_ATTACHMENT = noClasses()
+            .that(not(EXTRA_BLOCK_USERS))
+            .should().dependOnClassesThat().haveFullyQualifiedName(ROOT + ".core.tool.ToolOutcome$ContentBlock")
+            .orShould().dependOnClassesThat().haveFullyQualifiedName(ROOT + ".core.tool.ToolOutcome$EmbeddedResource")
+            .as("only download_attachment may produce extra content blocks (SPEC 4)");
+
     private static DescribedPredicate<JavaClass> haveFullyQualifiedNameIn(String... names) {
         Set<String> n = Set.of(names);
         return new DescribedPredicate<>("have a fully qualified name in " + n) {

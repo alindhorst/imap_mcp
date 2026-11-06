@@ -43,6 +43,9 @@ class ArchitectureRulesTest {
     @ArchTest
     static final ArchRule fileWritesOnlyInDownloadSink = ArchitectureRules.FILE_WRITES_ONLY_IN_DOWNLOAD_SINK;
 
+    @ArchTest
+    static final ArchRule extraContentBlocksOnlyFromDownloadAttachment = ArchitectureRules.EXTRA_CONTENT_BLOCKS_ONLY_FROM_DOWNLOAD_ATTACHMENT;
+
     /** #143: a renamed package must fail the rules instead of letting them pass on an empty class set. */
     @Test
     void rulesFailOnAnEmptyClassSet() {
@@ -130,5 +133,11 @@ class ArchitectureRulesTest {
                 "createFile", "createLink", "createSymbolicLink", "createTempFile", "createDirectory",
                 "createDirectories", "move(", "copy(", "delete(", "deleteIfExists", "newByteChannel", "FileChannel.open",
                 "FileOutputStream.<init>");
+    }
+
+    /** #305: extra content blocks only from download_attachment. */
+    @Test
+    void ruleHDetectsExtraContentBlocksOutsideDownloadAttachment() {
+        assertDetects(extraContentBlocksOnlyFromDownloadAttachment, "ExtraBlockFixture", "EmbeddedResource");
     }
 }
