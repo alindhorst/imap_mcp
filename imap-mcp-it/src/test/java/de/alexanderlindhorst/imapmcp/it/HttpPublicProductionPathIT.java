@@ -40,8 +40,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The production {@code PublicComponents.create()} path (no test seam): the SSRF policy of the configuration refuses
- * an allowlisted host name that resolves to a loopback address, and no connection is made (SPEC 5.3).
+ * The production {@code PublicComponents.create()} path (no test seam): the SSRF policy of the configuration refuses a
+ * host outside {@code ssrf.allowedHosts} before any name resolution or connection (SPEC 5.3). The policy needs at
+ * least two labels, so {@code localhost} cannot be allowlisted at all.
  */
 class HttpPublicProductionPathIT {
 
@@ -85,7 +86,7 @@ class HttpPublicProductionPathIT {
                       key: env:HK
                   signingKeyId: 1
                 ssrf:
-                  allowedHosts: ["localhost"]
+                  allowedHosts: ["imap.example.com"]
                 kms:
                   provider: local
                   local:
@@ -117,10 +118,10 @@ class HttpPublicProductionPathIT {
     }
 
     @Test
-    void anAllowlistedNameThatResolvesToLoopbackIsAddressBlockedWithoutAConnection() throws Exception {
+    void aHostOutsideTheAllowlistIsAddressBlockedWithoutAConnectionOnTheProductionPath() throws Exception {
         TenantId tenant = components.tenantDirectory().create(ISSUER, "dave").tenantId();
         var accounts = new JdbcAccountRepository(components.database().dataSource());
-        ResolvedAccount a = accounts.create(tenant, new NewAccount("Local", null, "localhost", 993,
+        ResolvedAccount a = accounts.create(tenant, new NewAccount("Elsewhere", null, "other.example.net", 993,
                 MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "dave", true, false));
         components.credentials().insert(tenant, a.account().id(), 1, "pw".toCharArray());
         long now = System.currentTimeMillis();
