@@ -279,12 +279,18 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
 
     /** The token lacks the write scope (SPEC 4, 5.3, D3); {@code scope} is the missing one. Not retryable. */
     public static ToolError insufficientScope(String scope, String requestId) {
-        throw new UnsupportedOperationException();
+        String hint = "The access token lacks the permission " + scope + ". Re-authorize the connector with that "
+                + "permission; do not retry with the same token.";
+        return of(ErrorCode.PERMISSION_DENIED, "The change is not permitted: the token lacks a required scope.", hint,
+                detail("reason", PermissionReason.INSUFFICIENT_SCOPE.wire, "scope", scope), requestId);
     }
 
     /** The account needs a re-link (SPEC 5.3); {@code linkUrl} may be null. No connection was attempted. */
     public static ToolError relinkRequired(String linkUrl, String requestId) {
-        throw new UnsupportedOperationException();
+        String hint = "The mailbox login was refused repeatedly. Re-link the account in the linking surface"
+                + (linkUrl == null ? "" : " (details.link_url)") + ", then retry. Do not retry before.";
+        return of(ErrorCode.AUTH_FAILED, "The account must be re-linked; no connection was attempted.", hint,
+                detail("reason", "relink_required", "link_url", linkUrl), requestId);
     }
 
     /** purge_messages on an account without {@code allowPurge} (SPEC 4 check order step 3). */

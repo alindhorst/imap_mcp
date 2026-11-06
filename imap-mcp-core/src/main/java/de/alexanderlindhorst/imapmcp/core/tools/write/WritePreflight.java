@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError.PermissionReason;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
 import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
 import de.alexanderlindhorst.imapmcp.core.tools.MessageLocator;
 import java.util.ArrayList;
@@ -77,6 +78,9 @@ public final class WritePreflight {
                 return new Result.Failed(nf.error());
             }
             case AccountArgument.Result.Ok ok -> resolved = ok.account();
+        }
+        if (!ctx.accountContext().hasScope(Scopes.WRITE)) { // D3: per call, before any I/O, after the account is known
+            return new Result.Failed(ToolError.insufficientScope(Scopes.WRITE, rid));
         }
         if (resolved.account().readOnly()) {
             return new Result.Failed(ToolError.permissionDenied(PermissionReason.ACCOUNT_READ_ONLY, rid));
