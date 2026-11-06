@@ -73,6 +73,7 @@ class JdbcCredentialStoreIT {
     };
     private ListAppender<ILoggingEvent> logs;
     private Logger logger;
+    private Level previousLevel;
     private JdbcCredentialStore store;
     private LogIds logIds;
     private CredentialCipher cipher;
@@ -106,12 +107,14 @@ class JdbcCredentialStoreIT {
         logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
-        logger.setLevel(Level.DEBUG);
+        previousLevel = logger.getLevel();
+        logger.setLevel(Level.DEBUG); // the test classpath configures root OFF
     }
 
     @AfterEach
     void detach() {
         logger.detachAppender(logs);
+        logger.setLevel(previousLevel); // leaves nothing behind for the ITs that run after this one
     }
 
     private static TenantId newTenant() throws SQLException {
@@ -351,19 +354,19 @@ class JdbcCredentialStoreIT {
     }
 
     @Test
-    void anUnavailableKeyServiceIsNeitherLoggedNorCountedAsADecryptFailure() throws Exception {
+    void anUnavailableKeyServiceGivesItsOwnWarnLineAndMetricNeverTheDecryptFailureLine() throws Exception {
         TenantId t = newTenant();
         AccountId a = newAccount(t, "acct-down");
         store.insert(t, a, 1, "pw".toCharArray());
         KeyWrapper down = new KeyWrapper() {
             @Override
             public WrappedKey wrap(byte[] dek, String tenantId, String accountId) {
-                throw new KeyServiceUnavailableException();
+                throw new KeyServiceUnavailableException("vault", "http_503");
             }
 
             @Override
             public byte[] unwrap(String kekId, byte[] wrapped, String tenantId, String accountId) {
-                throw new KeyServiceUnavailableException();
+                throw new KeyServiceUnavailableException("vault", "http_503");
             }
         };
         JdbcCredentialStore downStore = new JdbcCredentialStore(db.dataSource(),
@@ -372,6 +375,14 @@ class JdbcCredentialStoreIT {
         assertThatThrownBy(() -> downStore.resolve(t, a)).isInstanceOf(KeyServiceUnavailableException.class);
 
         assertThat(logs.list).noneMatch(e -> e.getLevel() == Level.ERROR);
-        assertThat(operations).doesNotContain("credentials/decrypt_failure");
+        List<ILoggingEvent> warns = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        assertThat(warns).hasSize(1);
+        String text = warns.get(0).getFormattedMessage();
+        assertThat(text).contains(logIds.tenant(t.value())).contains(logIds.account(a.value()))
+                .contains("provider=vault").contains("class=http_503");
+        assertThat(text).doesNotContain(t.value()).doesNotContain(a.value());
+        assertThat(warns.get(0).getThrowableProxy()).isNull();
+        assertThat(operations).contains("credentials/key_service_unavailable")
+                .doesNotContain("credentials/decrypt_failure");
     }
 }

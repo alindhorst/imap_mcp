@@ -65,13 +65,15 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
 
     /** The in-memory approval of one account. The budget is the only mutable part, guarded by the instance. */
     private static final class Approval {
+        final String sessionId;
         final String trashName;
         final long uidValidity;
         final long uidNext;
         final Instant expiresAt;
         private int remaining = APPROVAL_BUDGET;
 
-        Approval(String trashName, TrashState state, Instant expiresAt) {
+        Approval(String sessionId, String trashName, TrashState state, Instant expiresAt) {
+            this.sessionId = sessionId;
             this.trashName = trashName;
             this.uidValidity = state.uidValidity();
             this.uidNext = state.uidNext();
@@ -93,6 +95,12 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         }
     }
 
+    private static final Duration SWEEP_INTERVAL = Duration.ofMinutes(1);
+
+    /** An approval is valid for one MCP session, one tenant and one account (SPEC 4, v3b). */
+    private record ApprovalKey(String sessionId, String tenant, String account) {
+    }
+
     private static final Map<String, Object> SCHEMA = Map.of("type", "object", "properties", Map.of(ALLOW_FOR_SESSION,
             Map.of("type", "boolean", "title", "Allow for this session", "description",
                     "Also allow permanent deletion of messages already in this Trash folder for the next 15 minutes, "
@@ -100,8 +108,10 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
 
     private final Clock clock;
     private final Map<String, Instant> declinedUntil = new ConcurrentHashMap<>();
-    private final Map<String, Approval> approvals = new ConcurrentHashMap<>();
+    private final Map<ApprovalKey, Approval> approvals = new ConcurrentHashMap<>();
     private final TrashStatus status;
+    private Instant nextSweep = Instant.EPOCH; // guarded by sweepLock
+    private final Object sweepLock = new Object();
 
     public ElicitingPurgeConfirmation(Clock clock) {
         this(clock, LIVE_STATUS);
@@ -124,8 +134,12 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
             return new Decision.Refused(ElicitationReason.ERROR);
         }
         Instant now = clock.instant();
+        sweepExpired(now);
         String key = ctx.accountContext().tenantId().value() + "/" + request.account().account().id().value();
-        Approval approval = approvals.get(key);
+        String sessionId = channel.sessionId();
+        ApprovalKey approvalKey = new ApprovalKey(sessionId, ctx.accountContext().tenantId().value(),
+                request.account().account().id().value());
+        Approval approval = approvals.get(approvalKey);
         if (approval != null && approval.covers(request, now)) {
             return new Decision.Confirmed(BulkResult.SESSION_APPROVAL);
         }
@@ -155,7 +169,7 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
                     yield new Decision.Refused(ElicitationReason.INVALID_ANSWER);
                 }
                 if (a.content() != null && Boolean.TRUE.equals(a.content().get(ALLOW_FOR_SESSION))) {
-                    ctx.onMutationBegun(() -> createApproval(key, request.trashName(), trashState));
+                    ctx.onMutationBegun(() -> createApproval(approvalKey, request.trashName(), trashState));
                 }
                 yield new Decision.Confirmed(BulkResult.ELICITED);
             }
@@ -166,9 +180,40 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         };
     }
 
-    private void createApproval(String key, String trashName, TrashState state) {
+    /**
+     * Session-end callback of the HTTP transport: the session's approvals are dropped with it (SPEC 4, v3b). A call
+     * still running when its session ends can create an approval afterwards (the approval is made when its mutation
+     * begins); nobody can use it, because the session id is gone, and it expires after 15 minutes.
+     */
+    public void sessionEnded(String sessionId) {
+        if (sessionId != null) {
+            approvals.values().removeIf(a -> a.sessionId.equals(sessionId));
+        }
+    }
+
+    /** Drops expired cooldowns and approvals, at most once a minute (SPEC 5.5, bounded maps). */
+    private void sweepExpired(Instant now) {
+        synchronized (sweepLock) {
+            if (now.isBefore(nextSweep)) {
+                return;
+            }
+            nextSweep = now.plus(SWEEP_INTERVAL);
+        }
+        declinedUntil.values().removeIf(until -> !now.isBefore(until));
+        approvals.values().removeIf(a -> !now.isBefore(a.expiresAt));
+    }
+
+    int cooldownCount() {
+        return declinedUntil.size();
+    }
+
+    int approvalCount() {
+        return approvals.size();
+    }
+
+    private void createApproval(ApprovalKey key, String trashName, TrashState state) {
         Instant expires = clock.instant().plus(APPROVAL_LIFETIME);
-        approvals.put(key, new Approval(trashName, state, expires));
+        approvals.put(key, new Approval(key.sessionId(), trashName, state, expires));
         PurgeAudit.approvalCreated(expires, APPROVAL_BUDGET);
     }
 

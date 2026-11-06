@@ -69,4 +69,32 @@ class AccountArgumentTest {
         ToolError other = ((AccountArgument.Result.NotFound) argument.resolve(ctx(A, "OTHER"), foreign)).error();
         assertThat(other.toMap().toString()).isEqualTo(expected.replace("RID", "OTHER"));
     }
+
+    static MailAccount relinkAccount(String id) {
+        return new MailAccount(new AccountId(id), "Label " + id, null, "127.0.0.1", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "u", new SecretRef("env:X"), false,
+                false, MailAccount.Auth.PASSWORD, MailAccount.Status.NEEDS_RELINK, 4);
+    }
+
+    @Test
+    void aNeedsRelinkAccountIsRefusedBeforeAnyIoWithTheLinkUrlAndStaysBoundForTheAudit() {
+        InMemoryAccountRepository r = new InMemoryAccountRepository(Map.of(A, List.of(relinkAccount("old"))));
+        AccountArgument arg = new AccountArgument(r, "https://mail.example.com/accounts");
+        ToolCallContext c = ctx(A, "r9");
+        AccountArgument.Result res = arg.resolve(c, handleOf(A, "old"));
+        ToolError e = ((AccountArgument.Result.NotFound) res).error();
+        assertThat(e.code()).isEqualTo(ErrorCode.AUTH_FAILED);
+        assertThat(e.details()).containsEntry("reason", "relink_required")
+                .containsEntry("link_url", "https://mail.example.com/accounts");
+        assertThat(e.toMap().toString()).contains("r9");
+    }
+
+    @Test
+    void aNeedsRelinkAccountOfAnotherTenantIsStillJustNotFound() {
+        InMemoryAccountRepository r = new InMemoryAccountRepository(Map.of(A, List.of(relinkAccount("old")),
+                B, List.of(account("two"))));
+        AccountArgument arg = new AccountArgument(r, "https://mail.example.com/accounts");
+        ToolError e = ((AccountArgument.Result.NotFound) arg.resolve(ctx(B, "r"), handleOf(A, "old"))).error();
+        assertThat(e.code()).isEqualTo(ErrorCode.ACCOUNT_NOT_FOUND);
+    }
 }

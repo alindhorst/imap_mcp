@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
  * removes whatever is left (the temporary file and a reservation) unless the file was published, so it belongs in a
  * {@code finally}. Links are never followed in the last path component. Nothing here logs a name or content.
  */
-public final class DownloadSink implements AutoCloseable {
+public final class DownloadSink implements DecodedSink, AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DownloadSink.class);
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -97,6 +97,7 @@ public final class DownloadSink implements AutoCloseable {
     }
 
     /** Appends decoded bytes. Beyond {@code maxBytes} the call fails with {@link DownloadTooLargeException}. */
+    @Override
     public void write(byte[] b, int off, int len) {
         if (written + len > directory.maxBytes()) {
             throw new DownloadTooLargeException();

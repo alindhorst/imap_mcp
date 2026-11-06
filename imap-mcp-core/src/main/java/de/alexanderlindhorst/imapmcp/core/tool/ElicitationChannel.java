@@ -10,6 +10,17 @@ import java.util.Map;
  */
 public interface ElicitationChannel {
 
+    /** The session id of channels without a transport session ({@code stdio}: one process, one session). */
+    String STDIO_SESSION = "stdio";
+
+    /**
+     * Identifies the MCP session the call belongs to; session approvals are keyed by it (SPEC 4, v3b). Never logged
+     * and never shown to the user.
+     */
+    default String sessionId() {
+        return STDIO_SESSION;
+    }
+
     /** The client declared form-mode elicitation (URL mode alone does not count). */
     boolean supportsFormMode();
 

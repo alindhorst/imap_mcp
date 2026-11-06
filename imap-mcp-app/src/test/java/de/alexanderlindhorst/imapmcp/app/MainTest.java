@@ -35,19 +35,23 @@ class MainTest {
     }
 
     @Test
-    void httpPublicIsNotAvailable() throws Exception {
-        try (AppProcess p = run(Map.of(), "--mode=http-public")) {
-            assertThat(p.exitCode()).isEqualTo(2);
-            assertThat(p.stderr()).contains("not available in this version");
+    void httpPublicDispatchesToItsLauncher() throws Exception {
+        // a missing config file is the launcher's startup error, not a dispatch error
+        try (AppProcess p = run(Map.of("IMAP_MCP_CONFIG", "/nonexistent/imap-mcp-config.yaml",
+                "IMAP_MCP_STATE_DIR", System.getProperty("java.io.tmpdir") + "/imap-mcp-main-test-state"),
+                "--mode=http-public")) {
+            assertThat(p.exitCode()).isEqualTo(1);
+            assertThat(p.stderr()).contains("startup failed").doesNotContain("not available");
             assertThat(p.stdoutRest()).isEmpty();
         }
     }
 
     @Test
-    void modeFallsBackToEnvironment() throws Exception {
-        try (AppProcess p = run(Map.of("IMAP_MCP_MODE", "http-public"))) {
-            assertThat(p.exitCode()).isEqualTo(2);
-            assertThat(p.stderr()).contains("not available in this version");
+    void modeHttpPublicFromTheEnvironmentDispatches() throws Exception {
+        try (AppProcess p = run(Map.of("IMAP_MCP_MODE", "http-public", "IMAP_MCP_CONFIG", "/nonexistent/c.yaml",
+                "IMAP_MCP_STATE_DIR", System.getProperty("java.io.tmpdir") + "/imap-mcp-main-test-state"))) {
+            assertThat(p.exitCode()).isEqualTo(1);
+            assertThat(p.stderr()).contains("startup failed");
         }
     }
 

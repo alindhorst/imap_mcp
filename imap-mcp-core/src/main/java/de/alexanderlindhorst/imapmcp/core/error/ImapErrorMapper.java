@@ -107,6 +107,10 @@ public final class ImapErrorMapper {
     }
 
     private static MappedError classify(Throwable t, String rid) {
+        if (t instanceof de.alexanderlindhorst.imapmcp.core.imap.pool.AccountNeedsRelinkException) {
+            // the link URL is added by the executor from the call's context; no connection exists to discard
+            return new MappedError(ToolError.relinkRequired(null, rid), false);
+        }
         if (t instanceof ServerBusyException) {
             return new MappedError(ToolError.serverBusy(rid), false);
         }

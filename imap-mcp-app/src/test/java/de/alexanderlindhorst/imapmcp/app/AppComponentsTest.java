@@ -680,4 +680,57 @@ class AppComponentsTest {
         c.close();
         assertThat(c.pool().destroyedCount()).isEqualTo(c.pool().createdCount());
     }
+
+    // v3b D-1 (#322): purge over stateful Streamable HTTP in http-local (O4 retrofit)
+
+    private static final String STATEFUL = "http:\n  stateful: true\n";
+
+    @Test
+    void purgeIsRegisteredInHttpLocalOnlyWithHttpStatefulAndAPurgeAccount() throws IOException {
+        AppConfig stateful = config("env:MAIL_PW", PURGE + STATEFUL);
+        AppConfig statefulNoPurge = config("env:MAIL_PW", STATEFUL);
+        AppConfig stateless = config("env:MAIL_PW", PURGE);
+        assertThat(AppComponents.purgeRegistered(stateful, AppComponents.Mode.HTTP_LOCAL)).isTrue();
+        assertThat(AppComponents.purgeRegistered(statefulNoPurge, AppComponents.Mode.HTTP_LOCAL)).isFalse();
+        assertThat(AppComponents.purgeRegistered(stateless, AppComponents.Mode.HTTP_LOCAL)).isFalse();
+        assertThat(AppComponents.purgeRegistered(stateful, AppComponents.Mode.STDIO)).isTrue();
+    }
+
+    @Test
+    void statefulHttpLocalRegistersPurgeInTheStatefulSpecsOnly() throws IOException {
+        GREEN_MAIL.setUser("user@localhost", "user", "pw");
+        AppComponents c = create(config("env:MAIL_PW", PURGE + STATEFUL), NO_RUNNER, Map.of("MAIL_PW", "pw"),
+                AppComponents.Mode.HTTP_LOCAL);
+        assertThat(c.purgeRegistered()).isTrue();
+        assertThat(c.statefulToolSpecs(ctx -> c.accountContext())).extracting(s -> s.tool().name())
+                .contains("purge_messages");
+        assertThat(c.sessionEndListener()).isNotNull();
+        c.sessionEndListener().accept("some-session"); // harmless for an unknown session
+    }
+
+    @Test
+    void statefulHttpLocalWithPurgeRequiresADeadlineOfAtLeast60Seconds() throws IOException {
+        AppConfig short45 = config("env:MAIL_PW", PURGE + "tools:\n  deadline: 45s\n" + STATEFUL);
+        assertThatThrownBy(() -> create(short45, NO_RUNNER, Map.of("MAIL_PW", "pw"), AppComponents.Mode.HTTP_LOCAL))
+                .isInstanceOf(AppStartupException.class).hasMessageContaining("tools.deadline")
+                .hasMessageContaining("60s");
+    }
+
+    @Test
+    void theHttpLocalPurgeWarnIsGivenOnlyWhileHttpStatefulIsFalse() throws IOException {
+        ch.qos.logback.classic.Logger log =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("imapmcp.app");
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        log.addAppender(appender);
+        try {
+            create(config("env:MAIL_PW", PURGE + STATEFUL), NO_RUNNER, Map.of("MAIL_PW", "pw"),
+                    AppComponents.Mode.HTTP_LOCAL);
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN).isEmpty();
+            assertThat(appender.list).extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .contains("purge_messages registered=true, accounts with allowPurge=1 of 1");
+        } finally {
+            log.detachAppender(appender);
+        }
+    }
 }
