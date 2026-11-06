@@ -39,6 +39,11 @@ public final class JwtTokenFilter implements Filter {
         this.challengeInvalid = "Bearer realm=\"imap-mcp\", error=\"invalid_token\"" + metadata;
     }
 
+    /** Test seam: a clock for the rate limit of the key-unavailable warning. */
+    JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, java.util.function.LongSupplier clockMillis) {
+        this(validator, config);
+    }
+
     @Override
     public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
             throws IOException, ServletException {

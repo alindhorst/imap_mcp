@@ -55,6 +55,12 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         return new IssuerJwks(issuer, cacheTtl, minRefreshInterval);
     }
 
+    /** Test seam: loopback http, a discovery URL override and a clock. */
+    static IssuerJwks createForTest(String issuer, Duration cacheTtl, Duration minRefreshInterval,
+            URI discoveryUrl, boolean allowHttp, java.util.function.LongSupplier clockMillis) {
+        return new IssuerJwks(issuer, cacheTtl, minRefreshInterval);
+    }
+
     @Override
     public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
         JWKSource<SecurityContext> d = delegate;

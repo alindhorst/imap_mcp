@@ -72,6 +72,27 @@ final class TestTokens {
         return sign(new JWSHeader.Builder(alg).keyID(key.getKeyID()).build(), claims(c), rsaSigner(key));
     }
 
+    /** RS256 token with an explicit {@code typ} header (null: no typ). */
+    String rs256WithType(String typ) {
+        return sign(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(rsa.getKeyID())
+                .type(typ == null ? null : new JOSEObjectType(typ)).build(), claims(b -> { }), rsaSigner(rsa));
+    }
+
+    /** A JWE (RSA-OAEP-256 / A128GCM) to the server's public key wrapping a signed JWT, as nested JWTs are built. */
+    String jwe(Consumer<JWTClaimsSet.Builder> c) {
+        try {
+            SignedJWT inner = SignedJWT.parse(rs256(c));
+            com.nimbusds.jose.JWEObject jwe = new com.nimbusds.jose.JWEObject(
+                    new com.nimbusds.jose.JWEHeader.Builder(com.nimbusds.jose.JWEAlgorithm.RSA_OAEP_256,
+                            com.nimbusds.jose.EncryptionMethod.A128GCM).contentType("JWT").build(),
+                    new com.nimbusds.jose.Payload(inner));
+            jwe.encrypt(new com.nimbusds.jose.crypto.RSAEncrypter(rsa.toRSAPublicKey()));
+            return jwe.serialize();
+        } catch (JOSEException | java.text.ParseException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     String es256(Consumer<JWTClaimsSet.Builder> c) {
         try {
             return sign(new JWSHeader.Builder(JWSAlgorithm.ES256).keyID(ec.getKeyID()).build(), claims(c),

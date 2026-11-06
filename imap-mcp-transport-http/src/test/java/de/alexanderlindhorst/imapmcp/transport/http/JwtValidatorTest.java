@@ -123,6 +123,37 @@ class JwtValidatorTest {
     }
 
     @Test
+    void encryptedJwtsAreRejected() {
+        rejects(keys.jwe(b -> { }));
+    }
+
+    @Test
+    void typHeaderMatrix() throws Exception {
+        assertThat(validator.validate(keys.rs256WithType("JWT")).subject()).isEqualTo("user-1");
+        assertThat(validator.validate(keys.rs256WithType("at+jwt")).subject()).isEqualTo("user-1");
+        assertThat(validator.validate(keys.rs256WithType(null)).subject()).isEqualTo("user-1");
+        rejects(keys.rs256WithType("dpop+jwt"));
+        rejects(keys.rs256WithType("secevent+jwt"));
+        rejects(keys.rs256WithType("logout+jwt"));
+        rejects(keys.rs256WithType("foo"));
+    }
+
+    @Test
+    void rateLimitedKeyRefreshIsRejectedNotKeysUnavailable() {
+        JwtValidator limited = new JwtValidator(TestTokens.config(), (selector, ctx) -> {
+            throw new com.nimbusds.jose.jwk.source.RateLimitReachedException();
+        });
+        assertThatThrownBy(() -> limited.validate(keys.rs256(b -> { }))).isInstanceOfSatisfying(
+                InvalidTokenException.class, e -> assertThat(e.category()).isEqualTo(InvalidTokenException.REJECTED));
+    }
+
+    @Test
+    void principalToStringShowsTheIssuerOnly() throws Exception {
+        JwtPrincipal p = validator.validate(keys.rs256(b -> b.subject("sub-marker").claim("email", "mail-marker")));
+        assertThat(p.toString()).contains(TestTokens.ISSUER).doesNotContain("sub-marker").doesNotContain("mail-marker");
+    }
+
+    @Test
     void exceptionNeverCarriesTokenContent() {
         String token = keys.rs256(b -> b.issuer("https://leak-marker.example"));
         assertThatThrownBy(() -> validator.validate(token)).isInstanceOf(InvalidTokenException.class)

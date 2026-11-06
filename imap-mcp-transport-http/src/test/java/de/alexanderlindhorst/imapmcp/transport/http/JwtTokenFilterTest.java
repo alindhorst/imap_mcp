@@ -192,6 +192,69 @@ class JwtTokenFilterTest {
     }
 
     @Test
+    void formBodyAccessTokenIsNeverAccepted() throws Exception {
+        start();
+        String t = keys.rs256(b -> { });
+        HttpResponse<String> r = client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .POST(BodyPublishers.ofString("access_token=" + t)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertUnauthorized(r, MISSING);
+    }
+
+    @Test
+    void keysUnavailableWarningIsRateLimited() throws Exception {
+        OAuthResourceConfig cfg = TestTokens.config();
+        JwtValidator down = new JwtValidator(cfg, (selector, ctx) -> {
+            throw new KeySourceException("down");
+        });
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+        server = HttpLocalServer.builder().port(0).bearerFilter(new JwtTokenFilter(down, cfg, now::get)).build();
+        server.start();
+        String t = keys.rs256(b -> { });
+        for (int i = 0; i < 5; i++) {
+            assertUnauthorized(post("", "Bearer " + t), INVALID);
+        }
+        assertThat(logs.list.stream().filter(e -> e.getLevel() == Level.WARN)).hasSize(1);
+        now.addAndGet(61_000);
+        post("", "Bearer " + t);
+        assertThat(logs.list.stream().filter(e -> e.getLevel() == Level.WARN)).hasSize(2);
+    }
+
+    @Test
+    void openServletIsRestrictedToWellKnownPaths() {
+        for (String bad : List.of("/mcp", "/health", "/accounts", "/", "/.well-known", "/foo/.well-known/x")) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().openServlet(bad,
+                    new ProtectedResourceMetadataServlet(TestTokens.config())))
+                    .as(bad).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void metadataSupportsHeadAndIsCacheable() throws Exception {
+        start();
+        HttpResponse<String> head = client.send(HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + server.port() + "/.well-known/oauth-protected-resource"))
+                .method("HEAD", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(head.statusCode()).isEqualTo(200);
+        assertThat(head.body()).isEmpty();
+        HttpResponse<String> get = get("/.well-known/oauth-protected-resource");
+        assertThat(get.headers().firstValue("Cache-Control")).contains("public, max-age=300");
+    }
+
+    @Test
+    void emptyScopesSupportedIsOmitted() throws Exception {
+        OAuthResourceConfig cfg = new OAuthResourceConfig(TestTokens.ISSUER, TestTokens.RESOURCE, "sub", List.of());
+        server = HttpLocalServer.builder().port(0)
+                .openServlet(OAuthResourceConfig.METADATA_ROOT, new ProtectedResourceMetadataServlet(cfg)).build();
+        server.start();
+        assertThat(get("/.well-known/oauth-protected-resource").body()).isEqualTo("{\"resource\":\""
+                + TestTokens.RESOURCE + "\",\"authorization_servers\":[\"" + TestTokens.ISSUER
+                + "\"],\"bearer_methods_supported\":[\"header\"]}");
+    }
+
+    @Test
     void hostAndOriginAreCheckedBeforeTheToken() throws Exception {
         start();
         // java.net.http forbids setting Host; use a raw socket for that case
