@@ -352,15 +352,19 @@ class ToolExecutorTest {
     }
 
     @Test
-    void aMutationCannotBeginAfterTheDeadlineDecidedThePlainTimeout() {
+    void aMutationCannotBeginAfterTheDeadlineDecidedThePlainTimeout() throws Exception {
         ToolExecutor fast = new ToolExecutor(Duration.ofMillis(50), logIds);
         AtomicBoolean began = new AtomicBoolean(true);
+        CountDownLatch attempted = new CountDownLatch(1);
         AtomicInteger interrupts = new AtomicInteger();
         ToolOutcome o = fast.wrap(def(ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
             awaitDecided(cx, interrupts);
             began.set(cx.tryBeginMutation());
+            attempted.countDown();
             return ok();
         }).handle(ctx("r"), Map.of());
+        // The executor returns as soon as it decided; the worker's attempt is asynchronous, so wait for it.
+        assertThat(attempted.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(errorOf(o)).isEqualTo(ToolError.timeout("r"));
         assertThat(began.get()).isFalse();
     }
