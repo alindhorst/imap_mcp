@@ -26,6 +26,7 @@ public final class CallAudit {
     private int itemCount;
     private boolean completed;
     private boolean attempted;
+    private boolean failureRecorded;
     private String confirmation;
     private String tool = "";
     private String requestId = "";
@@ -43,9 +44,12 @@ public final class CallAudit {
         return log != null && log != AuditLog.NONE;
     }
 
-    /** Writes the rows (one per item, or one when there are none). Only the first call per call does anything. */
+    /**
+     * Writes the rows (one per item, or one when there are none). Only the first call per call does anything, and
+     * none after {@link #recordFailure} (the executor's deadline row is written; a late worker adds no item rows).
+     */
     public synchronized void begin(List<ItemRef> items) throws AuditWriteException {
-        if (!enabled() || entry != null) {
+        if (!enabled() || entry != null || failureRecorded) {
             return;
         }
         attempted = true;
@@ -105,6 +109,7 @@ public final class CallAudit {
             return; // no resolved account: not covered (SPEC 5.3, open decisions D10, D11)
         }
         attempted = true;
+        failureRecorded = true;
         try {
             log.begin(info, List.of()).complete(new Completion(List.of(), "failed", errorCode, confirmation));
         } catch (RuntimeException e) {

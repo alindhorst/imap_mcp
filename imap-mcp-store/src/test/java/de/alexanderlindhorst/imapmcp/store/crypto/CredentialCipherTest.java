@@ -162,4 +162,17 @@ class CredentialCipherTest {
                 new CredentialCipher.Sealed("gone", s.wrappedDek(), s.nonce(), s.ciphertext())))
                 .isInstanceOf(CredentialDecryptException.class);
     }
+
+    @Test
+    void passwordsOfEveryUtf8ShapeRoundTripAndLongOnesToo() {
+        CredentialCipher cipher = cipher();
+        String[] samples = {"", "a", "p\u00e4ssw\u00f6rd", "\u20ac\u20ac\u20ac", "pw\ud83d\ude00x", "x".repeat(5000),
+                "\u20ac".repeat(3000)};
+        for (String pw : samples) {
+            CredentialCipher.Sealed sealed = cipher.seal(TENANT, ACCOUNT, 1, pw.toCharArray());
+            try (Secret secret = cipher.open(TENANT, ACCOUNT, 1, sealed)) {
+                assertThat(new String(secret.chars())).isEqualTo(pw);
+            }
+        }
+    }
 }

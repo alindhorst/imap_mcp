@@ -177,6 +177,15 @@ class CallAuditTest {
         assertThat(failing.order).isEmpty();
     }
 
+    /** The executor's deadline row is written by recordFailure; a late worker's begin must not add item rows. */
+    @Test
+    void beginIsANoOpAfterRecordFailure() {
+        ctx.audit().recordFailure("TIMEOUT");
+        ctx.audit().begin(List.of(new ItemRef("INBOX", 7, 1), new ItemRef("INBOX", 7, 2)));
+        assertThat(log.order).containsExactly("begin", "complete");
+        assertThat(log.begun).singleElement().satisfies(items -> assertThat(items).isEmpty());
+    }
+
     @Test
     void recordFailureNeverThrowsAndLogsOneErrorLineWithoutRowData() {
         log.failBegin = true;
