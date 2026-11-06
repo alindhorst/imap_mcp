@@ -210,7 +210,8 @@ public final class ConfigLoader {
         var r = new AppConfig.Http(s.nonBlank("bind", "127.0.0.1"), s.integer("port", 8080, 1, 65535),
                 s.bool("allowNonLoopbackBind", false), s.optionalRef("token"),
                 s.stringList("allowedHosts", List.of("localhost:*", "127.0.0.1:*", "[::1]:*")),
-                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE));
+                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE),
+                s.bool("stateful", false));
         s.finish();
         return r;
     }
@@ -244,7 +245,7 @@ public final class ConfigLoader {
             nonLoopback = Boolean.parseBoolean(v);
         }
         return new AppConfig.Http(bind, port, nonLoopback, h.token(), h.allowedHosts(), h.allowedOrigins(),
-                h.maxRequestBytes());
+                h.maxRequestBytes(), h.stateful());
     }
 
     private static String envMode(Map<String, String> env) {
