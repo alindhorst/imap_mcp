@@ -13,6 +13,14 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
         Http http, Db db, Oauth oauth, Public pub, Ssrf ssrf, Kms kms, boolean purgeEnabled,
         AppConfig.Security security, String logLevel) {
 
+    /** Same configuration on another port (tests bind port 0). */
+    public PublicConfig withPort(int port) {
+        return new PublicConfig(imap, pool, secrets, tools,
+                new Http(http.bind(), port, http.allowNonLoopbackBind(), http.allowedHosts(), http.allowedOrigins(),
+                        http.maxRequestBytes(), http.stateful()),
+                db, oauth, pub, ssrf, kms, purgeEnabled, security, logLevel);
+    }
+
     /** {@code tools.*} of http-public: no download directory; the embedded download has its own cap and limiter. */
     public record Tools(Duration deadline, int maxCharsCap, long maxBodyPartBytes, int maxFolders,
             int sinceMaxCandidates, long inlineMaxBytes, int inlineConcurrency) {

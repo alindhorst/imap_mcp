@@ -13,11 +13,12 @@ public final class Main {
 
     static final String STDIO_LAUNCHER = "de.alexanderlindhorst.imapmcp.app.StdioMain";
     static final String HTTP_LOCAL_LAUNCHER = "de.alexanderlindhorst.imapmcp.app.HttpLocalMain";
+    static final String HTTP_PUBLIC_LAUNCHER = "de.alexanderlindhorst.imapmcp.app.HttpPublicMain";
 
     private static final String ENV_MODE = "IMAP_MCP_MODE";
     private static final String USAGE = """
-            Usage: java -Xlog:disable -Xlog:all=warning:stderr -jar imap-mcp.jar --mode stdio|http-local [--config <file>]
-              --mode     stdio (MCP over stdin/stdout) or http-local (loopback HTTP); fallback env IMAP_MCP_MODE
+            Usage: java -Xlog:disable -Xlog:all=warning:stderr -jar imap-mcp.jar --mode stdio|http-local|http-public [--config <file>]
+              --mode     stdio (MCP over stdin/stdout), http-local (loopback HTTP) or http-public (OAuth, multi-tenant); fallback env IMAP_MCP_MODE
               --config   config file (default: env IMAP_MCP_CONFIG, else ~/.config/imap-mcp/config.yaml)""";
 
     private Main() {
@@ -35,10 +36,7 @@ public final class Main {
         switch (mode.strip()) {
             case "stdio" -> launch(STDIO_LAUNCHER, "stdio", args);
             case "http-local" -> launch(HTTP_LOCAL_LAUNCHER, "http-local", args);
-            case "http-public" -> {
-                System.err.println("imap-mcp: mode http-public is not available in this version");
-                System.exit(2);
-            }
+            case "http-public" -> launch(HTTP_PUBLIC_LAUNCHER, "http-public", args);
             default -> usage("unknown mode '" + mode.strip() + "'");
         }
     }
