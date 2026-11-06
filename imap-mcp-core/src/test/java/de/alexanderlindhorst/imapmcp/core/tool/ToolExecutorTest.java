@@ -415,4 +415,15 @@ class ToolExecutorTest {
         }).handle(ctx("r"), Map.of()));
         assertThat(e).isEqualTo(ToolError.outcomeUnknown("r"));
     }
+
+    @Test
+    void refusalOnTheWorkerThreadSurvivesTheHopToTheCaller() {
+        ToolOutcome o = executor.wrap("t", (cx, a) -> {
+            de.alexanderlindhorst.imapmcp.core.net.RefusalMarker.mark();
+            throw new IllegalStateException("x", new jakarta.mail.MessagingException("connection failure"));
+        }).handle(ctx("r"), Map.of());
+        ToolError e = ((ToolOutcome.Failure) o).error();
+        assertThat(e.code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+        assertThat(e.details()).containsEntry("reason", "address_blocked");
+    }
 }

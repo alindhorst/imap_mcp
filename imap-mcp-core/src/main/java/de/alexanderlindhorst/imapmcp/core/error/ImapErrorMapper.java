@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.error;
 
+import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
@@ -39,6 +40,10 @@ public final class ImapErrorMapper {
     }
 
     public static MappedError map(Throwable t, String requestId) {
+        // Angus wraps the refusal in a MailConnectException, which would otherwise read as "unreachable".
+        if (causedBy(t, AddressBlockedException.class)) {
+            return new MappedError(ToolError.addressBlocked(requestId), true);
+        }
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         java.util.ArrayDeque<Throwable> queue = new java.util.ArrayDeque<>();
         queue.add(t);
@@ -62,6 +67,28 @@ public final class ImapErrorMapper {
             return new MappedError(ToolError.timeout(requestId), true);
         }
         return new MappedError(ToolError.internalError(requestId), true);
+    }
+
+    private static boolean causedBy(Throwable t, Class<? extends Throwable> type) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        java.util.ArrayDeque<Throwable> queue = new java.util.ArrayDeque<>();
+        queue.add(t);
+        while (!queue.isEmpty() && seen.size() < MAX_CHAIN) {
+            Throwable cur = queue.poll();
+            if (!seen.add(cur)) {
+                continue;
+            }
+            if (type.isInstance(cur)) {
+                return true;
+            }
+            if (cur.getCause() != null) {
+                queue.add(cur.getCause());
+            }
+            if (cur instanceof MessagingException me && me.getNextException() != null) {
+                queue.add(me.getNextException());
+            }
+        }
+        return false;
     }
 
     private static MappedError classify(Throwable t, String rid) {

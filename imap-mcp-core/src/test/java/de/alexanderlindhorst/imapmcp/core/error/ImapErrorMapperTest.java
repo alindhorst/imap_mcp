@@ -171,4 +171,34 @@ class ImapErrorMapperTest {
             assertThat(m.error().toMap().toString()).doesNotContain(MARKER);
         }
     }
+
+    // Angus drops the cause when a folder connection fails ("connection failure"); the refusal is remembered per thread.
+    @Test
+    void bareConnectionFailureAfterARefusalOnThisThreadIsAddressBlocked() {
+        de.alexanderlindhorst.imapmcp.core.net.RefusalMarker.mark();
+        ImapErrorMapper.MappedError m = ImapErrorMapper.map(
+                new IllegalStateException(MARKER, new MessagingException("connection failure")), RID);
+        assertThat(m.error().code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+        assertThat(m.error().details()).containsEntry("reason", "address_blocked");
+        // consumed: the same failure again is not attributed to a refusal
+        assertThat(ImapErrorMapper.map(new MessagingException("connection failure"), RID).error().code())
+                .isEqualTo(ErrorCode.INTERNAL_ERROR);
+    }
+
+    @Test
+    void aRefusalMarkerDoesNotRelabelOtherFailures() {
+        de.alexanderlindhorst.imapmcp.core.net.RefusalMarker.mark();
+        assertThat(ImapErrorMapper.map(new MessagingException("something else"), RID).error().code())
+                .isEqualTo(ErrorCode.INTERNAL_ERROR);
+        de.alexanderlindhorst.imapmcp.core.net.RefusalMarker.mark();
+        assertThat(ImapErrorMapper.map(new SocketTimeoutException(MARKER), RID).error().code())
+                .isEqualTo(ErrorCode.TIMEOUT);
+    }
+
+    @Test
+    void suppressedRefusalIsFound() {
+        MessagingException e = new MessagingException("connection failure");
+        e.addSuppressed(new de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException());
+        assertThat(ImapErrorMapper.map(e, RID).error().details()).containsEntry("reason", "address_blocked");
+    }
 }
