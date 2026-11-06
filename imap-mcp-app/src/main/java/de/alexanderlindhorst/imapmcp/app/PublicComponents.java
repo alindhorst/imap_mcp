@@ -82,6 +82,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
@@ -232,10 +233,11 @@ public final class PublicComponents implements AutoCloseable {
             tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
             // purge_messages (D8): only with purge.enabled over the stateful transport, whose server-to-client requests
             // carry the confirmation; the deployment switch also goes into the tool as its call-time gate
-            boolean purge = config.purgeEnabled() && config.http().stateful();
+            boolean purge = purgeRegistered(config);
             ElicitingPurgeConfirmation purgeConfirmation = null;
             if (purge) {
                 purgeConfirmation = new ElicitingPurgeConfirmation(clock);
+                // not registering the tool is the gate; passing the switch on is defence in depth at call time
                 tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(preflight, leases, clock,
                         purgeConfirmation, config.purgeEnabled()));
             }
@@ -378,6 +380,11 @@ public final class PublicComponents implements AutoCloseable {
         return tools.entrySet().stream().map(e -> adapter.stateless(e.getKey(), e.getValue())).toList();
     }
 
+    /** D8: {@code purge_messages} exists only with {@code purge.enabled} over the stateful transport. */
+    static boolean purgeRegistered(PublicConfig config) {
+        return config.purgeEnabled() && config.http().stateful();
+    }
+
     /** Stateful HTTP flavour (needed for the purge confirmation); the resolver maps the principal to its tenant. */
     public List<McpServerFeatures.SyncToolSpecification> statefulToolSpecs(
             Function<McpTransportContext, AccountContext> resolver) {
@@ -390,7 +397,7 @@ public final class PublicComponents implements AutoCloseable {
      * Session-end callback of the stateful transport: drops the purge approvals of the ended session (SPEC 4, v3b).
      * Never null; does nothing when {@code purge_messages} is not registered.
      */
-    public java.util.function.Consumer<String> sessionEndListener() {
+    public Consumer<String> sessionEndListener() {
         ElicitingPurgeConfirmation c = purgeConfirmation;
         return c == null ? id -> { } : c::sessionEnded;
     }

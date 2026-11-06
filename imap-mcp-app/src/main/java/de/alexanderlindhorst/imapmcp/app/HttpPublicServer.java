@@ -24,7 +24,9 @@ import java.util.Objects;
 /**
  * Assembles the {@code http-public} HTTP server (SPEC 5.3): filter order on /mcp is Host, Origin, method guard
  * (built into the server), token ({@link JwtTokenFilter}), principal to tenant and scope
- * ({@link PrincipalContextFilter}), then the MCP servlet. The RFC 9728 metadata and /health are outside the filters.
+ * ({@link PrincipalContextFilter}), then, with {@code http.stateful}, the session binding (sessions belong to the
+ * (issuer, subject) of the validated token, never to the tenant), then the MCP servlet (stateless, or the stateful
+ * Streamable HTTP variant that carries the purge confirmation). The RFC 9728 metadata and /health are outside the filters.
  * The only place in {@code app} that connects the OAuth settings to the transport; the key source is a parameter so
  * that tests can sign tokens locally, while the launcher passes {@code IssuerJwks.create(oauth.issuer)}.
  */
