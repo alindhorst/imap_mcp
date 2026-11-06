@@ -87,6 +87,20 @@ class InMemoryMetricsRecorderTest {
     }
 
     @Test
+    void decryptFailuresAreCountedAsACredentialsOperationPerHashedTenant() {
+        rec.decryptFailure(T1);
+        rec.decryptFailure(T1);
+        OperationMetrics o = rec.snapshot().operations().stream()
+                .filter(x -> x.op().equals("decrypt_failure")).findFirst().orElseThrow();
+        assertThat(o.tool()).isEqualTo("credentials");
+        assertThat(o.tenant()).isEqualTo(logIds.tenant(T1.value()));
+        assertThat(o.count()).isEqualTo(2);
+        assertThat(o.max()).isEqualTo(Duration.ZERO);
+        assertThat(MetricsRecorder.NOOP).isNotNull();
+        MetricsRecorder.NOOP.decryptFailure(T1); // default method: discards
+    }
+
+    @Test
     void authFailuresAndTimeoutsCountPerHashedTenantOnly() {
         rec.authFailure(T1);
         rec.authFailure(T1);
