@@ -4,6 +4,8 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
@@ -115,11 +117,20 @@ public final class CredentialCipher {
     }
 
     private static byte[] toBytes(char[] chars) {
-        ByteBuffer bb = StandardCharsets.UTF_8.encode(CharBuffer.wrap(chars));
-        byte[] out = new byte[bb.remaining()];
-        bb.get(out);
-        Arrays.fill(bb.array(), (byte) 0); // the encoder's own buffer
-        return out;
+        CharsetEncoder encoder = StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE);
+        // sized once for the worst case, so the encoder never reallocates and leaves an unwiped copy behind
+        ByteBuffer bb = ByteBuffer.allocate((int) Math.ceil(chars.length * (double) encoder.maxBytesPerChar()));
+        try {
+            encoder.encode(CharBuffer.wrap(chars), bb, true);
+            encoder.flush(bb);
+            bb.flip();
+            byte[] out = new byte[bb.remaining()];
+            bb.get(out);
+            return out;
+        } finally {
+            Arrays.fill(bb.array(), (byte) 0);
+        }
     }
 
     private static char[] toChars(byte[] bytes) {
