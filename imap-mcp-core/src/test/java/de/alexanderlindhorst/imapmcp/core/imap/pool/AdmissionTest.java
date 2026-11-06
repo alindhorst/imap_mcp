@@ -175,4 +175,38 @@ class AdmissionTest {
         assertThatThrownBy(() -> a.tryAcquire(key("A", "y"))).isInstanceOf(ServerBusyException.class);
         assertThat(seen).containsExactly("A/y/tenant");
     }
+
+    @Test
+    void tenantAndMailboxEntriesExistOnlyWhileAPermitIsHeld() {
+        PoolSettings s = settings(3, 8, 64);
+        Admission a = new Admission(s);
+        assertThat(a.tenantEntries()).isZero();
+        assertThat(a.mailboxEntries()).isZero();
+        Admission.Permit p1 = a.tryAcquire(key("t1", "a"));
+        Admission.Permit p2 = a.tryAcquire(key("t1", "b"));
+        Admission.Permit p3 = a.tryAcquire(key("t2", "a"));
+        assertThat(a.tenantEntries()).isEqualTo(2);
+        assertThat(a.mailboxEntries()).isEqualTo(3);
+        p1.close();
+        p1.close(); // idempotent
+        assertThat(a.tenantEntries()).isEqualTo(2);
+        assertThat(a.mailboxEntries()).isEqualTo(2);
+        p2.close();
+        p3.close();
+        assertThat(a.tenantEntries()).isZero();
+        assertThat(a.mailboxEntries()).isZero();
+        assertAllFree(a, s, key("t1", "a"), key("t2", "a"));
+    }
+
+    @Test
+    void refusedAcquireLeavesNoEntriesBehind() {
+        Admission a = new Admission(settings(1, 8, 64));
+        PoolKey k = key("t1", "a");
+        Admission.Permit held = a.tryAcquire(k);
+        assertThatThrownBy(() -> a.tryAcquire(k)).isInstanceOf(ServerBusyException.class);
+        assertThatThrownBy(() -> a.tryAcquire(key("t3", "z"))).doesNotThrowAnyException();
+        held.close();
+        assertThat(a.tenantEntries()).isEqualTo(1); // t3's permit from the lambda above is still held
+        assertThat(a.mailboxEntries()).isEqualTo(1);
+    }
 }
