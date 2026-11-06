@@ -13,6 +13,8 @@ public final class KeyRing {
     public static final String MSG_HANDLE = "msg-handle";
     public static final String CURSOR = "cursor";
     public static final String LOG = "log";
+    /** Audit reference hashes of the multi-tenant audit log (SPEC 5.3, 5.4). */
+    public static final String AUDIT = "audit";
     /** Reserved, unused in v1. */
     public static final String PART_REF = "part-ref";
 
