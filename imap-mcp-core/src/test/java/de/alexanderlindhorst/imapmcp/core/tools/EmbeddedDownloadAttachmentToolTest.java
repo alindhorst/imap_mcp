@@ -30,6 +30,7 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
 import de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -166,7 +167,7 @@ class EmbeddedDownloadAttachmentToolTest {
     }
 
     List<String> traceLines() {
-        return new ArrayList<>(trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+        return new ArrayList<>(WireTrace.lines(trace));
     }
 
     @Test

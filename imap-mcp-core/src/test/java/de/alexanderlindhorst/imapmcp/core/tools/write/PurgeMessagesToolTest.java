@@ -30,6 +30,7 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.LeaseTestSeams;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -413,7 +414,7 @@ class PurgeMessagesToolTest {
         assertThat(e.details()).containsEntry("reason", "purge_disabled");
         assertThat(e.hint()).contains("accounts[].allowPurge");
         assertThat(pool.createdCount()).isEqualTo(created);
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
         assertThat(confirms).isZero();
     }
 
@@ -431,7 +432,7 @@ class PurgeMessagesToolTest {
         assertThat(e.code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
         assertThat(e.details()).containsEntry("reason", "purge_disabled");
         assertThat(pool.createdCount()).isEqualTo(created);
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
         assertThat(confirms).isZero();
         assertThat(snapshot("Trash")).isEqualTo(before);
     }
@@ -468,7 +469,7 @@ class PurgeMessagesToolTest {
         assertThat(e.details()).containsEntry("reason", "confirmation_unavailable");
         assertThat(e.hint()).contains("MCP elicitation").contains("nothing was deleted");
         assertThat(pool.createdCount()).isEqualTo(created);
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
     }
 
     @Test
@@ -492,7 +493,7 @@ class PurgeMessagesToolTest {
         assertThat(e.code()).isEqualTo(ErrorCode.INVALID_HANDLE);
         assertThat(e.details()).containsEntry("field", "handles[1]");
         assertThat(pool.createdCount()).isEqualTo(created);
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
         assertThat(uids("Trash")).containsAll(t);
         assertThat(confirms).isZero();
     }
