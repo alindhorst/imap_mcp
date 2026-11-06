@@ -1,5 +1,8 @@
 package de.alexanderlindhorst.imapmcp.core.tools.write;
 
+import de.alexanderlindhorst.imapmcp.core.audit.CallAudit;
+import de.alexanderlindhorst.imapmcp.core.audit.ItemRef;
+import de.alexanderlindhorst.imapmcp.core.audit.ItemResult;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
@@ -9,7 +12,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import org.eclipse.angus.mail.imap.IMAPFolder;
@@ -36,6 +41,9 @@ import org.eclipse.angus.mail.imap.IMAPFolder;
  * group is {@code unknown} (its first command was already released) or {@code not_attempted} (not yet), and later
  * groups are {@code not_attempted}. Nothing is logged here; no handle, folder name or server text leaves the class
  * except in the mapped, sanitised {@link ToolError}.
+ *
+ * <p>Audit (SPEC 5.3): when the call has an audit log, the rows of all items are written first ({@code begin},
+ * fail-closed: nothing is read or changed if that throws) and completed with the item statuses afterwards.
  */
 public final class FolderGroupRunner {
 
@@ -117,6 +125,48 @@ public final class FolderGroupRunner {
             AbsentStatus absent, MutationStep step) throws MessagingException {
         Objects.requireNonNull(lease, "lease");
         Objects.requireNonNull(ctx, "ctx");
+        CallAudit audit = ctx.audit();
+        List<WritePreflight.Item> flat = groups.stream().flatMap(g -> g.items().stream()).toList();
+        if (!flat.isEmpty()) {
+            // fail-closed (SPEC 5.3, D5): a failed write throws here, before any IMAP I/O and any mutation
+            audit.begin(flat.stream()
+                    .map(i -> new ItemRef(i.ref().folder(), i.ref().uidValidity(), i.ref().uid())).toList());
+        }
+        List<BulkResult.Item> out;
+        try {
+            out = runGroups(lease, ctx, groups, absent, step);
+        } catch (MessagingException | RuntimeException e) {
+            audit.completeAborted(ctx.mutationStarted());
+            throw e;
+        }
+        if (!flat.isEmpty()) {
+            audit.complete(auditResults(flat, out), auditResult(out), null);
+        }
+        return out;
+    }
+
+    /** One result per begun item, in begin order (items of the call share a handle at most by repetition). */
+    private static List<ItemResult> auditResults(List<WritePreflight.Item> flat, List<BulkResult.Item> out) {
+        Map<String, BulkResult.Item> byHandle = new HashMap<>();
+        out.forEach(i -> byHandle.putIfAbsent(i.handle(), i));
+        return flat.stream().map(i -> {
+            BulkResult.Item r = byHandle.get(i.handle());
+            if (r == null) {
+                return new ItemResult(ItemStatus.NOT_ATTEMPTED.wire(), null);
+            }
+            return new ItemResult(r.status().wire(), r.error() == null ? null : r.error().code().name());
+        }).toList();
+    }
+
+    private static String auditResult(List<BulkResult.Item> out) {
+        if (out.stream().anyMatch(i -> i.status() == ItemStatus.UNKNOWN)) {
+            return "unknown";
+        }
+        return out.stream().allMatch(i -> i.status().isSuccess()) ? "complete" : "partial";
+    }
+
+    private List<BulkResult.Item> runGroups(ImapLease lease, ToolCallContext ctx, List<WritePreflight.Group> groups,
+            AbsentStatus absent, MutationStep step) throws MessagingException {
         List<BulkResult.Item> out = new ArrayList<>();
         boolean stopped = false;
         for (int gi = 0; gi < groups.size(); gi++) {
