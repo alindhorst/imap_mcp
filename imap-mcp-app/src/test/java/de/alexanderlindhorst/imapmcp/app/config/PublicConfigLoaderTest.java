@@ -24,6 +24,8 @@ class PublicConfigLoaderTest {
               issuer: https://idp.example.com/realms/test
               resource: https://mail.example.com/mcp
               requiredRole: imap-mcp-user
+              webClientId: imap-mcp-web
+              webClientSecret: env:WEB_SECRET
             public:
               baseUrl: https://mail.example.com
             security:
@@ -87,6 +89,26 @@ class PublicConfigLoaderTest {
         assertThat(c.tools().deadline()).isEqualTo(Duration.ofSeconds(90));
         assertThat(c.http().stateful()).isFalse();
         assertThat(c.purgeEnabled()).isFalse();
+    }
+
+    @Test
+    void thePublicBaseUrlIsNormalisedToTheOriginBrowsersSend() {
+        String base = "baseUrl: https://mail.example.com";
+        assertThat(bind(VALID.replace(base, "baseUrl: https://MAIL.Example.com:443")).pub().baseUrl())
+                .isEqualTo("https://mail.example.com");
+        assertThat(bind(VALID.replace(base, "baseUrl: https://mail.example.com/")).pub().baseUrl())
+                .isEqualTo("https://mail.example.com");
+        assertThat(bind(VALID.replace(base, "baseUrl: https://mail.example.com:8443")).pub().baseUrl())
+                .isEqualTo("https://mail.example.com:8443");
+        assertThat(bind(VALID.replace(base, "baseUrl: https://mail.example.com:8443"
+                + "\n  maxAccountsPerTenant: 25")).pub().maxAccountsPerTenant()).isEqualTo(25);
+    }
+
+    @Test
+    void theWebClientSecretIsASecretReferenceAndNeverTheValue() {
+        PublicConfig c = bind(VALID);
+        assertThat(c.oauth().webClientId()).isEqualTo("imap-mcp-web");
+        assertThat(c.oauth().webClientSecret().toString()).doesNotContain("WEB_SECRET-VALUE");
     }
 
     @Test
@@ -224,14 +246,13 @@ class PublicConfigLoaderTest {
 
     @Test
     void optionalKeysAreBound() {
-        String yaml = VALID.replace("requiredRole: imap-mcp-user", "allowWithoutRole: true\n  webClientId: web\n"
-                + "  webClientSecret: env:WEB_SECRET\n  subjectClaim: oid\n  roleClaim: roles")
+        String yaml = VALID.replace("requiredRole: imap-mcp-user", "allowWithoutRole: true\n  subjectClaim: oid\n  roleClaim: roles")
                 + "purge:\n  enabled: false\nhttp:\n  stateful: true\ntools:\n  download:\n    inlineMaxBytes: 1MiB\n"
                 + "    inlineConcurrency: 2\n";
         PublicConfig c = bind(yaml);
         assertThat(c.oauth().requiredRole()).isNull();
         assertThat(c.oauth().allowWithoutRole()).isTrue();
-        assertThat(c.oauth().webClientId()).isEqualTo("web");
+        assertThat(c.oauth().webClientId()).isEqualTo("imap-mcp-web");
         assertThat(c.oauth().webClientSecret()).isNotNull();
         assertThat(c.oauth().subjectClaim()).isEqualTo("oid");
         assertThat(c.tools().inlineMaxBytes()).isEqualTo(1024 * 1024);
@@ -251,6 +272,21 @@ class PublicConfigLoaderTest {
                 Arguments.of(VALID.replace("  requiredRole: imap-mcp-user\n", ""),
                         "oauth.requiredRole: required unless oauth.allowWithoutRole is true"),
                 Arguments.of(without("public"), "public.baseUrl: required"),
+                Arguments.of(VALID.replace("  webClientId: imap-mcp-web\n", ""), "oauth.webClientId: required"),
+                Arguments.of(VALID.replace("  webClientSecret: env:WEB_SECRET\n", ""),
+                        "oauth.webClientSecret: required"),
+                Arguments.of(VALID.replace("webClientSecret: env:WEB_SECRET", "webClientSecret: literal"),
+                        "oauth.webClientSecret: must be a secret reference"),
+                Arguments.of(VALID.replace("webClientId: imap-mcp-web", "webClientId: \"\""),
+                        "oauth.webClientId: must not be blank"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com/app"),
+                        "public.baseUrl: must be an https URI without path"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com/?a=1"),
+                        "public.baseUrl: must be an https URI without path"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://u@mail.example.com"),
+                        "public.baseUrl: must be an https URI without path"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com\n  maxAccountsPerTenant: 0"),
+                        "public.maxAccountsPerTenant"),
                 Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: http://mail.example.com"),
                         "public.baseUrl: must be an https URI"),
                 Arguments.of(without("security"), "security.handleKeys: required"),
