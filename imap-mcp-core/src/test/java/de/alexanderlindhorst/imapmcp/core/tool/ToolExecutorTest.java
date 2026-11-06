@@ -439,4 +439,55 @@ class ToolExecutorTest {
         }).handle(ctx("r"), Map.of());
         assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.TIMEOUT);
     }
+
+    static final class OutageException extends RuntimeException
+            implements de.alexanderlindhorst.imapmcp.core.error.ServiceOutage {
+        OutageException() {
+            super("secret-detail");
+        }
+    }
+
+    private java.util.List<ch.qos.logback.classic.spi.ILoggingEvent> failureLogs(RuntimeException toThrow) {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(ToolExecutor.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        ch.qos.logback.classic.Level before = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.TRACE);
+        try {
+            ToolOutcome o = executor.wrap("t", (cx, a) -> {
+                throw toThrow;
+            }).handle(ctx("r"), Map.of());
+            assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(before);
+        }
+        return appender.list.stream().filter(e -> e.getFormattedMessage().contains("failed")).toList();
+    }
+
+    @Test
+    void anOutageIsLoggedAtWarnWithTheClassOnly() {
+        var logs = failureLogs(new OutageException());
+        assertThat(logs).singleElement().satisfies(e -> {
+            assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+            assertThat(e.getFormattedMessage()).contains("OutageException").doesNotContain("secret-detail");
+        });
+    }
+
+    @Test
+    void anOutageWrappedByAnotherExceptionIsStillAWarn() {
+        var logs = failureLogs(new IllegalStateException("wrapper", new OutageException()));
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN));
+    }
+
+    @Test
+    void anyOtherFailureStaysAnError() {
+        var logs = failureLogs(new IllegalStateException("boom"));
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.ERROR));
+    }
 }

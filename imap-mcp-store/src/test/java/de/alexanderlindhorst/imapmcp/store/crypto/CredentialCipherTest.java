@@ -162,4 +162,10 @@ class CredentialCipherTest {
                 new CredentialCipher.Sealed("gone", s.wrappedDek(), s.nonce(), s.ciphertext())))
                 .isInstanceOf(CredentialDecryptException.class);
     }
+
+    @Test
+    void theKeyServiceOutageIsMarkedForTheCoreLogging() {
+        assertThat(new KeyServiceUnavailableException())
+                .isInstanceOf(de.alexanderlindhorst.imapmcp.core.error.ServiceOutage.class);
+    }
 }
