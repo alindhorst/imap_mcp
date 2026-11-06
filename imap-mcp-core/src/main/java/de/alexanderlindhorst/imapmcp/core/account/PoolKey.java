@@ -16,11 +16,13 @@ public final class PoolKey {
     private final TenantId tenantId;
     private final AccountId accountId;
     private final long revision;
+    private final boolean active;
 
-    private PoolKey(TenantId tenantId, AccountId accountId, long revision) {
+    private PoolKey(TenantId tenantId, AccountId accountId, long revision, boolean active) {
         this.tenantId = tenantId;
         this.accountId = accountId;
         this.revision = revision;
+        this.active = active;
     }
 
     public static PoolKey of(AccountContext context, ResolvedAccount resolved) {
@@ -29,7 +31,8 @@ public final class PoolKey {
         if (!context.tenantId().equals(resolved.tenantId())) {
             throw new IllegalArgumentException("account does not belong to the context tenant");
         }
-        return new PoolKey(resolved.tenantId(), resolved.account().id(), resolved.account().revision());
+        return new PoolKey(resolved.tenantId(), resolved.account().id(), resolved.account().revision(),
+                resolved.account().status() == MailAccount.Status.ACTIVE);
     }
 
     public TenantId tenantId() {
@@ -43,6 +46,11 @@ public final class PoolKey {
     /** Revision of the account as resolved in this call; not part of {@code equals}/{@code hashCode}. */
     public long revision() {
         return revision;
+    }
+
+    /** False when the account was {@code NEEDS_RELINK} as resolved in this call; not part of identity. */
+    public boolean active() {
+        return active;
     }
 
     @Override

@@ -14,8 +14,8 @@ import java.util.Objects;
  * connections obsolete (credentials, host, status).
  */
 public record MailAccount(AccountId id, String label, String address, String host, int port, Security security,
-        Flavor flavor, String username, SecretRef secretRef, boolean readOnly, boolean allowPurge,
-        Auth auth, Status status, long revision) {
+        Flavor flavor, String username, SecretRef secretRef, boolean readOnly,
+        boolean allowPurge, Auth auth, Status status, long revision) {
 
     public enum Security { IMPLICIT_TLS, STARTTLS }
 
@@ -62,7 +62,8 @@ public record MailAccount(AccountId id, String label, String address, String hos
     @Override
     public String toString() {
         return "MailAccount[id=" + id.value() + ", host=" + host + ", port=" + port + ", security=" + security
-                + ", flavor=" + flavor + ", readOnly=" + readOnly + ", allowPurge=" + allowPurge + ", auth=" + auth + ", status=" + status
+                + ", flavor=" + flavor + ", readOnly=" + readOnly + ", allowPurge=" + allowPurge + ", auth=" + auth
+                + ", status=" + status
                 + ", revision=" + revision + "]";
     }
 }

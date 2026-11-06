@@ -11,6 +11,7 @@ import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
 import jakarta.mail.MessagingException;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.function.Function;
 import org.apache.commons.pool2.PooledObject;
 import org.apache.commons.pool2.impl.AbandonedConfig;
@@ -48,11 +49,13 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     }
 
     private static Function<PoolKey, MailAccount> lookup(AccountRepository repository) {
-        java.util.Objects.requireNonNull(repository, "repository");
-        return key -> repository.findByTenantAndId(key.tenantId(), key.accountId()).map(ResolvedAccount::account)
-                .orElse(null);
+        Objects.requireNonNull(repository, "repository");
+        return key -> repository.findByTenantAndId(key.tenantId(), key.accountId())
+                .filter(r -> r.tenantId().equals(key.tenantId())) // defence in depth
+                .map(ResolvedAccount::account).orElse(null);
     }
 
+    /** Tests only: production wiring passes the repository, so no startup map of accounts exists. */
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s) {
         this(sessions, credentials, capabilities, accounts, s, MetricsRecorder.NOOP);
@@ -103,12 +106,17 @@ public final class StorePool implements AutoCloseable, PoolGauges {
      * is invalidated and the borrow repeated, never used (SPEC 5.5).
      */
     public IMAPStore borrow(PoolKey key) throws Exception {
+        if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
+            pool.clear(key);
+            throw new MessagingException("account is not active");
+        }
         for (int attempt = 0; attempt < REVISION_ATTEMPTS; attempt++) {
             IMAPStore store = pool.borrowObject(key);
             if (factory.revisionOf(store) >= key.revision()) {
                 return store;
             }
             pool.invalidateObject(key, store);
+            pool.clear(key); // the other idle Stores of the key are as old; drop them in one go
         }
         throw new MessagingException("no connection for the current account revision");
     }
