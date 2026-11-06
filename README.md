@@ -344,6 +344,14 @@ Manual checks for the owner, with test data only (the automated smoke run above 
 - Gmail attachment download: `download_attachment` of an attachment of a Gmail message; compare size and `sha256` with the original.
 - Docker Desktop on macOS owner probe: start the container with `--user` and a mounted `tools.download.dir`; startup succeeds (or fails with the owner message) and a download is readable on the host.
 
+### Smoke checklist for v3b
+
+Manual checks for the owner, with test data only.
+
+**Status: pending, not yet run.**
+
+- Claude connector, purge over `http-public` (decision D8): `purge_messages` is off by default in `http-public` (`purge.enabled` false). Enable it on a test deployment only after this check: connect the Claude connector with the write permission, `delete_messages` a test message, then `purge_messages` it; the connector must show the form elicitation dialog (fixed text, no subject or sender), accept deletes only the addressed message, decline and cancel delete nothing, and a client that cannot answer form elicitation gets `confirmation_unavailable`. If the connector does not answer form elicitation over Streamable HTTP, `purge.enabled` stays false.
+
 ### OS keyring (Linux and macOS)
 
 Passwords can come from the OS keyring through the platform CLI. Not available on Windows or in Docker. The commands prompt for the secret, so it never lands in shell history.
