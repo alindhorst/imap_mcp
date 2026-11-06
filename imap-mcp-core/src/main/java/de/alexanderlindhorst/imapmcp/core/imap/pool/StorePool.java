@@ -122,7 +122,7 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     public IMAPStore borrow(PoolKey key) throws Exception {
         if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
             pool.clear(key);
-            throw new MessagingException("account is not active");
+            throw new AccountNeedsRelinkException();
         }
         for (int attempt = 0; attempt < REVISION_ATTEMPTS; attempt++) {
             IMAPStore store = pool.borrowObject(key);
