@@ -14,7 +14,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.function.Function;
@@ -54,6 +56,7 @@ public final class HttpLocalServer {
     private final Filter originFilter;
     private final Filter bearerFilter;
     private final HttpServlet healthServlet;
+    private final Map<String, HttpServlet> openServlets;
 
     private Server server;
     private ServerConnector connector;
@@ -73,6 +76,7 @@ public final class HttpLocalServer {
         this.originFilter = b.originFilter;
         this.bearerFilter = b.bearerFilter;
         this.healthServlet = b.healthServlet;
+        this.openServlets = Map.copyOf(b.openServlets);
     }
 
     public static Builder builder() {
@@ -93,6 +97,7 @@ public final class HttpLocalServer {
         private Filter originFilter;
         private Filter bearerFilter;
         private HttpServlet healthServlet;
+        private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
 
         public Builder bind(String bind) {
             this.bind = Objects.requireNonNull(bind, "bind");
@@ -161,6 +166,18 @@ public final class HttpLocalServer {
             return this;
         }
 
+        /**
+         * An unauthenticated servlet outside /mcp (no Host/Origin/token filters), like /health; used for the
+         * RFC 9728 metadata of {@code http-public}; restricted to paths under /.well-known/.
+         */
+        public Builder openServlet(String path, HttpServlet servlet) {
+            if (path == null || !path.startsWith("/.well-known/") || path.length() == "/.well-known/".length()) {
+                throw new IllegalArgumentException("an unauthenticated servlet may only live under /.well-known/");
+            }
+            this.openServlets.put(Objects.requireNonNull(path, "path"), Objects.requireNonNull(servlet, "servlet"));
+            return this;
+        }
+
         public HttpLocalServer build() {
             return new HttpLocalServer(this);
         }
@@ -199,6 +216,7 @@ public final class HttpLocalServer {
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
         }
+        openServlets.forEach((path, servlet) -> ctx.addServlet(new ServletHolder(servlet), path));
         ctx.addServlet(new ServletHolder(new NotFoundServlet()), "/");
         server.setHandler(ctx);
         server.setStopTimeout(5000);
