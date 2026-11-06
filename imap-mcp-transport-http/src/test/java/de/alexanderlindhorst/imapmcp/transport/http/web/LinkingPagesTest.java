@@ -181,7 +181,7 @@ class LinkingPagesTest {
             }
         };
         server = HttpLocalServer.builder().port(port).webSurface(WebSurface.of(config, stub,
-                new InMemoryStores.Pending(), sessions, new InMemoryStores.Tenants(), linker, new RecordingAuditLog(),
+                new InMemoryStores.Pending(), sessions, new InMemoryStores.Tenants(new RecordingAuditLog()), linker,
                 Clock.systemUTC())).build();
         server.start();
         WebSessionStore.Created c = sessions.create(TENANT, Instant.now());

@@ -333,10 +333,51 @@ class JdbcWebStoresIT {
                 new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory(db.dataSource()));
 
         assertThat(provisioner.find("https://idp.example", "prov-1")).isEmpty();
-        var created = provisioner.create("https://idp.example", "prov-1");
+        var created = provisioner.create("https://idp.example", "prov-1", "req-1");
         assertThat(created.disabled()).isFalse();
         assertThat(provisioner.find("https://idp.example", "prov-1").orElseThrow().tenantId())
                 .isEqualTo(created.tenantId());
-        assertThat(provisioner.create("https://idp.example", "prov-1").tenantId()).isEqualTo(created.tenantId());
+        assertThat(provisioner.create("https://idp.example", "prov-1", "req-2").tenantId())
+                .isEqualTo(created.tenantId());
+    }
+
+    @Test
+    void creatingATenantWritesExactlyOneTenantCreatedRowEvenUnderConcurrency() throws Exception {
+        var provisioner = new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantProvisioner(
+                new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory(db.dataSource()));
+        java.util.Set<TenantId> ids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(8)) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 16; i++) {
+                int n = i;
+                futures.add(pool.submit(() -> ids.add(provisioner.create("https://idp.example", "audited", "r" + n)
+                        .tenantId())));
+            }
+            for (var f : futures) {
+                f.get();
+            }
+        }
+
+        assertThat(ids).hasSize(1);
+        TenantId t = ids.iterator().next();
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tenant_id = '" + t.value()
+                + "' AND event_type = 'tenant_created' AND result = 'ok' AND account_id IS NULL")).isEqualTo(1);
+    }
+
+    @Test
+    void aFailingAuditWriteLeavesNoTenantBehind() throws Exception {
+        var provisioner = new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantProvisioner(
+                new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory(db.dataSource()));
+        exec("ALTER TABLE audit_event ADD CONSTRAINT audit_block_tenant CHECK (event_type <> 'tenant_created')"
+                + " NOT VALID");
+        try {
+            assertThatThrownBy(() -> provisioner.create("https://idp.example", "blocked", "r"))
+                    .isInstanceOf(de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException.class);
+        } finally {
+            exec("ALTER TABLE audit_event DROP CONSTRAINT audit_block_tenant");
+        }
+
+        assertThat(provisioner.find("https://idp.example", "blocked")).isEmpty();
+        assertThat(count("SELECT count(*) FROM tenant WHERE subject = 'blocked'")).isZero();
     }
 }
