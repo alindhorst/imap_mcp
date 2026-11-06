@@ -12,7 +12,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,9 +28,6 @@ import org.slf4j.LoggerFactory;
 public final class JdbcCredentialStore implements CredentialStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(JdbcCredentialStore.class);
-
-    static final String METRIC_TOOL = "credentials";
-    static final String METRIC_OP_DECRYPT_FAILURE = "decrypt_failure";
 
     private final DataSource dataSource;
     private final CredentialCipher cipher;
@@ -77,7 +73,7 @@ public final class JdbcCredentialStore implements CredentialStore {
         } catch (CredentialDecryptException e) { // KeyServiceUnavailableException passes: availability, not integrity
             LOG.error("credential decrypt failed tenant={} account={}", logIds.tenant(tenant.value()),
                     logIds.account(account.value()));
-            metrics.operation(tenant, METRIC_TOOL, METRIC_OP_DECRYPT_FAILURE, Duration.ZERO);
+            metrics.decryptFailure(tenant);
             throw e;
         }
     }

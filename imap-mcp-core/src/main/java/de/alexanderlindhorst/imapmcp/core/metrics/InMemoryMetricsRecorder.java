@@ -115,6 +115,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void decryptFailure(TenantId tenant) {
+        operation(tenant, "credentials", "decrypt_failure", Duration.ZERO);
+    }
+
+    @Override
     public void authFailure(TenantId tenant) {
         tenants.computeIfAbsent(tenant, k -> new TenantStats()).authFailures.incrementAndGet();
         events.incrementAndGet();
