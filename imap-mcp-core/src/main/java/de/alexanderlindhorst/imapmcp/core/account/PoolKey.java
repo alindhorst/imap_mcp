@@ -7,16 +7,20 @@ import java.util.Objects;
 
 /**
  * Internal pool key {@code (tenant, account)}. Only obtainable from the caller's {@link AccountContext} and an
- * account resolved through a tenant-scoped lookup, never from client-supplied strings.
+ * account resolved through a tenant-scoped lookup, never from client-supplied strings. It also carries the
+ * {@code revision} of the account as resolved in the call (SPEC 5.5); the revision is not part of the identity,
+ * so all revisions of an account share one pool key and a Store of an older revision is replaced on borrow.
  */
 public final class PoolKey {
 
     private final TenantId tenantId;
     private final AccountId accountId;
+    private final long revision;
 
-    private PoolKey(TenantId tenantId, AccountId accountId) {
+    private PoolKey(TenantId tenantId, AccountId accountId, long revision) {
         this.tenantId = tenantId;
         this.accountId = accountId;
+        this.revision = revision;
     }
 
     public static PoolKey of(AccountContext context, ResolvedAccount resolved) {
@@ -25,7 +29,7 @@ public final class PoolKey {
         if (!context.tenantId().equals(resolved.tenantId())) {
             throw new IllegalArgumentException("account does not belong to the context tenant");
         }
-        return new PoolKey(resolved.tenantId(), resolved.account().id());
+        return new PoolKey(resolved.tenantId(), resolved.account().id(), resolved.account().revision());
     }
 
     public TenantId tenantId() {
@@ -34,6 +38,11 @@ public final class PoolKey {
 
     public AccountId accountId() {
         return accountId;
+    }
+
+    /** Revision of the account as resolved in this call; not part of {@code equals}/{@code hashCode}. */
+    public long revision() {
+        return revision;
     }
 
     @Override

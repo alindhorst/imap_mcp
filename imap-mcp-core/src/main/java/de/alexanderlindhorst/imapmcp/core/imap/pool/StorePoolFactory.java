@@ -12,7 +12,9 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import org.apache.commons.pool2.KeyedPooledObjectFactory;
 import org.apache.commons.pool2.PooledObject;
@@ -36,6 +38,8 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     private final Function<PoolKey, MailAccount> accounts;
     private final PoolSettings settings;
     private final MetricsRecorder metrics;
+    /** Account revision each live Store was made for; entries leave in {@link #destroyObject}. */
+    private final Map<IMAPStore, Long> revisions = new ConcurrentHashMap<>();
 
     public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings settings) {
@@ -69,6 +73,9 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
         if (account == null) {
             throw new MessagingException("no account for pool key");
         }
+        if (account.status() != MailAccount.Status.ACTIVE) { // no connect for an account that needs a re-link
+            throw new MessagingException("account is not active");
+        }
         Session session = sessions.sessionFor(key, account);
         IMAPStore store = (IMAPStore) session.getStore(ImapSessionFactory.protocolFor(account));
         try (Secret secret = credentials.resolve(key.tenantId(), key.accountId())
@@ -81,12 +88,19 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
             closeQuietly(store);
             throw e;
         }
+        revisions.put(store, account.revision());
         return new DefaultPooledObject<>(store);
+    }
+
+    /** Revision of the account the Store was made for, or -1 for a Store this factory did not make. */
+    long revisionOf(IMAPStore store) {
+        return revisions.getOrDefault(store, -1L);
     }
 
     @Override
     public void destroyObject(PoolKey key, PooledObject<IMAPStore> p) {
         IMAPStore store = p.getObject();
+        revisions.remove(store);
         // LOGOUT may block up to the read timeout; neither the evictor nor the caller may wait for it.
         Thread.startVirtualThread(() -> closeQuietly(store));
     }
