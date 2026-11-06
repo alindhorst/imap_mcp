@@ -270,4 +270,138 @@ class StorePoolTest {
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(500));
         assertThat(closed.get()).isZero();
     }
+
+    private MailAccount accountAt(long revision, MailAccount.Status status) {
+        return new MailAccount(account.id(), "label", null, "127.0.0.1", greenMail.getImaps().getPort(),
+                Security.IMPLICIT_TLS, Flavor.GENERIC, USER, new SecretRef("env:X"), false, false,
+                MailAccount.Auth.PASSWORD, status, revision);
+    }
+
+    private PoolKey keyFor(MailAccount a) {
+        return PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, a, "acc_test"));
+    }
+
+    @Test
+    void poolKeyCarriesRevisionButEqualityIgnoresIt() {
+        PoolKey r0 = keyFor(accountAt(0, MailAccount.Status.ACTIVE));
+        PoolKey r5 = keyFor(accountAt(5, MailAccount.Status.ACTIVE));
+        assertThat(r5.revision()).isEqualTo(5L);
+        assertThat(r5).isEqualTo(r0).hasSameHashCodeAs(r0);
+    }
+
+    @Test
+    void borrowedStoreWithLowerRevisionIsInvalidatedAndBorrowRepeated() throws Exception {
+        account = accountAt(0, MailAccount.Status.ACTIVE);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k0 = keyFor(account);
+        IMAPStore first = p.borrow(k0);
+        p.release(k0, first);
+        account = accountAt(1, MailAccount.Status.ACTIVE); // e.g. credentials changed
+        PoolKey k1 = keyFor(account);
+        IMAPStore second = p.borrow(k1);
+        assertThat(second).isNotSameAs(first);
+        assertThat(second.isConnected()).isTrue();
+        p.release(k1, second);
+        assertThat(p.createdCount()).isEqualTo(2);
+        await(() -> p.destroyedCount() == 1);
+        await(() -> !first.isConnected());
+        assertThat(p.numIdle(k1)).isEqualTo(1);
+    }
+
+    @Test
+    void storeWithEqualOrHigherRevisionIsReused() throws Exception {
+        account = accountAt(3, MailAccount.Status.ACTIVE);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        IMAPStore first = p.borrow(keyFor(account));
+        p.release(keyFor(account), first);
+        IMAPStore same = p.borrow(keyFor(accountAt(3, MailAccount.Status.ACTIVE)));
+        assertThat(same).isSameAs(first);
+        p.release(keyFor(account), same);
+        IMAPStore older = p.borrow(keyFor(accountAt(2, MailAccount.Status.ACTIVE)));
+        assertThat(older).isSameAs(first);
+        p.release(keyFor(account), older);
+        assertThat(p.createdCount()).isEqualTo(1);
+    }
+
+    @Test
+    void borrowGivesUpWhenNoStoreWithTheRequestedRevisionCanBeMade() throws Exception {
+        account = accountAt(0, MailAccount.Status.ACTIVE); // the lookup is behind what the call resolved
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey ahead = keyFor(accountAt(9, MailAccount.Status.ACTIVE));
+        assertThatThrownBy(() -> p.borrow(ahead)).isInstanceOf(Exception.class);
+        assertThat(p.createdCount()).isLessThanOrEqualTo(3);
+        assertThat(p.numActive(ahead)).isZero();
+        assertThat(p.numIdle(ahead)).isZero();
+    }
+
+    @Test
+    void noConnectionIsMadeForNeedsRelinkAccount() {
+        account = accountAt(1, MailAccount.Status.NEEDS_RELINK);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k = keyFor(account);
+        assertThatThrownBy(() -> p.borrow(k)).isInstanceOf(Exception.class);
+        assertThat(credentialLookups.get()).isZero();
+        assertThat(p.createdCount()).isZero();
+        assertThat(p.numActive(k)).isZero();
+    }
+
+    @Test
+    void storeIdleBeforeRelinkIsNotHandedOutAfterTheStatusChange() throws Exception {
+        account = accountAt(0, MailAccount.Status.ACTIVE);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        IMAPStore first = p.borrow(keyFor(account));
+        p.release(keyFor(account), first);
+        account = accountAt(1, MailAccount.Status.NEEDS_RELINK);
+        PoolKey k1 = keyFor(account);
+        assertThatThrownBy(() -> p.borrow(k1)).isInstanceOf(Exception.class);
+        assertThat(credentialLookups.get()).isEqualTo(1); // only the first connect
+        await(() -> p.destroyedCount() == 1);
+    }
+
+    @Test
+    void poolLooksAccountsUpThroughTheRepository() throws Exception {
+        MailAccount stored = accountAt(0, MailAccount.Status.ACTIVE);
+        de.alexanderlindhorst.imapmcp.core.account.InMemoryAccountRepository repo =
+                new de.alexanderlindhorst.imapmcp.core.account.InMemoryAccountRepository(
+                        java.util.Map.of(TENANT, java.util.List.of(stored)));
+        pool = new StorePool(sessions, credentials(), capabilities, repo, PoolSettings.DEFAULTS);
+        PoolKey k = keyFor(stored);
+        IMAPStore store = pool.borrow(k);
+        assertThat(store.isConnected()).isTrue();
+        pool.release(k, store);
+        // another tenant's key for the same account id finds nothing in the repository
+        PoolKey foreign = PoolKey.of(new AccountContext(new TenantId("t2")),
+                new ResolvedAccount(new TenantId("t2"), stored, "acc_test"));
+        assertThatThrownBy(() -> pool.borrow(foreign)).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void allIdleStoresOfAnOlderRevisionAreClearedSoTheBorrowSucceeds() throws Exception {
+        account = accountAt(0, MailAccount.Status.ACTIVE);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k0 = keyFor(account);
+        IMAPStore a = p.borrow(k0);
+        IMAPStore b = p.borrow(k0);
+        IMAPStore c = p.borrow(k0);
+        p.release(k0, a);
+        p.release(k0, b);
+        p.release(k0, c);
+        assertThat(p.numIdle(k0)).isEqualTo(3);
+        account = accountAt(1, MailAccount.Status.ACTIVE);
+        PoolKey k1 = keyFor(account);
+        IMAPStore fresh = p.borrow(k1);
+        assertThat(fresh).isNotSameAs(a).isNotSameAs(b).isNotSameAs(c);
+        p.release(k1, fresh);
+        await(() -> p.destroyedCount() == 3);
+    }
+
+    @Test
+    void borrowRefusesAKeyWhoseResolvedAccountNeedsRelink() {
+        account = accountAt(1, MailAccount.Status.ACTIVE); // lookup still says active
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k = keyFor(accountAt(1, MailAccount.Status.NEEDS_RELINK));
+        assertThatThrownBy(() -> p.borrow(k)).isInstanceOf(Exception.class);
+        assertThat(credentialLookups.get()).isZero();
+        assertThat(p.createdCount()).isZero();
+    }
 }

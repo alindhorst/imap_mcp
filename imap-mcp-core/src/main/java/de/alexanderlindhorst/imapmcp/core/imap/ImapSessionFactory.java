@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import jakarta.mail.Session;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -12,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
+import javax.net.SocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +28,10 @@ public final class ImapSessionFactory implements AutoCloseable {
 
     private final ImapTimeouts timeouts;
     private final boolean trace;
+    private final SocketFactory socketFactory;
     private final AtomicBoolean traceWarned = new AtomicBoolean();
     private final UnaryOperator<Properties> propertiesHook;
-    private final Map<PoolKey, Session> sessions = new ConcurrentHashMap<>();
+    private final Map<SessionKey, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledThreadPoolExecutor writeTimeoutExecutor;
 
     public ImapSessionFactory(ImapTimeouts timeouts) {
@@ -46,7 +49,17 @@ public final class ImapSessionFactory implements AutoCloseable {
 
     /** {@code propertiesHook} is a test seam (for example to trust test certificates); never fed from config. */
     public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace) {
+        this(timeouts, propertiesHook, trace, null);
+    }
+
+    /**
+     * {@code socketFactory} (nullable) is the SSRF-pinning socket factory of {@code http-public} (SPEC 5.3); when set
+     * it is installed on every session.
+     */
+    public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace,
+            SocketFactory socketFactory) {
         this.trace = trace;
+        this.socketFactory = socketFactory;
         this.timeouts = Objects.requireNonNull(timeouts, "timeouts");
         this.propertiesHook = Objects.requireNonNull(propertiesHook, "propertiesHook");
         this.writeTimeoutExecutor = new ScheduledThreadPoolExecutor(1, r -> {
@@ -68,10 +81,14 @@ public final class ImapSessionFactory implements AutoCloseable {
         return account.security() == Security.IMPLICIT_TLS ? "imaps" : "imap";
     }
 
+    /** Sessions are keyed by pool key and revision: a revision may change protocol and so the property prefix. */
+    private record SessionKey(PoolKey key, long revision) {
+    }
+
     public Session sessionFor(PoolKey key, MailAccount account) {
         Objects.requireNonNull(key, "key");
         String protocol = protocolFor(account);
-        return sessions.computeIfAbsent(key, k -> newSession(protocol));
+        return sessions.computeIfAbsent(new SessionKey(key, key.revision()), k -> newSession(protocol));
     }
 
     private Session newSession(String protocol) {
@@ -107,7 +124,27 @@ public final class ImapSessionFactory implements AutoCloseable {
         props.setProperty("mail.debug.auth", "false");
         props.setProperty("mail.debug.auth.username", "false");
         props.setProperty("mail.debug.auth.password", "false");
-        return propertiesHook.apply(props);
+        Properties out = propertiesHook.apply(props);
+        if (socketFactory != null) {
+            pin(out, p);
+        }
+        return out;
+    }
+
+    /**
+     * Installs the pinning socket factory (SPEC 5.3). Angus' default fallback would retry with a plain socket and
+     * re-resolve the name, so it is off; keys that would route around the factory are removed.
+     */
+    private void pin(Properties props, String p) {
+        // keySet, not stringPropertyNames: a factory is stored as an object and would be skipped
+        for (Object key : List.copyOf(props.keySet())) {
+            if (key instanceof String k && (k.startsWith(p + "ssl.socketFactory") || k.startsWith(p + "socketFactory")
+                    || k.startsWith(p + "proxy.") || k.startsWith(p + "socks."))) {
+                props.remove(key);
+            }
+        }
+        props.put(p + "socketFactory", socketFactory); // an object, not a class name
+        props.setProperty(p + "socketFactory.fallback", "false");
     }
 
     @Override

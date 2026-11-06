@@ -34,4 +34,9 @@ public class InMemoryAccountRepository implements AccountRepository {
         }
         return findByTenant(tenant).stream().filter(r -> r.handle().equals(handle)).findFirst();
     }
+
+    @Override
+    public Optional<ResolvedAccount> findByTenantAndId(TenantId tenant, AccountId id) {
+        return findByTenant(tenant).stream().filter(r -> r.account().id().equals(id)).findFirst();
+    }
 }

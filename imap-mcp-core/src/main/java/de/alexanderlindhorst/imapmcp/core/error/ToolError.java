@@ -205,6 +205,13 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 "Retry the same call later.", null, requestId);
     }
 
+    /** The SSRF policy refused the connect (SPEC 5.3). Not retryable; the message never names host or address. */
+    public static ToolError addressBlocked(String requestId) {
+        return of(ErrorCode.UPSTREAM_ERROR, "The IMAP server address is not allowed.",
+                "Do not retry; the account host is not permitted by the deployment policy.",
+                detail("reason", "address_blocked"), requestId);
+    }
+
     /** serverText is untrusted: control characters are stripped, collapsed to a single line and capped (UntrustedText). */
     public static ToolError upstreamError(String serverText, String requestId) {
         return upstreamError(serverText, null, requestId);

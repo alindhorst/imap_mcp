@@ -40,6 +40,7 @@
     <testcontainers.version>2.0.5</testcontainers.version>
     <reactor.version>3.7.19</reactor.version>
     <angus.version>2.0.5</angus.version>
+    <nimbus.jose.version>10.10</nimbus.jose.version>
     <slf4j.version>2.0.20</slf4j.version>
     <hikaricp.version>7.1.0</hikaricp.version>
     <flyway.version>13.12.1</flyway.version>
@@ -162,6 +163,11 @@
         <groupId>tools.jackson.dataformat</groupId>
         <artifactId>jackson-dataformat-yaml</artifactId>
         <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.nimbusds</groupId>
+        <artifactId>nimbus-jose-jwt</artifactId>
+        <version>${nimbus.jose.version}</version>
       </dependency>
       <dependency>
         <groupId>org.jsoup</groupId>
