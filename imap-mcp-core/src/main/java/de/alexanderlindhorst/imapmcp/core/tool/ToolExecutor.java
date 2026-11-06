@@ -177,7 +177,8 @@ public final class ToolExecutor {
                 ctx.attach(logIds, callDeadline);
                 future.complete(delegate.handle(ctx, args));
             } catch (Throwable t) {
-                if (RefusalMarker.takeRecent()) { // the marker is per thread; carry it over to the mapping thread
+                // the marker is per thread; carry it over to the mapping thread, only for Angus' bare failure
+                if (RefusalMarker.takeRecent() && ImapErrorMapper.hasBareConnectionFailure(t)) {
                     t.addSuppressed(new AddressBlockedException());
                 }
                 future.completeExceptionally(t);

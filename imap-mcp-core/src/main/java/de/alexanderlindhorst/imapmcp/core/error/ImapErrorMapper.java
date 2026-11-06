@@ -73,7 +73,8 @@ public final class ImapErrorMapper {
         return new MappedError(ToolError.internalError(requestId), true);
     }
 
-    private static boolean hasBareConnectionFailure(Throwable t) {
+    /** Angus\' bare {@code MessagingException("connection failure")} (cause dropped) anywhere in the chain. */
+    public static boolean hasBareConnectionFailure(Throwable t) {
         return anyInChain(t, cur -> cur instanceof MessagingException me && "connection failure".equals(me.getMessage())
                 && me.getCause() == null && me.getNextException() == null);
     }

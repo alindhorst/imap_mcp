@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.core.net;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.UnknownHostException;
@@ -57,15 +58,6 @@ public final class PinnedSocketFactory extends SocketFactory {
      * name). Also usable at link time.
      */
     public InetSocketAddress resolveChecked(String host, int port) throws IOException {
-        try {
-            return doResolveChecked(host, port);
-        } catch (AddressBlockedException e) {
-            RefusalMarker.mark();
-            throw e;
-        }
-    }
-
-    private InetSocketAddress doResolveChecked(String host, int port) throws IOException {
         String name;
         try {
             name = policy.normalizeHost(host);
@@ -121,6 +113,10 @@ public final class PinnedSocketFactory extends SocketFactory {
 
     private final class PinnedSocket extends Socket {
 
+        PinnedSocket() {
+            super(Proxy.NO_PROXY); // never a SOCKS or system proxy: the connect must reach the checked address
+        }
+
         @Override
         public void connect(SocketAddress endpoint) throws IOException {
             connect(endpoint, 0);
@@ -132,7 +128,14 @@ public final class PinnedSocketFactory extends SocketFactory {
                 throw new IllegalArgumentException("unsupported address type");
             }
             // The address Angus resolved is dropped on purpose: only its name is used.
-            super.connect(resolveChecked(isa.getHostString(), isa.getPort()), timeout);
+            InetSocketAddress target;
+            try {
+                target = resolveChecked(isa.getHostString(), isa.getPort());
+            } catch (AddressBlockedException e) {
+                RefusalMarker.mark(); // here only: link-time checks run on pooled threads (see RefusalMarker)
+                throw e;
+            }
+            super.connect(target, timeout);
         }
     }
 }
