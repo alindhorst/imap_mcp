@@ -346,6 +346,7 @@ class AccountsFlowTest {
     @Test
     void anExistingTenantWritesNoTenantCreatedRow() throws Exception {
         tenants.create(idp.issuer, "alice", "setup");
+        audit.events.clear();
 
         callback(startLogin(), "good-code");
 

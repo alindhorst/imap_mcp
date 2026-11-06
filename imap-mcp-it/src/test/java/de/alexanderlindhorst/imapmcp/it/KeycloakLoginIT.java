@@ -279,6 +279,15 @@ class KeycloakLoginIT {
         }
     }
 
+    /** Starts a test from an empty account list of the signed-in tenant (the tenants persist across tests). */
+    private static void removeAccountsOf(Session s) throws Exception {
+        try (Connection c = db.dataSource().getConnection();
+                var ps = c.prepareStatement("DELETE FROM mailbox_account WHERE tenant_id = ?")) {
+            ps.setObject(1, java.util.UUID.fromString(s.tenantId()));
+            ps.executeUpdate();
+        }
+    }
+
     private HttpResponse<String> form(Session s, String path, Map<String, String> fields) throws Exception {
         StringBuilder body = new StringBuilder("csrf=").append(enc(s.csrf()));
         fields.forEach((k, v) -> body.append('&').append(enc(k)).append('=').append(enc(v)));
@@ -310,8 +319,9 @@ class KeycloakLoginIT {
         probeResult = LoginProbe.Result.OK;
         PROBED.clear();
         Session s = signIn(KeycloakFixture.ALICE, KeycloakFixture.ALICE_PASSWORD);
-        int auditBefore = count("SELECT count(*) FROM audit_event WHERE tenant_id = ?",
-                java.util.UUID.fromString(s.tenantId()));
+        removeAccountsOf(s);
+        int okBefore = count("SELECT count(*) FROM audit_event WHERE tenant_id = ? AND result = 'ok'"
+                + " AND event_type IN ('link','settings','relink','unlink')", java.util.UUID.fromString(s.tenantId()));
 
         // link
         HttpResponse<String> linked = form(s, "/accounts/link", linkFields("Work", "imap.example.com"));
@@ -367,7 +377,7 @@ class KeycloakLoginIT {
         // audit: one ok row per action, none holding host, user name, label or password
         assertThat(count("SELECT count(*) FROM audit_event WHERE tenant_id = ? AND result = 'ok'"
                 + " AND event_type IN ('link','settings','relink','unlink')", java.util.UUID.fromString(s.tenantId())))
-                .isEqualTo(4);
+                .isEqualTo(okBefore + 4);
         try (Connection c = db.dataSource().getConnection(); var st = c.createStatement();
                 var rs = st.executeQuery("SELECT row_to_json(a)::text FROM audit_event a")) {
             while (rs.next()) {
@@ -375,12 +385,16 @@ class KeycloakLoginIT {
                         .doesNotContain("Renamed").doesNotContain("canary");
             }
         }
-        assertThat(auditBefore).isGreaterThanOrEqualTo(1); // tenant_created
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tenant_id = ? AND event_type = 'tenant_created'",
+                java.util.UUID.fromString(s.tenantId()))).isEqualTo(1);
     }
 
     @Test
     void aFailedProbeOrARefusedHostStoresNothingAndWritesRefusalRows() throws Exception {
         Session s = signIn(KeycloakFixture.CAROL, KeycloakFixture.CAROL_PASSWORD);
+        removeAccountsOf(s);
+        int refusedBefore = count("SELECT count(*) FROM audit_event WHERE tenant_id = ? AND event_type = 'link'"
+                + " AND result LIKE 'refused_%'", java.util.UUID.fromString(s.tenantId()));
         PROBED.clear();
         probeResult = LoginProbe.Result.AUTH_FAILED;
         HttpResponse<String> wrong = form(s, "/accounts/link", linkFields("Nope", "imap.example.com"));
@@ -394,13 +408,15 @@ class KeycloakLoginIT {
         assertThat(PROBED).hasSize(1); // only the first reached the probe; the SSRF refusals did not
         assertThat(accountRepo.findByTenant(tenant(s))).isEmpty();
         assertThat(count("SELECT count(*) FROM audit_event WHERE tenant_id = ? AND event_type = 'link'"
-                + " AND result LIKE 'refused_%'", java.util.UUID.fromString(s.tenantId()))).isEqualTo(3);
+                + " AND result LIKE 'refused_%'", java.util.UUID.fromString(s.tenantId())))
+                .isEqualTo(refusedBefore + 3);
     }
 
     @Test
     void anotherTenantNeverSeesOrChangesAnAccount() throws Exception {
         probeResult = LoginProbe.Result.OK;
         Session alice = signIn(KeycloakFixture.ALICE, KeycloakFixture.ALICE_PASSWORD);
+        removeAccountsOf(alice);
         form(alice, "/accounts/link", linkFields("Alice only", "imap.example.com"));
         var handle = accountRepo.findByTenant(tenant(alice)).get(0).handle();
         Session carol = signIn(KeycloakFixture.CAROL, KeycloakFixture.CAROL_PASSWORD);
@@ -422,9 +438,7 @@ class KeycloakLoginIT {
     void theAccountCapStopsTheFourthAccountBeforeAnyProbe() throws Exception {
         probeResult = LoginProbe.Result.OK;
         Session alice = signIn(KeycloakFixture.ALICE, KeycloakFixture.ALICE_PASSWORD);
-        for (var r : accountRepo.findByTenant(tenant(alice))) {
-            form(alice, "/accounts/unlink", Map.of("account", r.handle()));
-        }
+        removeAccountsOf(alice);
         for (int i = 0; i < MAX_ACCOUNTS; i++) {
             assertThat(form(alice, "/accounts/link", linkFields("A" + i, "imap.example.com")).statusCode())
                     .isEqualTo(200);

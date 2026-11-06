@@ -89,6 +89,14 @@ class JdbcWebStoresIT {
         }
     }
 
+    private static int countWhere(String sql) throws Exception {
+        try (Connection c = db.dataSource().getConnection(); var st = c.createStatement();
+                ResultSet rs = st.executeQuery(sql)) {
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
+
     private static int count(String table) throws Exception {
         try (Connection c = db.dataSource().getConnection(); var st = c.createStatement();
                 ResultSet rs = st.executeQuery("SELECT count(*) FROM " + table)) {
@@ -360,7 +368,7 @@ class JdbcWebStoresIT {
 
         assertThat(ids).hasSize(1);
         TenantId t = ids.iterator().next();
-        assertThat(count("SELECT count(*) FROM audit_event WHERE tenant_id = '" + t.value()
+        assertThat(countWhere("SELECT count(*) FROM audit_event WHERE tenant_id = '" + t.value()
                 + "' AND event_type = 'tenant_created' AND result = 'ok' AND account_id IS NULL")).isEqualTo(1);
     }
 
@@ -378,6 +386,6 @@ class JdbcWebStoresIT {
         }
 
         assertThat(provisioner.find("https://idp.example", "blocked")).isEmpty();
-        assertThat(count("SELECT count(*) FROM tenant WHERE subject = 'blocked'")).isZero();
+        assertThat(countWhere("SELECT count(*) FROM tenant WHERE subject = 'blocked'")).isZero();
     }
 }
