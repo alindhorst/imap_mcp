@@ -496,6 +496,23 @@ kms:
 
 Beyond the example above (defaults in brackets): `oauth.subjectClaim` (`sub`), `oauth.roleClaim` (`realm_access.roles`), `oauth.allowWithoutRole` (`false`), `ssrf.allowAnyPublicHost` (`false`), `ssrf.extraBlockedCidrs` (empty), `public.maxAccountsPerTenant` (`10`, 1 to 1000), `tools.download.inlineMaxBytes` (`5MiB`), `tools.download.inlineConcurrency` (`4`), `http.stateful` (`false`), `purge.enabled` (`false`), `http.allowedHosts` (the host of `public.baseUrl`) and `http.allowedOrigins`. Unknown keys fail startup.
 
+#### Keycloak setup for the Claude connector
+
+The MCP client (the Claude connector) gets its access tokens from Keycloak; the server only validates them. The realm file `imap-mcp-it/src/test/resources/keycloak/imap-public-realm.json` is a working template (test data only; never use its users or secrets).
+
+1. **Realm and signing:** an ordinary realm with asymmetric signing keys. Keycloak's default RS256 works; the server accepts RS256, PS256 and ES256 and refuses `none` and HMAC algorithms. The realm's issuer URL is `oauth.issuer` (https, exactly the `issuer` of the discovery document).
+2. **The client of the connector:** either dynamic client registration (DCR) or a client you register by hand. Registered by hand it is a public client (client authentication off) with the standard flow on and PKCE method `S256`, and the redirect URIs that the connector documents. With DCR, enable the realm's client registration policies you want (for example Trusted Hosts) and make sure the policy "Allowed Client Scopes" lets registered clients use the scopes of step 4. This client is not the web client of the linking surface (see below).
+3. **Audience:** the access token's `aud` must contain `oauth.resource` (for example `https://mail.example.com/mcp`). Create a client scope with an "Audience" mapper whose "Included Custom Audience" is exactly `oauth.resource`, "Add to access token" on, and assign the scope to the connector's client as a default scope; for DCR clients add it to the realm's default client scopes so that every registered client gets it. Without it every token is refused with `401` (`invalid_token`).
+4. **Permissions as scopes:** create the client scopes `imap-mcp:read` and `imap-mcp:write` and assign them to the connector's client as optional scopes (for DCR, allow them in the "Allowed Client Scopes" policy). The read scope is required for every request; the write scope is requested only when the user lets the connector change mail.
+5. **Who may create a tenant:** create the realm role named by `oauth.requiredRole` (for example `imap-mcp-user`) and give it to the users; the role is checked at the first login of the linking surface, not in the access token (see "Who gets a tenant" below for the ID token mapper).
+6. **Web client of the linking surface:** the second, confidential client described under "Linking surface".
+
+#### Decisions of v3b
+
+Decided by the owner on 2026-11-06, as recommended: **D1** Keycloak, self-hosted, as the identity provider. **D2** a tenant is created at the first login of the linking surface, only with the required IdP role. **D3** scopes: `imap-mcp:read` in the filter, `imap-mcp:write` per call for the write tools and purge. **D4** server-rendered linking pages without JavaScript under `/accounts`. **D5** audit rows kept 180 days; a failed audit write fails the call (fail-closed). **D6** key wrapping with a local KEK or Vault Transit behind one interface. **D7** XOAUTH2 is not part of the first public release. **D8** purge over HTTP behind `http.stateful` and `purge.enabled`, off by default until the owner's connector smoke test. **D9** `download_attachment` returns an embedded resource with a cap, no `resource_link`.
+
+Open owner decisions (the current behaviour is described in SPEC section 6): **D10** whether a mutating call that fails in the schema check writes an audit row. **D11** whether a mutating call without a resolved account writes an audit row. **D12** whether `initialize` is rate-limited per principal on the stateful transport. **D13** whether disabling a tenant must take effect immediately instead of within the 5-minute tenant cache. **D14** whether a LOGIN answered `NO [UNAVAILABLE]` is retryable `UPSTREAM_UNAVAILABLE` instead of `AUTH_FAILED`. **D15** whether `imap.trace` is allowed in `http-public`.
+
 #### Linking surface (`/accounts`)
 
 Users link their mail accounts in a small server-rendered web application on the same port, under `<public.baseUrl>/accounts` (no JavaScript; the `link_url` in `list_accounts` and in re-link errors points there). It has its own filters and no bearer token; the `/mcp` chain is unchanged.
