@@ -51,7 +51,7 @@ public final class JdbcAuditLog implements AuditLog {
             try {
                 List<Long> ids = new ArrayList<>();
                 String sql = "INSERT INTO audit_event (tenant_id, account_id, request_id, event_type, tool, ref_hash,"
-                        + " ref_key_id, item_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
+                        + " ref_key_id, item_status, confirmation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
                 try (PreparedStatement ps = c.prepareStatement(sql)) {
                     if (items.isEmpty()) {
                         ids.add(insert(ps, tenant, call, null, null));
@@ -87,6 +87,7 @@ public final class JdbcAuditLog implements AuditLog {
             ps.setShort(7, (short) ref.keyId());
         }
         ps.setString(8, status);
+        ps.setString(9, call.confirmation());
         try (ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getLong(1);

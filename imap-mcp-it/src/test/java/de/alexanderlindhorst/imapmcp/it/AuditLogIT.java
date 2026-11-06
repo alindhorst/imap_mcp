@@ -186,6 +186,84 @@ class AuditLogIT {
                 new ItemRef("CANARY-folder-ä", 4242424, 9191919)).hash())).isNotEmpty();
     }
 
+    private String dump() throws SQLException {
+        StringBuilder dump = new StringBuilder();
+        try (Connection c = db.dataSource().getConnection();
+                PreparedStatement ps = c.prepareStatement("SELECT row_to_json(a)::text, encode(ref_hash, 'hex')"
+                        + " FROM audit_event a");
+                ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                dump.append(rs.getString(1)).append(rs.getString(2));
+            }
+        }
+        return dump.toString();
+    }
+
+    private ToolCallContext audited(String requestId, String tool) {
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(tenant), requestId);
+        ctx.attachAudit(log, tool);
+        ctx.bindAccount(account);
+        return ctx;
+    }
+
+    @Test
+    void theConfirmationIsStoredWithTheRowsBeforeCompletion() throws Exception {
+        ToolCallContext ctx = audited("req-c", "purge_messages");
+        ctx.audit().confirmation("session_approval");
+        ctx.audit().begin(List.of(new ItemRef("Trash", 3, 3)));
+        assertThat(rows()).singleElement().satisfies(r -> {
+            assertThat(r.confirmation()).isEqualTo("session_approval");
+            assertThat(r.completedAt()).isNull();
+        });
+    }
+
+    @Test
+    void aRefusedPurgeIsOneRowPerVerifiedItemWithTheCodeAndTheElicitationValue() throws Exception {
+        audited("req-r", "purge_messages").audit().recordRefusal(
+                List.of(new ItemRef("CANARY-trash", 5151515, 6161616), new ItemRef("CANARY-trash", 5151515, 6161617)),
+                "PERMISSION_DENIED", "declined");
+        List<Row> rows = rows();
+        assertThat(rows).hasSize(2).allSatisfy(r -> {
+            assertThat(r.errorCode()).isEqualTo("PERMISSION_DENIED");
+            assertThat(r.confirmation()).isEqualTo("declined");
+            assertThat(r.itemStatus()).isEqualTo("not_attempted");
+            assertThat(r.result()).isEqualTo("failed");
+            assertThat(r.refHash()).hasSize(16);
+        });
+        assertThat(dump()).doesNotContain("CANARY").doesNotContain("5151515").doesNotContain("6161616");
+    }
+
+    @Test
+    void itemsAlreadyInTheTargetCarryTheirStatusNextToTheMovedOnes() throws Exception {
+        ToolCallContext ctx = audited("req-m", "move_messages");
+        ctx.audit().begin(List.of(new ItemRef("INBOX", 1, 1), new ItemRef("Target", 1, 9)));
+        ctx.audit().complete(List.of(new ItemResult("ok", null), new ItemResult("already_in_target", null)),
+                "complete", null);
+        assertThat(rows()).extracting(Row::itemStatus).containsExactly("ok", "already_in_target");
+    }
+
+    @Test
+    void aWholeCallErrorWithoutRowsBecomesOneItemLessCallRowThroughTheExecutor() throws Exception {
+        ToolExecutor executor = new ToolExecutor(Duration.ofSeconds(5), new LogIds(RING), MetricsRecorder.NOOP,
+                (t, r, c, d) -> { }, log);
+        Map<String, Object> schema = Map.of("type", "object");
+        ToolDefinition def = new ToolDefinition("move_messages", "M", "d", schema, schema,
+                ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT);
+        ToolOutcome out = executor.wrap(def, (ctx, a) -> new ToolOutcome.Failure(
+                de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle("handles[0]", "req-w")))
+                .handle(new ToolCallContext(new AccountContext(tenant), "req-w"), Map.of());
+        assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(rows()).singleElement().satisfies(r -> {
+            assertThat(r.tool()).isEqualTo("move_messages");
+            assertThat(r.requestId()).isEqualTo("req-w");
+            assertThat(r.accountId()).isNull();
+            assertThat(r.refHash()).isNull();
+            assertThat(r.errorCode()).isEqualTo("INVALID_HANDLE");
+            assertThat(r.result()).isEqualTo("failed");
+            assertThat(r.completedAt()).isNotNull();
+        });
+    }
+
     @Test
     void linkingEventsHoldOnlyTypeTenantAccountRequestAndResult() throws Exception {
         log.event(new EventInfo("link", tenant, account, "req-7", "ok"));

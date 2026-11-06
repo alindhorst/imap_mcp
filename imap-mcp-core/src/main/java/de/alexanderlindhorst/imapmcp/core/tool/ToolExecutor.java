@@ -130,6 +130,9 @@ public final class ToolExecutor {
         TenantId tenant = ctx.accountContext().tenantId();
         Duration elapsed = Duration.between(start, metrics.now());
         metrics.operation(tenant, toolName, "call", elapsed);
+        if (write) {
+            auditFailure(ctx, outcome);
+        }
         if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
             reportExecutorOutcome(toolName, ctx, f.error().code(), elapsed);
         }
@@ -149,6 +152,19 @@ public final class ToolExecutor {
             }
         }
         return outcome;
+    }
+
+    /**
+     * A write tool that ended in a failure (SPEC 5.3): rows begun but not completed are completed with the code on
+     * the wire (handler failure, deadline and cancel included); a call that never began rows gets one item-less
+     * call row with that code. Both are no-ops when the tool already did it, and neither can fail the call.
+     */
+    private static void auditFailure(ToolCallContext ctx, ToolOutcome outcome) {
+        if (outcome instanceof ToolOutcome.Failure f) {
+            String code = f.error().code().name();
+            ctx.audit().completeAborted(ctx.mutationStarted(), code);
+            ctx.audit().recordFailure(code);
+        }
     }
 
     /** The listener runs on the caller thread: bind the keys the worker had (req, tool, hashed tenant and account). */
@@ -239,7 +255,7 @@ public final class ToolExecutor {
     private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx,
             CallState state) {
         state.executorProduced.set(true);
-        ctx.audit().completeAborted(ctx.sealMutation(), null); // rows begun but not completed by the handler
+        ctx.sealMutation();
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
         return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
@@ -247,7 +263,7 @@ public final class ToolExecutor {
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
         // decide under the context lock; a later tryBeginMutation() returns false
-        ctx.audit().completeAborted(ctx.sealMutation(), null);
+        ctx.sealMutation();
         return new ToolOutcome.Failure(afterMutation(toolName, ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }

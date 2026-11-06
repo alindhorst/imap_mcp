@@ -130,27 +130,27 @@ public final class FolderGroupRunner {
     public record Settled(WritePreflight.Item item, BulkResult.Item result) {
     }
 
-    /** As above; {@code settled} items are audited in the same batch (after the grouped ones). Stub. */
+    /**
+     * As above; {@code settled} items are audited in the same batch (after the grouped ones) with their status. A
+     * failure leaves the begun rows to the executor, which completes them with the mapped whole-call code.
+     */
     public List<BulkResult.Item> run(ImapLease lease, ToolCallContext ctx, List<WritePreflight.Group> groups,
             AbsentStatus absent, MutationStep step, List<Settled> settled) throws MessagingException {
         Objects.requireNonNull(lease, "lease");
         Objects.requireNonNull(ctx, "ctx");
         CallAudit audit = ctx.audit();
-        List<WritePreflight.Item> flat = groups.stream().flatMap(g -> g.items().stream()).toList();
+        List<WritePreflight.Item> flat = new ArrayList<>(groups.stream().flatMap(g -> g.items().stream()).toList());
+        settled.forEach(s -> flat.add(s.item()));
         if (!flat.isEmpty()) {
             // fail-closed (SPEC 5.3, D5): a failed write throws here, before any IMAP I/O and any mutation
             audit.begin(flat.stream()
                     .map(i -> new ItemRef(i.ref().folder(), i.ref().uidValidity(), i.ref().uid())).toList());
         }
-        List<BulkResult.Item> out;
-        try {
-            out = runGroups(lease, ctx, groups, absent, step);
-        } catch (MessagingException | RuntimeException e) {
-            audit.completeAborted(ctx.mutationStarted(), null);
-            throw e;
-        }
+        List<BulkResult.Item> out = runGroups(lease, ctx, groups, absent, step);
         if (!flat.isEmpty()) {
-            audit.complete(auditResults(flat, out), auditResult(out), null);
+            List<BulkResult.Item> all = new ArrayList<>(out);
+            settled.forEach(s -> all.add(s.result()));
+            audit.complete(auditResults(flat, all), auditResult(all), null);
         }
         return out;
     }

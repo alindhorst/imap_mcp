@@ -25,6 +25,7 @@ public final class CallAudit {
     private AuditLog.Entry entry;
     private int itemCount;
     private boolean completed;
+    private boolean attempted;
     private String confirmation;
     private String tool = "";
     private String requestId = "";
@@ -47,7 +48,8 @@ public final class CallAudit {
         if (!enabled() || entry != null) {
             return;
         }
-        CallInfo info = call.get();
+        attempted = true;
+        CallInfo info = call.get().withConfirmation(confirmation);
         entry = log.begin(info, List.copyOf(items));
         itemCount = items.size();
         tool = info.tool();
@@ -76,21 +78,56 @@ public final class CallAudit {
         }
     }
 
-    /** The call ended without a result (failure or cancel): all items {@code unknown} if a mutation began, else {@code not_attempted}. */
+    /**
+     * The call ended without a result (failure, cancel or deadline) after {@link #begin}: all items {@code unknown}
+     * if a mutation began, else {@code not_attempted}, each with the whole-call {@code errorCode} (the code on the wire).
+     */
     public synchronized void completeAborted(boolean mutationStarted, String errorCode) {
         if (entry == null || completed) {
             return;
         }
         String status = mutationStarted ? "unknown" : "not_attempted";
-        complete(java.util.Collections.nCopies(itemCount, new ItemResult(status, null)),
-                mutationStarted ? "unknown" : "failed", null);
+        complete(java.util.Collections.nCopies(itemCount, new ItemResult(status, errorCode)),
+                mutationStarted ? "unknown" : "failed", errorCode);
     }
 
-    /** Stub. */
+    /**
+     * A whole-call error that ended the call before any row was begun (read-only account, invalid argument or
+     * handle, ...): one item-less call row with the error code. Not fail-closed: nothing was changed, so a failed
+     * write is one ERROR line and the original error stays. No-op once rows were begun or a begin was attempted.
+     */
     public synchronized void recordFailure(String errorCode) {
+        if (!enabled() || attempted) {
+            return;
+        }
+        attempted = true;
+        CallInfo info = call.get().withConfirmation(confirmation);
+        try {
+            log.begin(info, List.of()).complete(new Completion(List.of(), "failed", errorCode, confirmation));
+        } catch (RuntimeException e) {
+            LOG.error("audit record failed tool={} request_id={} error_code={}", info.tool(), info.requestId(),
+                    errorCode);
+        }
     }
 
-    /** Stub. */
+    /**
+     * A refusal after the items were verified (a purge that was not confirmed): one row per item with the code and
+     * the confirmation value. Not fail-closed, like {@link #recordFailure}.
+     */
     public synchronized void recordRefusal(List<ItemRef> items, String errorCode, String confirmation) {
+        if (!enabled() || attempted) {
+            return;
+        }
+        this.confirmation = confirmation;
+        try {
+            begin(items);
+        } catch (RuntimeException e) {
+            CallInfo info = call.get();
+            LOG.error("audit record failed tool={} request_id={} error_code={}", info.tool(), info.requestId(),
+                    errorCode);
+            return;
+        }
+        complete(java.util.Collections.nCopies(items.size(), new ItemResult("not_attempted", null)), "failed",
+                errorCode);
     }
 }

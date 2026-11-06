@@ -120,7 +120,7 @@ class CallAuditTest {
         assertThat(log.completions).singleElement().satisfies(c -> {
             assertThat(c.errorCode()).isEqualTo("UPSTREAM_ERROR");
             assertThat(c.result()).isEqualTo("failed");
-            assertThat(c.items()).containsOnly(new ItemResult("not_attempted", null));
+            assertThat(c.items()).containsOnly(new ItemResult("not_attempted", "UPSTREAM_ERROR"));
             assertThat(c.items()).hasSize(2);
         });
     }
@@ -132,7 +132,7 @@ class CallAuditTest {
         assertThat(log.completions).singleElement().satisfies(c -> {
             assertThat(c.errorCode()).isEqualTo("OUTCOME_UNKNOWN");
             assertThat(c.result()).isEqualTo("unknown");
-            assertThat(c.items()).containsExactly(new ItemResult("unknown", null));
+            assertThat(c.items()).containsExactly(new ItemResult("unknown", "OUTCOME_UNKNOWN"));
         });
     }
 
