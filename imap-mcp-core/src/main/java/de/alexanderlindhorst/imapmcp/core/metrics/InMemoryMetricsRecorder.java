@@ -144,6 +144,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void keyServiceUnavailable(TenantId tenant) {
+        operation(tenant, "credentials", "key_service_unavailable", Duration.ZERO);
+    }
+
+    @Override
     public void authFailure(TenantId tenant) {
         TenantStats s = series(tenants, tenant, TenantStats::new);
         if (s != null) {

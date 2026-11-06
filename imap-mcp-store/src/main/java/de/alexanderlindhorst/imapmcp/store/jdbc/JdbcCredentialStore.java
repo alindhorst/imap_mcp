@@ -31,10 +31,6 @@ public final class JdbcCredentialStore implements CredentialStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(JdbcCredentialStore.class);
 
-    static final String METRIC_TOOL = "credentials";
-    static final String METRIC_OP_DECRYPT_FAILURE = "decrypt_failure";
-    static final String METRIC_OP_KEY_SERVICE_UNAVAILABLE = "key_service_unavailable";
-
     private final DataSource dataSource;
     private final CredentialCipher cipher;
     private final LogIds logIds;
@@ -83,7 +79,7 @@ public final class JdbcCredentialStore implements CredentialStore {
             LOG.warn("key service unavailable tenant={} account={} provider={} class={}",
                     logIds.tenant(tenant.value()), logIds.account(account.value()), e.provider(),
                     e.failureClass());
-            metrics.operation(tenant, METRIC_TOOL, METRIC_OP_KEY_SERVICE_UNAVAILABLE, Duration.ZERO);
+            metrics.keyServiceUnavailable(tenant);
             throw e;
         } catch (CredentialDecryptException e) {
             LOG.error("credential decrypt failed tenant={} account={}", logIds.tenant(tenant.value()),
