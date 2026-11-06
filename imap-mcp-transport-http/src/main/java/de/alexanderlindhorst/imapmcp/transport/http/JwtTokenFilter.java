@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,22 +28,26 @@ public final class JwtTokenFilter implements Filter {
     public static final String PRINCIPAL_ATTRIBUTE = "de.alexanderlindhorst.imapmcp.jwtPrincipal";
 
     private static final Logger LOG = LoggerFactory.getLogger(JwtTokenFilter.class);
+    private static final long WARN_INTERVAL_MS = 60_000;
     private static final String SCHEME = "Bearer ";
 
     private final JwtValidator validator;
     private final String challengeMissing;
     private final String challengeInvalid;
+    private final LongSupplier clockMillis;
+    private final AtomicLong lastKeysWarn = new AtomicLong(Long.MIN_VALUE);
 
     public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config) {
+        this(validator, config, System::currentTimeMillis);
+    }
+
+    /** Test seam: a clock for the rate limit of the key-unavailable warning. */
+    JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, LongSupplier clockMillis) {
         this.validator = Objects.requireNonNull(validator, "validator");
         String metadata = ", resource_metadata=\"" + config.metadataUrl() + "\"";
         this.challengeMissing = "Bearer realm=\"imap-mcp\"" + metadata;
         this.challengeInvalid = "Bearer realm=\"imap-mcp\", error=\"invalid_token\"" + metadata;
-    }
-
-    /** Test seam: a clock for the rate limit of the key-unavailable warning. */
-    JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, java.util.function.LongSupplier clockMillis) {
-        this(validator, config);
+        this.clockMillis = clockMillis;
     }
 
     @Override
@@ -64,7 +70,7 @@ public final class JwtTokenFilter implements Filter {
             principal = validator.validate(token);
         } catch (InvalidTokenException e) {
             if (InvalidTokenException.KEYS_UNAVAILABLE.equals(e.category())) {
-                LOG.warn("Token not validated: {}", e.category());
+                warnKeysUnavailable();
             } else {
                 LOG.debug("Token rejected: {}", e.category());
             }
@@ -73,6 +79,15 @@ public final class JwtTokenFilter implements Filter {
         }
         request.setAttribute(PRINCIPAL_ATTRIBUTE, principal);
         chain.doFilter(req, res);
+    }
+
+    /** At most one warning per minute: an unreachable identity provider fails every request. */
+    private void warnKeysUnavailable() {
+        long now = clockMillis.getAsLong();
+        long last = lastKeysWarn.get();
+        if ((last == Long.MIN_VALUE || now - last >= WARN_INTERVAL_MS) && lastKeysWarn.compareAndSet(last, now)) {
+            LOG.warn("Token not validated: {}", InvalidTokenException.KEYS_UNAVAILABLE);
+        }
     }
 
     /** The credentials after {@code Bearer }, or null when the scheme is another or the value is not one token. */

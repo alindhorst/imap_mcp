@@ -168,9 +168,12 @@ public final class HttpLocalServer {
 
         /**
          * An unauthenticated servlet outside /mcp (no Host/Origin/token filters), like /health; used for the
-         * RFC 9728 metadata of {@code http-public}.
+         * RFC 9728 metadata of {@code http-public}; restricted to paths under /.well-known/.
          */
         public Builder openServlet(String path, HttpServlet servlet) {
+            if (path == null || !path.startsWith("/.well-known/") || path.length() == "/.well-known/".length()) {
+                throw new IllegalArgumentException("an unauthenticated servlet may only live under /.well-known/");
+            }
             this.openServlets.put(Objects.requireNonNull(path, "path"), Objects.requireNonNull(servlet, "servlet"));
             return this;
         }

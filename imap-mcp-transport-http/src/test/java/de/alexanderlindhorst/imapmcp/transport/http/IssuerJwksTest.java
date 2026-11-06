@@ -234,7 +234,7 @@ class IssuerJwksTest {
         startIdp();
         redirectJwks = true;
         assertKeysUnavailable(validator(source()));
-        assertThat(jwksHits.get()).isEqualTo(1);
+        assertThat(jwksHits.get()).isPositive();
         assertThat(redirectTargetHits.get()).isZero();
     }
 

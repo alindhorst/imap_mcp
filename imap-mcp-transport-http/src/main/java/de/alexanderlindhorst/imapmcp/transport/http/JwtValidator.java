@@ -5,6 +5,7 @@ import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.KeySourceException;
 import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.jwk.source.RateLimitReachedException;
 import com.nimbusds.jose.proc.BadJOSEException;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
@@ -29,6 +30,7 @@ public final class JwtValidator {
 
     public static final Set<JWSAlgorithm> ALLOWED_ALGORITHMS =
             Set.of(JWSAlgorithm.RS256, JWSAlgorithm.PS256, JWSAlgorithm.ES256);
+    /** Jetty's default request header limit (8 KiB for the whole header block) bites first on the wire. */
     static final int MAX_TOKEN_CHARS = 8192;
     static final long SKEW_SECONDS = 60;
 
@@ -56,6 +58,9 @@ public final class JwtValidator {
         } catch (ParseException e) {
             throw new InvalidTokenException(InvalidTokenException.MALFORMED);
         } catch (BadJOSEException e) {
+            throw new InvalidTokenException(InvalidTokenException.REJECTED);
+        } catch (RateLimitReachedException e) {
+            // too many unknown-kid refreshes: a flood of tokens with foreign kids, not an outage
             throw new InvalidTokenException(InvalidTokenException.REJECTED);
         } catch (KeySourceException e) {
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
