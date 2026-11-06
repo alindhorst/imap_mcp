@@ -545,6 +545,24 @@ class GetMessageToolTest {
         assertThat(((Map<String, Object>) props.get("offset")).get("maximum")).isEqualTo(Integer.MAX_VALUE);
     }
 
+    /**
+     * The trace logger is global: a Store of another test (an abandoned worker unwinding, a leaked Store) that is
+     * cleaned up while this test's appender is attached logs "DEBUG IMAPS: IMAPStore cleanup, not connected" into
+     * it. Such session chatter is not IMAP traffic and must not count as I/O of this test.
+     */
+    @Test
+    void debugChatterOfAnotherStoreIsNotWireTraffic() throws Exception {
+        try (ImapSessionFactory other = new ImapSessionFactory(ImapTimeouts.DEFAULTS, true)) {
+            Session session = other.sessionFor(
+                    de.alexanderlindhorst.imapmcp.core.account.PoolKey.of(new AccountContext(B),
+                            new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(B, account(ACCT), "acc_x")),
+                    account(ACCT));
+            session.getStore("imaps").close(); // an unconnected Store: "IMAPStore cleanup, not connected"
+        }
+        assertThat(trace.list).as("the stray line did reach the shared trace logger").isNotEmpty();
+        assertThat(traceLines()).isEmpty();
+    }
+
     @Test
     void offsetsAboveTheMaximumAreInvalidArgumentBeforeAnyImapIo() {
         ValidatingToolHandler v = new ValidatingToolHandler(GetMessageTool.definition(100000), tool);
