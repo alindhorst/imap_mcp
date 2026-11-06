@@ -5,18 +5,23 @@ import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfig;
 import de.alexanderlindhorst.imapmcp.core.account.AccountRepository;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
+import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.crypto.Macs;
 import de.alexanderlindhorst.imapmcp.core.download.InlineLimiter;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
+import de.alexanderlindhorst.imapmcp.core.imap.ImapLoginProbe;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.Admission;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
+import de.alexanderlindhorst.imapmcp.core.linking.AccountLinking;
+import de.alexanderlindhorst.imapmcp.core.linking.ProbeRateLimiter;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
@@ -46,6 +51,9 @@ import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
 import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.WritePreflight;
+import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
+import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
+import de.alexanderlindhorst.imapmcp.core.web.WebSessionStore;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialCipher;
 import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceUnavailableException;
 import de.alexanderlindhorst.imapmcp.store.crypto.KeyWrapper;
@@ -58,8 +66,12 @@ import de.alexanderlindhorst.imapmcp.store.jdbc.ExpiredRowCleanup;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcAccountRepository;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcAuditLog;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcCredentialStore;
+import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcLinkedAccountStore;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcLoginOutcomes;
+import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcOidcPendingStore;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory;
+import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantProvisioner;
+import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcWebSessionStore;
 import de.alexanderlindhorst.imapmcp.store.secret.BinaryProbe;
 import de.alexanderlindhorst.imapmcp.store.secret.CommandRunner;
 import de.alexanderlindhorst.imapmcp.store.secret.Platform;
@@ -87,6 +99,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,6 +118,9 @@ public final class PublicComponents implements AutoCloseable {
     private static final byte[] FINGERPRINT_LABEL = "imap-mcp:key-fingerprint:v1".getBytes(StandardCharsets.US_ASCII);
     private static final TenantId CONFIG_OWNER = new TenantId("config");
     private static final Duration CLEANUP_PERIOD = Duration.ofMinutes(10);
+    /** SPEC 5.3: at most 10 link probes per tenant per hour and replica; the limiter tracks at most this many tenants. */
+    private static final int PROBES_PER_HOUR = 10;
+    private static final int PROBE_TRACKED_TENANTS = 10_000;
 
     private final Database database;
     private final ImapSessionFactory sessions;
@@ -118,12 +134,22 @@ public final class PublicComponents implements AutoCloseable {
     private final KeyRing keys;
     private final JdbcCredentialStore credentials;
     private final ElicitingPurgeConfirmation purgeConfirmation; // null unless purge_messages is registered
+    private final Linking linking;
+    private final Clock clock;
     private boolean closed;
+
+    /** The stores and services of the linking surface (C1, C2), built once per replica from the same database. */
+    private record Linking(AccountLinker linker, OidcPendingStore pending, WebSessionStore sessions,
+            TenantProvisioner provisioner, Supplier<Secret> webClientSecret) {
+    }
 
     private PublicComponents(Database database, ImapSessionFactory sessions, StorePool pool,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, JdbcTenantDirectory tenants,
             Map<ToolDefinition, ToolHandler> tools, ScheduledExecutorService scheduler, String linkUrl,
-            KeyRing keys, JdbcCredentialStore credentials, ElicitingPurgeConfirmation purgeConfirmation) {
+            KeyRing keys, JdbcCredentialStore credentials, ElicitingPurgeConfirmation purgeConfirmation,
+            Linking linking, Clock clock) {
+        this.linking = linking;
+        this.clock = clock;
         this.credentials = credentials;
         this.purgeConfirmation = purgeConfirmation;
         this.database = database;
@@ -208,8 +234,10 @@ public final class PublicComponents implements AutoCloseable {
             Admission admission = new Admission(settings, Admission.recording(metrics));
             StoreLeases leases = new StoreLeases(pool, settings.acquireTimeout(), admission, metrics);
             PublicConfig.Tools t = config.tools();
+            JdbcAuditLog auditLog = new JdbcAuditLog(ds, keys);
             ToolExecutor executor = new ToolExecutor(t.deadline(), logIds, metrics, AppComponents::logExecutorOutcome,
-                    new JdbcAuditLog(ds, keys));
+                    auditLog);
+            JdbcTenantDirectory tenantDirectory = new JdbcTenantDirectory(ds);
 
             String linkUrl = config.pub().baseUrl() + "/accounts";
             AccountArgument account = new AccountArgument(repository, linkUrl);
@@ -257,9 +285,12 @@ public final class PublicComponents implements AutoCloseable {
             });
             new AuditRetention(ds).schedule(scheduler); // 180 days, daily (D5)
             new ExpiredRowCleanup(ds).schedule(scheduler, CLEANUP_PERIOD);
+            Linking linking = buildLinking(config, refs, ds, repository, credentials, auditLog, tenantDirectory, sessions,
+                    ssrf, clock);
             metrics.start();
-            return new PublicComponents(database, sessions, pool, metrics, executor, new JdbcTenantDirectory(ds),
-                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation);
+            return new PublicComponents(database, sessions, pool, metrics, executor, tenantDirectory,
+                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation,
+                    linking, clock);
         } catch (RuntimeException e) {
             if (scheduler != null) {
                 scheduler.shutdownNow();
@@ -276,6 +307,26 @@ public final class PublicComponents implements AutoCloseable {
             database.close();
             throw e;
         }
+    }
+
+    /**
+     * The linking surface (SPEC 5.3): web sessions, pending logins and tenant creation in the database, and the link,
+     * re-link, settings and unlink actions. The probe runs on the pool's own session factory, which carries the
+     * pinning socket factory (it refuses to be built without one); its budget is per replica. Link and re-link store
+     * credentials through the same cipher (kms provider) as the pool reads them, and write their audit rows through
+     * the same audit log as the tools.
+     */
+    private static Linking buildLinking(PublicConfig config, RefCredentialStore refs, javax.sql.DataSource ds,
+            JdbcAccountRepository repository, JdbcCredentialStore credentials, JdbcAuditLog auditLog,
+            JdbcTenantDirectory tenantDirectory, ImapSessionFactory sessions, SsrfPolicy ssrf, Clock clock) {
+        AccountLinking linker = new AccountLinking(repository, new JdbcLinkedAccountStore(ds, repository, credentials),
+                new ImapLoginProbe(sessions), ssrf, auditLog,
+                new ProbeRateLimiter(clock, PROBES_PER_HOUR, Duration.ofHours(1), PROBE_TRACKED_TENANTS), clock,
+                config.pub().maxAccountsPerTenant(), config.purgeEnabled());
+        SecretRef secret = config.oauth().webClientSecret();
+        // read per use, so a rotated secret (reference) is picked up without a restart; the caller closes it
+        return new Linking(linker, new JdbcOidcPendingStore(ds, clock), new JdbcWebSessionStore(ds, clock),
+                new JdbcTenantProvisioner(tenantDirectory), () -> refs.resolve(secret));
     }
 
     static DbConfig dbConfig(PublicConfig.Db db, char[] password) {
@@ -391,6 +442,32 @@ public final class PublicComponents implements AutoCloseable {
     /** The tenant lookup used by the HTTP layer; a read-only view of the tenant directory (no creation). */
     public JdbcTenantDirectory tenantDirectory() {
         return tenants;
+    }
+
+    /** The link, re-link, settings and unlink actions of the linking surface. */
+    public AccountLinker accountLinker() {
+        return linking.linker();
+    }
+
+    public OidcPendingStore oidcPendingStore() {
+        return linking.pending();
+    }
+
+    public WebSessionStore webSessionStore() {
+        return linking.sessions();
+    }
+
+    public TenantProvisioner tenantProvisioner() {
+        return linking.provisioner();
+    }
+
+    /** The secret of the web client ({@code oauth.webClientSecret}), resolved at each call; the caller closes it. */
+    public Supplier<Secret> webClientSecret() {
+        return linking.webClientSecret();
+    }
+
+    public Clock clock() {
+        return clock;
     }
 
     /** The linking surface's account page; the {@code link_url} of tool output and re-link errors. */

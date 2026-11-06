@@ -15,8 +15,12 @@ import de.alexanderlindhorst.imapmcp.transport.http.OriginFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.PrincipalContextFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.PrincipalTenants;
 import de.alexanderlindhorst.imapmcp.transport.http.ProtectedResourceMetadataServlet;
+import de.alexanderlindhorst.imapmcp.transport.http.web.HttpOidcProvider;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -27,6 +31,8 @@ import java.util.Objects;
  * ({@link PrincipalContextFilter}), then, with {@code http.stateful}, the session binding (sessions belong to the
  * (issuer, subject) of the validated token, never to the tenant), then the MCP servlet (stateless, or the stateful
  * Streamable HTTP variant that carries the purge confirmation). The RFC 9728 metadata and /health are outside the filters.
+ * The linking surface (C1, C2) is mounted at /accounts with its own filters (no bearer token, none of the /mcp chain);
+ * it validates ID tokens against the same key source and issuer as the access tokens.
  * The only place in {@code app} that connects the OAuth settings to the transport; the key source is a parameter so
  * that tests can sign tokens locally, while the launcher passes {@code IssuerJwks.create(oauth.issuer)}.
  */
@@ -45,6 +51,16 @@ public final class HttpPublicServer {
 
     public static HttpLocalServer build(PublicConfig config, PublicComponents components,
             JWKSource<SecurityContext> keys) {
+        return build(config, components, keys, false);
+    }
+
+    /**
+     * {@code allowInsecureHttpIssuer} lets the linking surface talk to an {@code http} issuer (a Keycloak container in
+     * tests). Production code uses {@link #build(PublicConfig, PublicComponents, JWKSource)}, where the issuer must be
+     * {@code https}.
+     */
+    public static HttpLocalServer build(PublicConfig config, PublicComponents components,
+            JWKSource<SecurityContext> keys, boolean allowInsecureHttpIssuer) {
         Objects.requireNonNull(keys, "keys");
         PublicConfig.Oauth o = config.oauth();
         OAuthResourceConfig oauth = new OAuthResourceConfig(o.issuer(), o.resource(), o.subjectClaim(),
@@ -63,6 +79,7 @@ public final class HttpPublicServer {
                 .principalFilter(new PrincipalContextFilter(tenants))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
+                .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer))
                 .openServlet(OAuthResourceConfig.METADATA_ROOT, metadata);
         if (!oauth.metadataPath().equals(OAuthResourceConfig.METADATA_ROOT)) {
             builder.openServlet(oauth.metadataPath(), metadata);
@@ -78,5 +95,20 @@ public final class HttpPublicServer {
             components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
         }
         return builder.build();
+    }
+
+    /**
+     * The linking surface: the web client, the public base URL and the role rule from {@code oauth.*} and
+     * {@code public.*}; the ID token is checked against the same key source as the access tokens.
+     */
+    static WebSurface webSurface(PublicConfig config, PublicComponents components, JWKSource<SecurityContext> keys,
+            boolean allowInsecureHttpIssuer) {
+        PublicConfig.Oauth o = config.oauth();
+        WebConfig web = new WebConfig(URI.create(config.pub().baseUrl()), o.issuer(), o.webClientId(),
+                components.webClientSecret(), o.subjectClaim(), o.requiredRole(), o.roleClaim(),
+                o.allowWithoutRole(), allowInsecureHttpIssuer);
+        return WebSurface.of(web, HttpOidcProvider.create(web, keys), components.oidcPendingStore(),
+                components.webSessionStore(), components.tenantProvisioner(), components.accountLinker(),
+                components.clock());
     }
 }
