@@ -4,6 +4,7 @@ import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
+import de.alexanderlindhorst.imapmcp.core.error.ServiceOutage;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
@@ -263,8 +264,21 @@ public final class ToolExecutor {
         state.executorProduced.set(true);
         ctx.sealMutation();
         // Class only: exception messages may carry mail content or credentials.
-        LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
+        if (isOutage(cause)) { // an unreachable dependency is operational, not a defect
+            LOG.warn("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
+        } else {
+            LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
+        }
         return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
+    }
+
+    private static boolean isOutage(Throwable t) {
+        for (int depth = 0; t != null && depth < 16; depth++, t = t.getCause()) {
+            if (t instanceof ServiceOutage) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
