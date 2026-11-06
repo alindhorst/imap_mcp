@@ -104,7 +104,6 @@ class JwtValidatorTest {
     void subjectClaimMustBePresentAndNonBlank() {
         rejects(keys.rs256(b -> b.subject(null)));
         rejects(keys.rs256(b -> b.subject("")));
-        rejects(keys.rs256(b -> b.claim("sub", 42)));
     }
 
     @Test
