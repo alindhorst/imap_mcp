@@ -65,6 +65,11 @@ class JdbcCredentialStoreIT {
         public void operation(TenantId tenant, String tool, String op, Duration latency) {
             operations.add(tool + "/" + op);
         }
+
+        @Override
+        public void decryptFailure(TenantId tenant) {
+            operations.add("credentials/decrypt_failure");
+        }
     };
     private ListAppender<ILoggingEvent> logs;
     private Logger logger;
