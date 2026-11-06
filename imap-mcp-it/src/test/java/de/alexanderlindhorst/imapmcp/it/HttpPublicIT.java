@@ -199,11 +199,13 @@ class HttpPublicIT {
                 "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
         assertThat(r.statusCode()).isEqualTo(200);
         for (String tool : List.of("list_accounts", "list_folders", "search_messages", "get_message",
-                "list_attachments", "set_flags", "move_messages", "copy_messages", "delete_messages",
-                "create_folder")) {
+                "list_attachments", "download_attachment", "set_flags", "move_messages", "copy_messages",
+                "delete_messages", "create_folder")) {
             assertThat(r.body()).as(tool).contains("\"" + tool + "\"");
         }
-        assertThat(r.body()).doesNotContain("purge_messages").doesNotContain("download_attachment");
+        assertThat(r.body()).doesNotContain("purge_messages");
+        // the embedded variant: read-only, no directory (SPEC 4 "v3b: tools in http-public")
+        assertThat(r.body()).contains("\"readOnlyHint\":true").doesNotContain("tools.download.dir");
     }
 
     @Test
