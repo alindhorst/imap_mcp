@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize mail in IMAP mailboxes. Changes are reversible, except the gated permanent deletion from Trash that the user confirms each time. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
-> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`, `stdio` only), with `stdio` and `http-local`. `http-public` (v3b) is available as described below; the stateful transport for `purge_messages` and the linking surface follow; see "Scope by phase".
+> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`; `stdio`, and `http-public` with `purge.enabled`), with `stdio` and `http-local`. `http-public` (v3b) is available as described below; the stateful transport for `purge_messages` and the linking surface follow; see "Scope by phase".
 
 ## Tools
 
@@ -18,7 +18,7 @@ Twelve tools; the five v2 tools are write tools and are not listed when every ac
 - `copy_messages`: copies up to 100 messages into one folder and returns the new handles; write; refused on `readOnly` accounts.
 - `delete_messages`: up to 100 messages; moves to Trash, not a permanent delete; write; refused on `readOnly` accounts.
 - `create_folder`: creates a folder (an existing one is success); write; refused on `readOnly` accounts.
-- `purge_messages`: permanently deletes up to 100 messages from the Trash folder, Trash only, and cannot be undone; only for accounts with `allowPurge`, in `stdio` only, and the user confirms each call (or allows it for the session).
+- `purge_messages`: permanently deletes up to 100 messages from the Trash folder, Trash only, and cannot be undone; only for accounts with `allowPurge`, in `stdio` (and in `http-public` when the operator enables `purge.enabled`, see below), and the user confirms each call (or allows it for the session).
 - `download_attachment`: saves one attachment as a new file in `tools.download.dir`, never overwriting; registered only when `tools.download.dir` is set; allowed on `readOnly` accounts (it does not change the mailbox).
 
 ## Documentation
@@ -251,7 +251,7 @@ tools:
 ```
 
 - `allowPurge: true` (default `false`) registers `purge_messages`. An account without it refuses the tool with `PERMISSION_DENIED` (`purge_disabled`). `allowPurge: true` together with `readOnly: true` fails startup. `list_accounts` shows the setting as `allow_purge`.
-- `purge_messages` is registered in `stdio` only and not available in `http-local` (it needs a server that can ask the client a question). An `allowPurge` account in `http-local` only gives a startup warning, so one config file serves both modes.
+- `purge_messages` is registered in `stdio` and, in `http-public`, only with `purge.enabled` and `http.stateful`; it is not available in `http-local` (it needs a server that can ask the client a question). An `allowPurge` account in `http-local` only gives a startup warning, so one config file serves both modes.
 - Needs the server extension UIDPLUS (`UNSUPPORTED` otherwise). Only the given UIDs are expunged; other `\Deleted` messages in Trash are never touched. A repeat reports `already_gone`.
 - Confirmation by MCP elicitation: the client shows the user a fixed dialog ("Permanently delete 2 messages from the Trash folder ... of account ...? This cannot be undone.") with a checkbox "Allow for this session". Only the user can answer it; no tool argument can. The dialog contains no subject, sender or file name. A client without elicitation support gets `confirmation_unavailable` and nothing is deleted. Decline, cancel, an unreadable answer, an error or no answer are `not_confirmed` with `details.elicitation` (`declined`, `cancelled`, `invalid_answer`, `error`, `timeout`); after a decline or cancel, further calls on that account are refused for 60 s without a dialog (`recently_declined`).
 - Session approval: with "Allow for this session" the user allows further purges of messages that were already in that Trash folder when the approval was given, for 15 minutes and at most 500 messages, for that account only. It is kept in memory, ends with the process and has no configuration key. Messages that reach Trash later always ask again. Such calls report `confirmation` `session_approval`.
@@ -381,7 +381,7 @@ The reference is resolved once at startup, so unlock the keyring first. Headless
 - Email content is untrusted input (possible prompt injection) and is returned as labeled data.
 - Write tools are enabled by default and make only reversible changes. `delete_messages` moves to Trash and never deletes permanently; on servers without MOVE the move is done as copy, then flag and expunge of exactly the copied messages in the source.
 - Set `readOnly: true` on every account the agent must never change.
-- Permanent deletion exists only as `purge_messages`: off unless an account has `allowPurge: true`, Trash only, `stdio` only, and the user confirms each call in the client.
+- Permanent deletion exists only as `purge_messages`: off unless an account has `allowPurge: true`, Trash only, `stdio` or (`http-public` with `purge.enabled`), and the user confirms each call in the client.
 - MCP hosts may ask for confirmation on tools that carry `destructiveHint`.
 - Upgrade note: upgrading from 0.1.0 enables the write tools on every account without `readOnly: true`; a configured `tools.deadline` below 30 s then fails startup (see "Configuration").
 
@@ -476,13 +476,14 @@ kms:
 - **Discovery and checks:** `GET /.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` serve the RFC 9728 metadata; a missing or invalid token gets `401` with a `WWW-Authenticate` challenge naming it. The scope `imap-mcp:read` is required for every request (`403 insufficient_scope` otherwise); `imap-mcp:write` is checked per call for the write tools. Tokens are accepted in the `Authorization` header only.
 - **Tenants:** a user who is not yet known sees no accounts (`list_accounts` returns an empty list and the `link_url`); no MCP request creates a tenant. A tenant is created at the first login of the linking surface, and only for users with `oauth.requiredRole`.
 - **Tools:** one fixed list for everybody (read tools, `download_attachment` with the file embedded in the result, and the five write tools). `purge_messages` is not registered. Restrictions are refusals at call time: `account_read_only`, `insufficient_scope`, and `relink_required` (an account whose password was refused three times in a row; `list_accounts` shows it as `needs_relink` with the `link_url`).
+- **Purge over HTTP (decision D8):** `purge.enabled` (default `false`) and `http.stateful` (default `false`; `purge.enabled` requires it) turn on `purge_messages` in `http-public`. Enable `purge.enabled` only after the owner's smoke test with the Claude connector (see the v3b smoke checklist); the per-account `allowPurge` switch of the linking surface can only be set while `purge.enabled` is true. While it is false, `purge_messages` is not registered and every account refuses it as `purge_disabled`.
 - **Audit and retention:** every call of a write tool leaves a row in the database (reference hashes only, never folder names, UIDs or message handles); rows are deleted after 180 days. If the audit row cannot be written, the call fails and nothing is changed.
 - **Egress:** the server blocks private and loopback addresses and any host outside `ssrf.allowedHosts`, and only connects to port 993 (implicit TLS) or 143 (STARTTLS). Add an egress network policy as well.
 - **Key rotation:** add a handle key id or KEK id, switch `signingKeyId` or `currentKekId`, restart every replica, and remove the old id only when nothing refers to it any more (SPEC 5.4 and 5.7).
 
 ## Scope by phase
 
-v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3a gated deletion from Trash (`purge_messages`, `stdio` only) and `download_attachment`, v3b public multi-tenant mode. Details in SPEC sections 3 and 4.
+v1 read-only tools, v2 reversible changes (set_flags, move_messages, copy_messages, delete_messages and create_folder; delete moves to Trash), v3a gated deletion from Trash (`purge_messages`, `stdio`; v3b: also `http-public` with `purge.enabled`) and `download_attachment`, v3b public multi-tenant mode. Details in SPEC sections 3 and 4.
 
 ## Coverage
 

@@ -269,7 +269,7 @@ class ReadmeTest {
                         .contains("`tools.download.dir`").doesNotContain("refused on `readOnly`");
             } else if (d.name().equals("purge_messages")) {
                 assertThat(lines.get(d.name())).as(d.name()).contains("permanent").contains("Trash only")
-                        .contains("`allowPurge`").contains("`stdio` only").contains("confirm");
+                        .contains("`allowPurge`").contains("`stdio`").contains("`purge.enabled`").contains("confirm");
             } else {
                 assertThat(lines.get(d.name())).as(d.name()).contains("write; refused on `readOnly` accounts");
             }
@@ -284,7 +284,7 @@ class ReadmeTest {
                 .matcher(readme);
         assertThat(m.find()).as("README has a '### Permanent deletion (purge_messages)' section").isTrue();
         assertThat(m.group(1)).contains("`delete_messages`").contains("Trash").contains("only from the Trash")
-                .contains("`allowPurge: true`").contains("`stdio` only").contains("not available in `http-local`")
+                .contains("`allowPurge: true`").contains("registered in `stdio` and, in `http-public`, only with `purge.enabled` and `http.stateful`").contains("not available in `http-local`")
                 .contains("elicitation").contains("Allow for this session").contains("15 minutes")
                 .contains("500 messages").contains("`recently_declined`").contains("60 s")
                 .contains("`tools.deadline`").contains("at least 60 s").contains("a late acceptance still deletes")
@@ -409,7 +409,7 @@ class ReadmeTest {
         assertThat(readme).contains("any server that advertises `UTF8=ACCEPT` or `UTF8=ONLY`")
                 .contains("at most 10m")
                 .contains("`\\Deleted` messages are not filtered out")
-                .contains("v3a gated deletion from Trash (`purge_messages`, `stdio` only) and `download_attachment`")
+                .contains("v3a gated deletion from Trash (`purge_messages`, `stdio`; v3b: also `http-public` with `purge.enabled`) and `download_attachment`")
                 .contains("`security -g`").doesNotContain("only ASCII passwords");
         assertThat(readme).contains("mvn -Psmoke -pl imap-mcp-it -am verify")
                 .contains("IMAP_MCP_SMOKE_GMAIL_USER").contains("IMAP_MCP_SMOKE_GMAIL_PASSWORD")
