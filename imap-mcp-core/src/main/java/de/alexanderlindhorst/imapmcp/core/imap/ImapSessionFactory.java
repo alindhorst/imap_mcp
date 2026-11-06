@@ -107,6 +107,16 @@ public final class ImapSessionFactory implements AutoCloseable {
         return sessions.computeIfAbsent(new SessionKey(key, key.revision()), k -> newSession(protocol));
     }
 
+    /** Whether the SSRF-pinning socket factory is installed ({@code http-public}). */
+    public boolean pinsSockets() {
+        return socketFactory != null;
+    }
+
+    /** A session for one probe: same properties (and pinned socket factory) as the pool's, but not cached. */
+    public Session probeSession(MailAccount account) {
+        return newSession(protocolFor(account));
+    }
+
     private Session newSession(String protocol) {
         Session session = Session.getInstance(properties(protocol), null);
         // Always replace the debug sink so debug output can never reach System.out (stdio protocol channel).

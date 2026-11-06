@@ -1,0 +1,77 @@
+{
+  "realm": "imap",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "imap-user" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "imap-mcp-web",
+      "name": "IMAP MCP linking pages (test)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "web-secret-for-tests",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles-in-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.org",
+      "firstName": "Alice",
+      "lastName": "Test",
+      "credentials": [ { "type": "password", "value": "alice-pw", "temporary": false } ],
+      "realmRoles": ["imap-user"]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "carol@example.org",
+      "firstName": "Carol",
+      "lastName": "Test",
+      "credentials": [ { "type": "password", "value": "carol-pw", "temporary": false } ],
+      "realmRoles": ["imap-user"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bob@example.org",
+      "firstName": "Bob",
+      "lastName": "Test",
+      "credentials": [ { "type": "password", "value": "bob-pw", "temporary": false } ]
+    }
+  ]
+}

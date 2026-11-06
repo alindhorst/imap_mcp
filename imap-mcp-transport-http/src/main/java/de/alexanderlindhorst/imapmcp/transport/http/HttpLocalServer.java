@@ -16,6 +16,8 @@ import java.net.InetAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +48,8 @@ public final class HttpLocalServer {
     public static final int MAX_REQUEST_BYTES = 1024 * 1024;
     public static final String MCP_PATH = "/mcp";
     public static final String HEALTH_PATH = "/health";
+    /** Upper bound of a form post on the linking surface. */
+    static final int WEB_MAX_FORM_BYTES = 64 * 1024;
 
     private static final Logger LOG = LoggerFactory.getLogger(HttpLocalServer.class);
 
@@ -64,6 +68,7 @@ public final class HttpLocalServer {
     private final Filter principalFilter;
     private final HttpServlet healthServlet;
     private final Map<String, HttpServlet> openServlets;
+    private final WebSurface webSurface;
     private final boolean stateful;
     private final List<McpServerFeatures.SyncToolSpecification> statefulTools;
     private final Function<HttpServletRequest, String> sessionPrincipal;
@@ -95,6 +100,7 @@ public final class HttpLocalServer {
         this.principalFilter = b.principalFilter;
         this.healthServlet = b.healthServlet;
         this.openServlets = Map.copyOf(b.openServlets);
+        this.webSurface = b.webSurface;
         this.stateful = b.stateful;
         this.statefulTools = List.copyOf(b.statefulTools);
         this.sessionPrincipal = b.sessionPrincipal;
@@ -126,6 +132,7 @@ public final class HttpLocalServer {
         private Filter principalFilter;
         private HttpServlet healthServlet;
         private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
+        private WebSurface webSurface;
         private boolean stateful;
         private final List<McpServerFeatures.SyncToolSpecification> statefulTools = new ArrayList<>();
         private Function<HttpServletRequest, String> sessionPrincipal =
@@ -219,6 +226,15 @@ public final class HttpLocalServer {
                 throw new IllegalArgumentException("an unauthenticated servlet may only live under /.well-known/");
             }
             this.openServlets.put(Objects.requireNonNull(path, "path"), Objects.requireNonNull(servlet, "servlet"));
+            return this;
+        }
+
+        /**
+         * The linking surface of {@code http-public}, mounted at {@code /accounts} with its own filters (no
+         * bearer token, none of the {@code /mcp} filters).
+         */
+        public Builder webSurface(WebSurface surface) {
+            this.webSurface = surface;
             return this;
         }
 
@@ -340,6 +356,13 @@ public final class HttpLocalServer {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
         }
         openServlets.forEach((path, servlet) -> ctx.addServlet(new ServletHolder(servlet), path));
+        if (webSurface != null) {
+            ctx.setMaxFormContentSize(WEB_MAX_FORM_BYTES);
+            for (Filter f : webSurface.filters()) {
+                addFilter(ctx, f, WebConfig.BASE_PATH + "/*");
+            }
+            ctx.addServlet(new ServletHolder(webSurface.servlet()), WebConfig.BASE_PATH + "/*");
+        }
         ctx.addServlet(new ServletHolder(new NotFoundServlet()), "/");
         server.setHandler(ctx);
         server.setStopTimeout(5000);

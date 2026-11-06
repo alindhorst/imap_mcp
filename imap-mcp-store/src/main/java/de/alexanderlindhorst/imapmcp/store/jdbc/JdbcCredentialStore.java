@@ -94,15 +94,38 @@ public final class JdbcCredentialStore implements CredentialStore {
      * {@code secret}; choosing the current version is the caller's (account repository's) business.
      */
     public void insert(TenantId tenant, AccountId account, int version, char[] secret) {
+        try (Connection c = dataSource.getConnection()) {
+            insertWith(c, tenant, account, version, secret);
+        } catch (SQLException e) {
+            throw new IllegalStateException("credential insert failed (sqlstate " + e.getSQLState() + ")");
+        }
+    }
+
+    /**
+     * As {@link #insert} on the caller's connection and transaction (account and credential commit together).
+     * Key-service unavailability gets the unavailability WARN line and metric here too (SPEC 5.3) and is rethrown;
+     * nothing is stored then.
+     */
+    public void insertWith(Connection c, TenantId tenant, AccountId account, int version, char[] secret)
+            throws SQLException {
         UUID tenantUuid = parse(tenant);
         if (tenantUuid == null) {
             throw new IllegalArgumentException("tenant id is not a UUID");
         }
-        CredentialCipher.Sealed sealed = cipher.seal(tenantUuid.toString(), account.value(), version, secret);
-        try (Connection c = dataSource.getConnection();
-                PreparedStatement ps = c.prepareStatement(
-                        "INSERT INTO credential (tenant_id, account_id, version, kind, kek_id, wrapped_dek, nonce,"
-                                + " ciphertext) VALUES (?, ?, ?, 'password', ?, ?, ?, ?)")) {
+        CredentialCipher.Sealed sealed;
+        try {
+            sealed = cipher.seal(tenantUuid.toString(), account.value(), version, secret);
+        } catch (KeyServiceInterruptedException e) {
+            throw e;
+        } catch (KeyServiceUnavailableException e) {
+            LOG.warn("key service unavailable tenant={} account={} provider={} class={}",
+                    logIds.tenant(tenant.value()), logIds.account(account.value()), e.provider(), e.failureClass());
+            metrics.keyServiceUnavailable(tenant);
+            throw e;
+        }
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO credential (tenant_id, account_id, version, kind, kek_id, wrapped_dek, nonce,"
+                        + " ciphertext) VALUES (?, ?, ?, 'password', ?, ?, ?, ?)")) {
             ps.setObject(1, tenantUuid);
             ps.setString(2, account.value());
             ps.setInt(3, version);
@@ -111,8 +134,6 @@ public final class JdbcCredentialStore implements CredentialStore {
             ps.setBytes(6, sealed.nonce());
             ps.setBytes(7, sealed.ciphertext());
             ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("credential insert failed");
         }
     }
 

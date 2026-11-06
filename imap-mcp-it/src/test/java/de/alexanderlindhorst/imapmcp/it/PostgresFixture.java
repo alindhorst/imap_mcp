@@ -9,6 +9,7 @@ public final class PostgresFixture extends PostgreSQLContainer {
 
     public PostgresFixture() {
         super(DockerImageName.parse(ItImages.POSTGRES).asCompatibleSubstituteFor("postgres"));
+        withStartupAttempts(3); // see KeycloakFixture
     }
 
     /** Connection settings of the started container. */
