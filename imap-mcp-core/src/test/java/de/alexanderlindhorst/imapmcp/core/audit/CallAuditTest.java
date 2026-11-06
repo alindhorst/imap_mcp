@@ -23,9 +23,12 @@ class CallAuditTest {
     final ListAppender<ILoggingEvent> logs = new ListAppender<>();
     final Logger logger = (Logger) LoggerFactory.getLogger(CallAudit.class);
     ToolCallContext ctx;
+    Level oldLevel;
 
     @BeforeEach
     void setUp() {
+        oldLevel = logger.getLevel();
+        logger.setLevel(Level.TRACE);
         logs.start();
         logger.addAppender(logs);
         ctx = new ToolCallContext(new AccountContext(new TenantId("t1")), "req-1");
@@ -36,6 +39,7 @@ class CallAuditTest {
     @AfterEach
     void tearDown() {
         logger.detachAppender(logs);
+        logger.setLevel(oldLevel);
     }
 
     @Test
