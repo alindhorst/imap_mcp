@@ -94,9 +94,10 @@ class KeycloakPublicIT {
     @BeforeAll
     static void start() throws Exception {
         keycloak = new KeycloakResourceFixture();
-        keycloak.start();
         postgres = new PostgresFixture();
-        postgres.start();
+        // Both at once: Keycloak needs a long time to start, and a container created after that wait used to hit a
+        // Docker socket connection that the engine had closed meanwhile ("broken pipe").
+        org.testcontainers.lifecycle.Startables.deepStart(keycloak, postgres).join();
         String yaml = """
                 db:
                   url: %s

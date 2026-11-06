@@ -418,6 +418,38 @@ class PurgeMessagesToolTest {
     }
 
     @Test
+    void aDeploymentWithPurgeNotEnabledRefusesEvenAnAccountThatAllowsPurgeBeforeAnyIo() throws Exception {
+        allowPurge = true;
+        rebuild();
+        tool = new PurgeMessagesTool(preflight, leases, clock, confirmation, trashStub, wire, false);
+        handler = new ValidatingToolHandler(PurgeMessagesTool.DEFINITION, tool);
+        String h = handle(T1, "Trash", uids("Trash").get(0));
+        Map<Long, String> before = snapshot("Trash");
+        trace.list.clear();
+        long created = pool.createdCount();
+        var e = err(call(T1, args(T1, List.of(h))));
+        assertThat(e.code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
+        assertThat(e.details()).containsEntry("reason", "purge_disabled");
+        assertThat(pool.createdCount()).isEqualTo(created);
+        assertThat(trace.list).isEmpty();
+        assertThat(confirms).isZero();
+        assertThat(snapshot("Trash")).isEqualTo(before);
+    }
+
+    @Test
+    void theDeploymentGateComesAfterReadOnlyAndBeforeInvalidHandles() throws Exception {
+        tool = new PurgeMessagesTool(preflight, leases, clock, confirmation, trashStub, wire, false);
+        handler = new ValidatingToolHandler(PurgeMessagesTool.DEFINITION, tool);
+        assertThat(err(call(T1, args(T1, List.of("not-a-handle")))).details()).containsEntry("reason", "purge_disabled");
+        readOnly = true;
+        rebuild();
+        tool = new PurgeMessagesTool(preflight, leases, clock, confirmation, trashStub, wire, false);
+        handler = new ValidatingToolHandler(PurgeMessagesTool.DEFINITION, tool);
+        assertThat(err(call(T1, args(T1, List.of("not-a-handle")))).details())
+                .containsEntry("reason", "account_read_only");
+    }
+
+    @Test
     void purgeDisabledComesBeforeInvalidHandles() {
         allowPurge = false;
         rebuild();

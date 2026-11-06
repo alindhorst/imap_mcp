@@ -245,10 +245,46 @@ class HttpPublicIT {
     }
 
     @Test
-    void writeToolsNeedTheWriteScopeAndTheAccountMustNotBeReadOnly() throws Exception {
+    void aTokenWithoutTheWriteScopeIsRefusedOnWriteTools() throws Exception {
         String args = "{\"account\":\"" + aliceAccount.handle() + "\",\"name\":\"X\"}";
         HttpResponse<String> noScope = callTool(token("alice", "imap-mcp:read"), "create_folder", args);
         assertThat(noScope.body()).contains("insufficient_scope").contains("imap-mcp:write");
+    }
+
+    @Test
+    void aReadOnlyAccountRefusesWriteToolsEvenWithTheWriteScope() throws Exception {
+        ResolvedAccount ro = accounts.create(tenantAlice, new NewAccount("RO", null, "127.0.0.1", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "alice", true, false));
+        HttpResponse<String> r = callTool(token("alice", "imap-mcp:read imap-mcp:write"), "create_folder",
+                "{\"account\":\"" + ro.handle() + "\",\"name\":\"X\"}");
+        assertThat(r.body()).contains("account_read_only");
+    }
+
+    @Test
+    void aTokenForAnotherAudienceIsRefusedThroughTheWiredChain() throws Exception {
+        long now = System.currentTimeMillis();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().issuer(ISSUER).audience("https://other.example.com/mcp")
+                .subject("alice").claim("scope", "imap-mcp:read").issueTime(new Date(now))
+                .expirationTime(new Date(now + 300_000)).build();
+        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID("k1")
+                .type(JOSEObjectType.JWT).build(), claims);
+        jwt.sign(new RSASSASigner(signing));
+        HttpResponse<String> r = rpc(jwt.serialize(), "{}");
+        assertThat(r.statusCode()).isEqualTo(401);
+        assertThat(r.headers().firstValue("WWW-Authenticate")).hasValueSatisfying(
+                v -> assertThat(v).contains("invalid_token").contains(METADATA));
+    }
+
+    @Test
+    void aWrongHostHeaderIsRefusedBeforeTheToken() throws Exception {
+        try (java.net.Socket sock = new java.net.Socket("127.0.0.1", server.port())) {
+            sock.getOutputStream().write(("POST /mcp HTTP/1.1\r\nHost: evil.example\r\nContent-Length: 2\r\n\r\n{}")
+                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            sock.getOutputStream().flush();
+            String status = new java.io.BufferedReader(new java.io.InputStreamReader(sock.getInputStream()))
+                    .readLine();
+            assertThat(status).contains("403");
+        }
     }
 
     @Test

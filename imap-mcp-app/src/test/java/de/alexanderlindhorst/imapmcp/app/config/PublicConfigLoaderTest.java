@@ -97,9 +97,33 @@ class PublicConfigLoaderTest {
     }
 
     @Test
-    void configuredAccountsAreIgnoredBecauseAccountsLiveInTheDatabase() {
+    void aConfiguredAccountsListFailsStartup() {
         String withAccounts = VALID + "accounts:\n  - id: a\n    host: h\n    username: u\n    password: env:X\n";
-        assertThat(bind(withAccounts).db().url()).isNotBlank();
+        assertThatThrownBy(() -> bind(withAccounts)).isInstanceOf(ConfigException.class).hasMessageContaining(
+                "config.accounts: not available in http-public (accounts are linked in the linking surface)");
+    }
+
+    @Test
+    void theDatabasePoolSizeIsBoundedTo100() {
+        assertThat(bind(VALID.replace("username: imapmcp", "username: imapmcp\n  maxPoolSize: 100")).db().maxPoolSize())
+                .isEqualTo(100);
+        assertThatThrownBy(() -> bind(VALID.replace("username: imapmcp", "username: imapmcp\n  maxPoolSize: 101")))
+                .hasMessageContaining("db.maxPoolSize");
+    }
+
+    @Test
+    void passwordsInTheJdbcUrlAreRefused() {
+        for (String q : new String[] {"?password=x", "?user=a&PASSWORD=x", "?sslpassword=x", "?a=b&sslPassword=x"}) {
+            assertThatThrownBy(() -> bind(VALID.replace("5432/imapmcp", "5432/imapmcp" + q)))
+                    .hasMessageContaining("db.url").hasMessageNotContaining("=x");
+        }
+        assertThat(bind(VALID.replace("5432/imapmcp", "5432/imapmcp?sslmode=require")).db().url()).contains("sslmode");
+    }
+
+    @Test
+    void theVaultProviderIsRefusedInThisBuild() {
+        assertThatThrownBy(() -> bind(VALID.replace("provider: local", "provider: vault")))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("kms.");
     }
 
     @Test

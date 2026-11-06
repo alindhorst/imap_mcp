@@ -7,6 +7,7 @@ import de.alexanderlindhorst.imapmcp.transport.http.BearerTokenFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.HealthServlet;
 import de.alexanderlindhorst.imapmcp.transport.http.HostFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.HttpLocalServer;
+import de.alexanderlindhorst.imapmcp.transport.http.JwtPrincipal;
 import de.alexanderlindhorst.imapmcp.transport.http.JwtTokenFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.JwtValidator;
 import de.alexanderlindhorst.imapmcp.transport.http.OAuthResourceConfig;
@@ -15,19 +16,31 @@ import de.alexanderlindhorst.imapmcp.transport.http.PrincipalContextFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.PrincipalTenants;
 import de.alexanderlindhorst.imapmcp.transport.http.ProtectedResourceMetadataServlet;
 import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 
 /**
  * Assembles the {@code http-public} HTTP server (SPEC 5.3): filter order on /mcp is Host, Origin, method guard
  * (built into the server), token ({@link JwtTokenFilter}), principal to tenant and scope
- * ({@link PrincipalContextFilter}), then the MCP servlet. The RFC 9728 metadata and /health are outside the filters.
+ * ({@link PrincipalContextFilter}), then, with {@code http.stateful}, the session binding (sessions belong to the
+ * (issuer, subject) of the validated token, never to the tenant), then the MCP servlet (stateless, or the stateful
+ * Streamable HTTP variant that carries the purge confirmation). The RFC 9728 metadata and /health are outside the filters.
  * The only place in {@code app} that connects the OAuth settings to the transport; the key source is a parameter so
  * that tests can sign tokens locally, while the launcher passes {@code IssuerJwks.create(oauth.issuer)}.
  */
 public final class HttpPublicServer {
 
+    private static final Duration STATEFUL_REQUEST_TIMEOUT = Duration.ofMinutes(11);
+
     private HttpPublicServer() {
+    }
+
+    /** Issuer and subject of the validated token; null (no session) when the token filter did not run. */
+    static String sessionPrincipal(HttpServletRequest request) {
+        return request.getAttribute(JwtTokenFilter.PRINCIPAL_ATTRIBUTE) instanceof JwtPrincipal p
+                ? p.issuer() + "\n" + p.subject() : null;
     }
 
     public static HttpLocalServer build(PublicConfig config, PublicComponents components,
@@ -54,7 +67,16 @@ public final class HttpPublicServer {
         if (!oauth.metadataPath().equals(OAuthResourceConfig.METADATA_ROOT)) {
             builder.openServlet(oauth.metadataPath(), metadata);
         }
-        components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
+        if (h.stateful()) {
+            // Stateful Streamable HTTP (SPEC 4 v3b, D8): sessions are bound to (issuer, subject) of the validated token,
+            // never to the tenant (unknown principals share one sentinel tenant); the SDK's server-to-client request
+            // timeout is above the longest tool deadline (SPEC 5.5).
+            builder.stateful(true).sessionPrincipal(HttpPublicServer::sessionPrincipal)
+                    .sessionEndListener(components.sessionEndListener()).requestTimeout(STATEFUL_REQUEST_TIMEOUT);
+            components.statefulToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::statefulTool);
+        } else {
+            components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
+        }
         return builder.build();
     }
 }

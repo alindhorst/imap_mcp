@@ -40,6 +40,8 @@ import de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.ElicitingPurgeConfirmation;
+import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
 import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
@@ -63,6 +65,7 @@ import de.alexanderlindhorst.imapmcp.store.secret.RefCredentialStore;
 import de.alexanderlindhorst.imapmcp.store.secret.SecretResolutionException;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -79,6 +82,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
@@ -110,13 +114,15 @@ public final class PublicComponents implements AutoCloseable {
     private final String linkUrl;
     private final KeyRing keys;
     private final JdbcCredentialStore credentials;
+    private final ElicitingPurgeConfirmation purgeConfirmation; // null unless purge_messages is registered
     private boolean closed;
 
     private PublicComponents(Database database, ImapSessionFactory sessions, StorePool pool,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, JdbcTenantDirectory tenants,
             Map<ToolDefinition, ToolHandler> tools, ScheduledExecutorService scheduler, String linkUrl,
-            KeyRing keys, JdbcCredentialStore credentials) {
+            KeyRing keys, JdbcCredentialStore credentials, ElicitingPurgeConfirmation purgeConfirmation) {
         this.credentials = credentials;
+        this.purgeConfirmation = purgeConfirmation;
         this.database = database;
         this.sessions = sessions;
         this.pool = pool;
@@ -141,7 +147,7 @@ public final class PublicComponents implements AutoCloseable {
      */
     public static PublicComponents createForTest(PublicConfig config, AppPaths paths, Clock clock,
             Map<String, String> env, UnaryOperator<Properties> sessionHook,
-            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
         return create(config, paths, clock, env, sessionHook, Platform.current(), new ProcessCommandRunner(),
                 BinaryProbe.system(env), socketFactory);
     }
@@ -153,10 +159,10 @@ public final class PublicComponents implements AutoCloseable {
 
     private static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
-            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
-        if (config.http().stateful()) {
-            throw new AppStartupException("http.stateful in " + paths.configFile()
-                    + ": the stateful transport is not available in this build");
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
+        if (config.oauth().allowWithoutRole()) {
+            LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
+                    + "login of the linking surface. Development only.");
         }
         RefCredentialStore refs = RefCredentialStore.withEnvAndKeyring(CONFIG_OWNER, List.of(), env, platform, runner,
                 probe, config.secrets().keyringTimeout());
@@ -201,8 +207,8 @@ public final class PublicComponents implements AutoCloseable {
 
             String linkUrl = config.pub().baseUrl() + "/accounts";
             AccountArgument account = new AccountArgument(repository, linkUrl);
-            MessageLocator locator = new MessageLocator(new MessageHandles(keys));
             MessageHandles handles = new MessageHandles(keys);
+            MessageLocator locator = new MessageLocator(handles);
             WritePreflight preflight = new WritePreflight(account, locator);
             Map<ToolDefinition, ToolHandler> tools = new LinkedHashMap<>();
             tools.put(ListAccountsTool.DEFINITION, new ListAccountsTool(repository, capabilities, leases,
@@ -225,8 +231,18 @@ public final class PublicComponents implements AutoCloseable {
                     new CopyMessagesTool(preflight, leases, handles, new FolderGroupRunner(clock)));
             tools.put(DeleteMessagesTool.DEFINITION, new DeleteMessagesTool(preflight, leases, handles, clock));
             tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
-            LOG.info("http-public tools registered={}, purge_messages registered=false, download_attachment "
-                    + "registered=true (embedded)", tools.size());
+            // purge_messages (D8): only with purge.enabled over the stateful transport, whose server-to-client requests
+            // carry the confirmation; the deployment switch also goes into the tool as its call-time gate
+            boolean purge = purgeRegistered(config);
+            ElicitingPurgeConfirmation purgeConfirmation = null;
+            if (purge) {
+                purgeConfirmation = new ElicitingPurgeConfirmation(clock);
+                // not registering the tool is the gate; passing the switch on is defence in depth at call time
+                tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(preflight, leases, clock,
+                        purgeConfirmation, config.purgeEnabled()));
+            }
+            LOG.info("http-public tools registered={}, purge_messages registered={}, download_attachment "
+                    + "registered=true (embedded)", tools.size(), purge);
 
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread th = new Thread(r, "imap-mcp-cleanup");
@@ -237,7 +253,7 @@ public final class PublicComponents implements AutoCloseable {
             new ExpiredRowCleanup(ds).schedule(scheduler, CLEANUP_PERIOD);
             metrics.start();
             return new PublicComponents(database, sessions, pool, metrics, executor, new JdbcTenantDirectory(ds),
-                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials);
+                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation);
         } catch (RuntimeException e) {
             if (scheduler != null) {
                 scheduler.shutdownNow();
@@ -256,10 +272,14 @@ public final class PublicComponents implements AutoCloseable {
         }
     }
 
+    static DbConfig dbConfig(PublicConfig.Db db, char[] password) {
+        return new DbConfig(db.url(), db.username(), password, db.maxPoolSize());
+    }
+
     private static Database openDatabase(PublicConfig.Db db, RefCredentialStore refs, AppPaths paths) {
         char[] password = AppComponents.resolveChars(refs, db.password(), "db.password", paths);
         try {
-            return Database.open(DbConfig.of(db.url(), db.username(), password.clone()));
+            return Database.open(dbConfig(db, password.clone()));
         } catch (RuntimeException e) {
             // the driver or Flyway message may carry the host, user name or SQL; only the class is reported
             throw new AppStartupException("Cannot open the database (db.* in " + paths.configFile() + "): "
@@ -286,7 +306,11 @@ public final class PublicComponents implements AutoCloseable {
         }
         masters.forEach((id, key) -> LOG.info("handle key id={} fingerprint={}{}", id, fingerprint(key),
                 id == sec.signingKeyId() ? " (signing)" : ""));
-        return new KeyRing(sec.signingKeyId(), masters);
+        try {
+            return new KeyRing(sec.signingKeyId(), masters); // the ring keeps its own copies
+        } finally {
+            masters.values().forEach(k -> Arrays.fill(k, (byte) 0));
+        }
     }
 
     /** The {@code local} provider (D6): every KEK is resolved once; a WARN is logged; fingerprints per id. */
@@ -354,6 +378,28 @@ public final class PublicComponents implements AutoCloseable {
         McpToolAdapter adapter = new McpToolAdapter(resolver, McpJsonDefaults.getMapper(),
                 () -> UUID.randomUUID().toString(), executor);
         return tools.entrySet().stream().map(e -> adapter.stateless(e.getKey(), e.getValue())).toList();
+    }
+
+    /** D8: {@code purge_messages} exists only with {@code purge.enabled} over the stateful transport. */
+    static boolean purgeRegistered(PublicConfig config) {
+        return config.purgeEnabled() && config.http().stateful();
+    }
+
+    /** Stateful HTTP flavour (needed for the purge confirmation); the resolver maps the principal to its tenant. */
+    public List<McpServerFeatures.SyncToolSpecification> statefulToolSpecs(
+            Function<McpTransportContext, AccountContext> resolver) {
+        McpToolAdapter adapter = new McpToolAdapter(resolver, McpJsonDefaults.getMapper(),
+                () -> UUID.randomUUID().toString(), executor);
+        return tools.entrySet().stream().map(e -> adapter.stateful(e.getKey(), e.getValue())).toList();
+    }
+
+    /**
+     * Session-end callback of the stateful transport: drops the purge approvals of the ended session (SPEC 4, v3b).
+     * Never null; does nothing when {@code purge_messages} is not registered.
+     */
+    public Consumer<String> sessionEndListener() {
+        ElicitingPurgeConfirmation c = purgeConfirmation;
+        return c == null ? id -> { } : c::sessionEnded;
     }
 
     List<ToolDefinition> definitions() {
