@@ -24,10 +24,11 @@ public record AccountContext(TenantId tenantId, Set<String> scopes) {
     }
 
     public boolean scopeLimited() {
-        return false;
+        return scopes != null;
     }
 
+    /** True when the context is not scope-limited, or the token carried exactly this scope. */
     public boolean hasScope(String scope) {
-        return true;
+        return scopes == null || scopes.contains(scope);
     }
 }
