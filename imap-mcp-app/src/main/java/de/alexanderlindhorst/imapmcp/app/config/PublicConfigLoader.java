@@ -48,11 +48,7 @@ public final class PublicConfigLoader {
         } catch (IOException e) {
             throw new ConfigException("config file cannot be read: " + file);
         }
-        try {
-            return bindYaml(text, env);
-        } catch (ConfigException e) {
-            throw e;
-        }
+        return bindYaml(text, env);
     }
 
     static PublicConfig bindYaml(String yaml, Map<String, String> env) {
@@ -64,7 +60,10 @@ public final class PublicConfigLoader {
             throw new ConfigException("config: invalid YAML syntax" + (loc == null ? "" : " near line " + loc.getLineNr()));
         }
         Section top = new Section(root, "config");
-        top.take("accounts"); // ignored: in http-public the accounts are rows of the database
+        if (top.take("accounts") != null) {
+            throw new ConfigException("config.accounts: not available in http-public "
+                    + "(accounts are linked in the linking surface)");
+        }
         AppConfig.Imap imap = ConfigLoader.imap(top.section("imap"));
         AppConfig.Pool pool = ConfigLoader.pool(top.section("pool"));
         AppConfig.Secrets secrets = new AppConfig.Secrets(
@@ -103,16 +102,23 @@ public final class PublicConfigLoader {
         if (!url.startsWith("jdbc:postgresql:")) {
             throw new ConfigException(s.path("url") + ": must be a jdbc:postgresql: URL");
         }
+        String query = url.indexOf('?') < 0 ? "" : url.substring(url.indexOf('?') + 1).toLowerCase(Locale.ROOT);
+        for (String param : query.split("[&;]")) {
+            String name = param.split("=", 2)[0].trim();
+            if (name.equals("password") || name.equals("sslpassword")) {
+                throw new ConfigException(s.path("url") + ": must not carry a password (use db.password)");
+            }
+        }
         String username = s.string("username", null);
         SecretRef password = s.requiredRef("password");
-        int max = s.integer("maxPoolSize", 10, 1, 1000);
+        int max = s.integer("maxPoolSize", 10, 1, 100);
         s.finish();
         return new PublicConfig.Db(url, username, password, max);
     }
 
     private static PublicConfig.Oauth oauth(Section s) {
-        String issuer = httpsUri(s, "issuer", true);
-        String resource = httpsUri(s, "resource", false);
+        String issuer = httpsUri(s, "issuer");
+        String resource = httpsUri(s, "resource");
         String subjectClaim = s.string("subjectClaim", "sub");
         String requiredRole = s.optionalString("requiredRole");
         if (requiredRole != null && requiredRole.isBlank()) {
@@ -132,7 +138,7 @@ public final class PublicConfigLoader {
     }
 
     private static PublicConfig.Public pub(Section s) {
-        String baseUrl = httpsUri(s, "baseUrl", true);
+        String baseUrl = httpsUri(s, "baseUrl");
         int max = s.integer("maxAccountsPerTenant", 10, 1, 1000);
         s.finish();
         return new PublicConfig.Public(baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl,
@@ -140,7 +146,7 @@ public final class PublicConfigLoader {
     }
 
     /** A required {@code https} URI with a host and without user info, query or fragment; the value is not echoed. */
-    private static String httpsUri(Section s, String key, boolean pathAllowed) {
+    private static String httpsUri(Section s, String key) {
         String v = s.string(key, null);
         try {
             URI u = new URI(v);

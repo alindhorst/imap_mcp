@@ -141,7 +141,7 @@ public final class PublicComponents implements AutoCloseable {
      */
     public static PublicComponents createForTest(PublicConfig config, AppPaths paths, Clock clock,
             Map<String, String> env, UnaryOperator<Properties> sessionHook,
-            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
         return create(config, paths, clock, env, sessionHook, Platform.current(), new ProcessCommandRunner(),
                 BinaryProbe.system(env), socketFactory);
     }
@@ -153,10 +153,14 @@ public final class PublicComponents implements AutoCloseable {
 
     private static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
-            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
         if (config.http().stateful()) {
             throw new AppStartupException("http.stateful in " + paths.configFile()
                     + ": the stateful transport is not available in this build");
+        }
+        if (config.oauth().allowWithoutRole()) {
+            LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
+                    + "login of the linking surface. Development only.");
         }
         RefCredentialStore refs = RefCredentialStore.withEnvAndKeyring(CONFIG_OWNER, List.of(), env, platform, runner,
                 probe, config.secrets().keyringTimeout());
@@ -201,8 +205,8 @@ public final class PublicComponents implements AutoCloseable {
 
             String linkUrl = config.pub().baseUrl() + "/accounts";
             AccountArgument account = new AccountArgument(repository, linkUrl);
-            MessageLocator locator = new MessageLocator(new MessageHandles(keys));
             MessageHandles handles = new MessageHandles(keys);
+            MessageLocator locator = new MessageLocator(handles);
             WritePreflight preflight = new WritePreflight(account, locator);
             Map<ToolDefinition, ToolHandler> tools = new LinkedHashMap<>();
             tools.put(ListAccountsTool.DEFINITION, new ListAccountsTool(repository, capabilities, leases,
@@ -256,15 +260,14 @@ public final class PublicComponents implements AutoCloseable {
         }
     }
 
-    /** Stub. */
     static DbConfig dbConfig(PublicConfig.Db db, char[] password) {
-        return DbConfig.of(db.url(), db.username(), password);
+        return new DbConfig(db.url(), db.username(), password, db.maxPoolSize());
     }
 
     private static Database openDatabase(PublicConfig.Db db, RefCredentialStore refs, AppPaths paths) {
         char[] password = AppComponents.resolveChars(refs, db.password(), "db.password", paths);
         try {
-            return Database.open(DbConfig.of(db.url(), db.username(), password.clone()));
+            return Database.open(dbConfig(db, password.clone()));
         } catch (RuntimeException e) {
             // the driver or Flyway message may carry the host, user name or SQL; only the class is reported
             throw new AppStartupException("Cannot open the database (db.* in " + paths.configFile() + "): "
@@ -291,7 +294,11 @@ public final class PublicComponents implements AutoCloseable {
         }
         masters.forEach((id, key) -> LOG.info("handle key id={} fingerprint={}{}", id, fingerprint(key),
                 id == sec.signingKeyId() ? " (signing)" : ""));
-        return new KeyRing(sec.signingKeyId(), masters);
+        try {
+            return new KeyRing(sec.signingKeyId(), masters); // the ring keeps its own copies
+        } finally {
+            masters.values().forEach(k -> Arrays.fill(k, (byte) 0));
+        }
     }
 
     /** The {@code local} provider (D6): every KEK is resolved once; a WARN is logged; fingerprints per id. */
