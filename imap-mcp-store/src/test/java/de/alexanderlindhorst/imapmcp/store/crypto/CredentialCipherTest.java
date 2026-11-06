@@ -132,4 +132,34 @@ class CredentialCipherTest {
         out[0] ^= 1;
         return out;
     }
+
+    @Test
+    void anUnavailableKeyServiceIsNotReportedAsTampering() {
+        CredentialCipher.Sealed sealed = cipher().seal(TENANT, ACCOUNT, 1, "pw".toCharArray());
+        KeyWrapper down = new KeyWrapper() {
+            @Override
+            public WrappedKey wrap(byte[] dek, String tenantId, String accountId) {
+                throw new KeyServiceUnavailableException();
+            }
+
+            @Override
+            public byte[] unwrap(String kekId, byte[] wrapped, String tenantId, String accountId) {
+                throw new KeyServiceUnavailableException();
+            }
+        };
+        CredentialCipher c = new CredentialCipher(down, new SecureRandom());
+
+        assertThatThrownBy(() -> c.open(TENANT, ACCOUNT, 1, sealed)).isInstanceOf(KeyServiceUnavailableException.class)
+                .isNotInstanceOf(CredentialDecryptException.class);
+    }
+
+    @Test
+    void anUnknownKekIdInTheRowDoesNotDecrypt() {
+        CredentialCipher c = cipher();
+        CredentialCipher.Sealed s = c.seal(TENANT, ACCOUNT, 1, "pw".toCharArray());
+
+        assertThatThrownBy(() -> c.open(TENANT, ACCOUNT, 1,
+                new CredentialCipher.Sealed("gone", s.wrappedDek(), s.nonce(), s.ciphertext())))
+                .isInstanceOf(CredentialDecryptException.class);
+    }
 }

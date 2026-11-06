@@ -27,7 +27,10 @@ import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialCipher;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialDecryptException;
+import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceUnavailableException;
+import de.alexanderlindhorst.imapmcp.store.crypto.KeyWrapper;
 import de.alexanderlindhorst.imapmcp.store.crypto.LocalKeyWrapper;
+import de.alexanderlindhorst.imapmcp.store.crypto.WrappedKey;
 import de.alexanderlindhorst.imapmcp.store.jdbc.Database;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcCredentialStore;
 import java.security.SecureRandom;
@@ -66,6 +69,8 @@ class JdbcCredentialStoreIT {
     private ListAppender<ILoggingEvent> logs;
     private Logger logger;
     private JdbcCredentialStore store;
+    private LogIds logIds;
+    private CredentialCipher cipher;
 
     @BeforeAll
     static void start() {
@@ -86,11 +91,11 @@ class JdbcCredentialStoreIT {
     void setUp() {
         byte[] kek = new byte[32];
         Arrays.fill(kek, (byte) 4);
-        CredentialCipher cipher = new CredentialCipher(new LocalKeyWrapper("local-1", Map.of("local-1", kek)),
+        cipher = new CredentialCipher(new LocalKeyWrapper("local-1", Map.of("local-1", kek)),
                 new SecureRandom());
         byte[] master = new byte[32];
         Arrays.fill(master, (byte) 1);
-        LogIds logIds = new LogIds(new KeyRing(1, Map.of(1, master)));
+        logIds = new LogIds(new KeyRing(1, Map.of(1, master)));
         store = new JdbcCredentialStore(db.dataSource(), cipher, logIds, metrics);
         logger = (Logger) LoggerFactory.getLogger(JdbcCredentialStore.class);
         logs = new ListAppender<>();
@@ -246,6 +251,7 @@ class JdbcCredentialStoreIT {
         List<ILoggingEvent> errors = logs.list.stream().filter(e -> e.getLevel() == Level.ERROR).toList();
         assertThat(errors).hasSize(1);
         String text = errors.get(0).getFormattedMessage();
+        assertThat(text).contains(logIds.tenant(tenant.value())).contains(logIds.account(account.value()));
         assertThat(text).doesNotContain(tenant.value()).doesNotContain(account.value())
                 .doesNotContain("victim-pw-canary");
         assertThat(errors.get(0).getThrowableProxy()).isNull();
@@ -279,13 +285,88 @@ class JdbcCredentialStoreIT {
                     PoolSettings.DEFAULTS);
             PoolKey key = PoolKey.of(new AccountContext(t), new ResolvedAccount(t, account, "acc_TESTHANDLE"));
 
-            assertThatThrownBy(() -> pool.borrow(key)).satisfies(e ->
-                    assertThat(ImapErrorMapper.map(e, "req").error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+            assertThatThrownBy(() -> pool.borrow(key)).satisfies(e -> {
+                assertThat(ImapErrorMapper.map(e, "req").error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
+                Throwable root = e;
+                while (root.getCause() != null) {
+                    root = root.getCause();
+                }
+                assertThat(root).isInstanceOf(CredentialDecryptException.class);
+            });
             pool.close();
             mailServer.close();
             acceptor.join(2000);
         }
 
         assertThat(connections).hasValue(0);
+    }
+
+    private static void exec(String sql, Object... params) throws SQLException {
+        try (Connection c = db.dataSource().getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) {
+                ps.setObject(i + 1, params[i]);
+            }
+            ps.executeUpdate();
+        }
+    }
+
+    @Test
+    void anUpperCaseTenantIdUsesTheSameCanonicalFormAsTheRow() throws Exception {
+        TenantId t = newTenant();
+        TenantId upper = new TenantId(t.value().toUpperCase());
+        AccountId a = newAccount(t, "acct-case");
+        store.insert(upper, a, 1, "case-pw".toCharArray());
+
+        assertThat(store.resolve(t, a)).hasValueSatisfying(s -> assertThat(read(s)).isEqualTo("case-pw"));
+        assertThat(store.resolve(upper, a)).hasValueSatisfying(s -> assertThat(read(s)).isEqualTo("case-pw"));
+    }
+
+    @Test
+    void anUnknownKekIdInTheRowFailsLikeTampering() throws Exception {
+        TenantId t = newTenant();
+        AccountId a = newAccount(t, "acct-kek");
+        store.insert(t, a, 1, "pw".toCharArray());
+        exec("UPDATE credential SET kek_id = 'gone' WHERE tenant_id = ?", UUID.fromString(t.value()));
+
+        assertThatThrownBy(() -> store.resolve(t, a)).isInstanceOf(CredentialDecryptException.class);
+        assertFailureLoggedOnce(t, a);
+    }
+
+    @Test
+    void aRowCopiedToAnotherVersionFails() throws Exception {
+        TenantId t = newTenant();
+        AccountId a = newAccount(t, "acct-ver");
+        store.insert(t, a, 1, "pw".toCharArray());
+        UUID tu = UUID.fromString(t.value());
+        exec("UPDATE credential SET version = 2 WHERE tenant_id = ? AND account_id = 'acct-ver'", tu);
+        exec("UPDATE mailbox_account SET credential_version = 2 WHERE tenant_id = ? AND id = 'acct-ver'", tu);
+
+        assertThatThrownBy(() -> store.resolve(t, a)).isInstanceOf(CredentialDecryptException.class);
+        assertFailureLoggedOnce(t, a);
+    }
+
+    @Test
+    void anUnavailableKeyServiceIsNeitherLoggedNorCountedAsADecryptFailure() throws Exception {
+        TenantId t = newTenant();
+        AccountId a = newAccount(t, "acct-down");
+        store.insert(t, a, 1, "pw".toCharArray());
+        KeyWrapper down = new KeyWrapper() {
+            @Override
+            public WrappedKey wrap(byte[] dek, String tenantId, String accountId) {
+                throw new KeyServiceUnavailableException();
+            }
+
+            @Override
+            public byte[] unwrap(String kekId, byte[] wrapped, String tenantId, String accountId) {
+                throw new KeyServiceUnavailableException();
+            }
+        };
+        JdbcCredentialStore downStore = new JdbcCredentialStore(db.dataSource(),
+                new CredentialCipher(down, new SecureRandom()), logIds, metrics);
+
+        assertThatThrownBy(() -> downStore.resolve(t, a)).isInstanceOf(KeyServiceUnavailableException.class);
+
+        assertThat(logs.list).noneMatch(e -> e.getLevel() == Level.ERROR);
+        assertThat(operations).doesNotContain("credentials/decrypt_failure");
     }
 }

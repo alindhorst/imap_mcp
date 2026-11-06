@@ -95,4 +95,83 @@ class LocalKeyWrapperTest {
                 ref -> new Secret("not-a-key!!".toCharArray())))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("not-a-key");
     }
+
+    @Test
+    void everyWrapUsesAFreshNonce() {
+        LocalKeyWrapper w = new LocalKeyWrapper("local-1", Map.of("local-1", key(1)));
+
+        byte[] a = Arrays.copyOf(w.wrap(key(5), "t", "a").bytes(), 12);
+        byte[] b = Arrays.copyOf(w.wrap(key(5), "t", "a").bytes(), 12);
+
+        assertThat(a).isNotEqualTo(b);
+    }
+
+    @Test
+    void blankKekIdsAndTheSameKeyUnderTwoIdsAreRejected() {
+        assertThatThrownBy(() -> new LocalKeyWrapper(" ", Map.of(" ", key(1))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LocalKeyWrapper("", Map.of("", key(1))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LocalKeyWrapper("a", Map.of("a", key(1), "b", key(1))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void fromReferencesReadsEveryKekWithOneWarnAndRotationWorks() {
+        Logger logger = (Logger) LoggerFactory.getLogger(LocalKeyWrapper.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        Map<String, String> material = Map.of("env:K1", b64(key(1)), "env:K2", b64(key(2)));
+        try {
+            LocalKeyWrapper old = LocalKeyWrapper.fromReference("local-1", new SecretRef("env:K1"),
+                    ref -> new Secret(material.get(ref.value()).toCharArray()));
+            WrappedKey wrapped = old.wrap(key(5), "t", "a");
+            logs.list.clear();
+
+            LocalKeyWrapper rotated = LocalKeyWrapper.fromReferences("local-2",
+                    new java.util.LinkedHashMap<>(Map.of("local-1", new SecretRef("env:K1"),
+                            "local-2", new SecretRef("env:K2"))),
+                    ref -> new Secret(material.get(ref.value()).toCharArray()));
+
+            assertThat(rotated.unwrap("local-1", wrapped.bytes(), "t", "a")).isEqualTo(key(5));
+            assertThat(rotated.wrap(key(5), "t", "a").kekId()).isEqualTo("local-2");
+            assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).hasSize(1);
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test
+    void paddedOrWrongLengthBase64IsRejected() {
+        String padded = Base64.getUrlEncoder().encodeToString(new byte[31]); // 31 bytes encode with '='
+        assertThatThrownBy(() -> LocalKeyWrapper.fromReference("local-1", new SecretRef("env:KEK"),
+                ref -> new Secret(padded.toCharArray()))).isInstanceOf(IllegalArgumentException.class);
+        String paddedFull = b64(key(1)) + "=";
+        assertThatThrownBy(() -> LocalKeyWrapper.fromReference("local-1", new SecretRef("env:KEK"),
+                ref -> new Secret(paddedFull.toCharArray()))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aResolverFailureIsNotReportedAsABase64Problem() {
+        assertThatThrownBy(() -> LocalKeyWrapper.fromReference("local-1", new SecretRef("env:KEK"), ref -> {
+            throw new IllegalStateException("resolver down");
+        })).isInstanceOf(IllegalStateException.class).hasMessage("resolver down");
+    }
+
+    @Test
+    void theResolvedSecretIsWipedAfterReading() {
+        char[][] seen = new char[1][];
+        LocalKeyWrapper.fromReference("local-1", new SecretRef("env:KEK"), ref -> {
+            Secret s = new Secret(b64(key(1)).toCharArray());
+            seen[0] = s.chars();
+            return s;
+        });
+
+        assertThat(seen[0]).containsOnly('\0');
+    }
+
+    private static String b64(byte[] b) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
 }
