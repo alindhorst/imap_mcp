@@ -16,7 +16,7 @@ import javax.sql.DataSource;
 /**
  * {@link OidcPendingStore} on {@code oidc_pending} (SPEC 5.7): the key is the SHA-256 of the {@code state}; an
  * entry is removed by the statement that returns it, so it is used once even under concurrency. The table is
- * capped because anyone can start a login.
+ * capped (counting unexpired rows only) because anyone can start a login.
  */
 public final class JdbcOidcPendingStore implements OidcPendingStore {
 
@@ -48,13 +48,14 @@ public final class JdbcOidcPendingStore implements OidcPendingStore {
         try (Connection c = dataSource.getConnection();
                 PreparedStatement ps = c.prepareStatement(
                         "INSERT INTO oidc_pending (state_hash, nonce, pkce_verifier, created_at, expires_at)"
-                                + " SELECT ?, ?, ?, ?, ? WHERE (SELECT count(*) FROM oidc_pending) < ?")) {
+                                + " SELECT ?, ?, ?, ?, ? WHERE (SELECT count(*) FROM oidc_pending WHERE expires_at > ?) < ?")) {
             ps.setBytes(1, WebTokens.sha256(state));
             ps.setString(2, nonce);
             ps.setString(3, pkceVerifier);
             ps.setObject(4, now.atOffset(ZoneOffset.UTC));
             ps.setObject(5, now.plus(TTL).atOffset(ZoneOffset.UTC));
-            ps.setInt(6, maxPending);
+            ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+            ps.setInt(7, maxPending);
             if (ps.executeUpdate() == 0) {
                 throw new LimitReachedException();
             }

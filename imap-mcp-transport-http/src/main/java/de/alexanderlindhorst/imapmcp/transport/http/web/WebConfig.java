@@ -13,10 +13,18 @@ import java.util.function.Supplier;
  * ({@code requiredRole} null) is accepted only together with {@code allowWithoutRole}.
  */
 public record WebConfig(URI publicBaseUrl, String issuer, String clientId, Supplier<Secret> clientSecret,
-        String subjectClaim, String requiredRole, String roleClaim, boolean allowWithoutRole) {
+        String subjectClaim, String requiredRole, String roleClaim, boolean allowWithoutRole,
+        boolean allowInsecureHttpIssuer) {
 
     public static final String DEFAULT_ROLE_CLAIM = "realm_access.roles";
     public static final String BASE_PATH = "/accounts";
+
+    /** The production form: the issuer must be an https URL. */
+    public WebConfig(URI publicBaseUrl, String issuer, String clientId, Supplier<Secret> clientSecret,
+            String subjectClaim, String requiredRole, String roleClaim, boolean allowWithoutRole) {
+        this(publicBaseUrl, issuer, clientId, clientSecret, subjectClaim, requiredRole, roleClaim, allowWithoutRole,
+                false);
+    }
 
     public WebConfig {
         Objects.requireNonNull(publicBaseUrl, "publicBaseUrl");
@@ -31,6 +39,7 @@ public record WebConfig(URI publicBaseUrl, String issuer, String clientId, Suppl
                         && !"/".equals(publicBaseUrl.getRawPath()))) {
             throw new IllegalArgumentException("public.baseUrl must be an https URL without path, query or fragment");
         }
+        checkIssuer(issuer, allowInsecureHttpIssuer);
         if (clientId.isBlank() || subjectClaim.isBlank() || issuer.isBlank()) {
             throw new IllegalArgumentException("oauth.issuer, oauth.webClientId and oauth.subjectClaim must not be blank");
         }
@@ -43,13 +52,31 @@ public record WebConfig(URI publicBaseUrl, String issuer, String clientId, Suppl
         roleClaim = roleClaim == null || roleClaim.isBlank() ? DEFAULT_ROLE_CLAIM : roleClaim;
     }
 
-    /** {@code https://host[:port]} as browsers send it in {@code Origin}. */
+    /** {@code https://host[:port]} as browsers send it in {@code Origin} (the default port 443 is left out). */
     public String origin() {
-        return "https://" + publicBaseUrl.getRawAuthority().toLowerCase(Locale.ROOT);
+        return "https://" + authority();
     }
 
     public String authority() {
-        return publicBaseUrl.getRawAuthority().toLowerCase(Locale.ROOT);
+        int port = publicBaseUrl.getPort();
+        String host = publicBaseUrl.getHost().toLowerCase(Locale.ROOT);
+        return port == -1 || port == 443 ? host : host + ":" + port;
+    }
+
+    /** {@code oauth.issuer}: https with a host, without user info, query or fragment (as for the access tokens). */
+    private static void checkIssuer(String issuer, boolean allowInsecureHttp) {
+        URI u;
+        try {
+            u = new URI(issuer.trim());
+        } catch (java.net.URISyntaxException e) {
+            throw new IllegalArgumentException("oauth.issuer is not a valid URI");
+        }
+        boolean scheme = "https".equals(u.getScheme()) || (allowInsecureHttp && "http".equals(u.getScheme()));
+        if (!scheme || u.getHost() == null || u.getRawUserInfo() != null || u.getRawQuery() != null
+                || u.getRawFragment() != null) {
+            throw new IllegalArgumentException(
+                    "oauth.issuer must be an https URI with a host and without user info, query or fragment");
+        }
     }
 
     public String redirectUri() {

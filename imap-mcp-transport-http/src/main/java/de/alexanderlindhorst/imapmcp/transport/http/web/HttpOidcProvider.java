@@ -41,34 +41,21 @@ public final class HttpOidcProvider implements OidcProvider {
 
     private final WebConfig config;
     private final IdTokenValidator validator;
-    private final boolean allowHttp;
+    private final boolean allowHttp; // only from the test switch of the WebConfig
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(TIMEOUT).build();
     private Endpoints endpoints; // guarded by this
     private long endpointsAt; // guarded by this
     private long failedAt = -1; // guarded by this
 
-    private HttpOidcProvider(WebConfig config, JWKSource<SecurityContext> keys, boolean allowHttp) {
+    private HttpOidcProvider(WebConfig config, JWKSource<SecurityContext> keys) {
         this.config = config;
         this.validator = new IdTokenValidator(config.issuer(), config.clientId(), config.subjectClaim(), keys);
-        this.allowHttp = allowHttp;
+        this.allowHttp = config.allowInsecureHttpIssuer();
     }
 
     public static HttpOidcProvider create(WebConfig config, JWKSource<SecurityContext> keys) {
-        return new HttpOidcProvider(config, keys, false);
-    }
-
-    /**
-     * With {@code allowInsecureHttp} the discovery document may name {@code http} endpoints. For tests against a
-     * local identity provider only; the application never passes {@code true}.
-     */
-    public static HttpOidcProvider create(WebConfig config, JWKSource<SecurityContext> keys,
-            boolean allowInsecureHttp) {
-        return new HttpOidcProvider(config, keys, allowInsecureHttp);
-    }
-
-    static HttpOidcProvider forTest(WebConfig config, JWKSource<SecurityContext> keys, boolean allowHttp) {
-        return new HttpOidcProvider(config, keys, allowHttp);
+        return new HttpOidcProvider(config, keys);
     }
 
     @Override
@@ -130,8 +117,11 @@ public final class HttpOidcProvider implements OidcProvider {
         try {
             String base = config.issuer().endsWith("/") ? config.issuer().substring(0, config.issuer().length() - 1)
                     : config.issuer();
-            HttpResponse<InputStream> res = http.send(HttpRequest.newBuilder(URI.create(base
-                    + "/.well-known/openid-configuration")).timeout(TIMEOUT).header("Accept", "application/json")
+            URI discovery = URI.create(base + "/.well-known/openid-configuration");
+            if (!"https".equals(discovery.getScheme()) && !allowHttp) {
+                throw new IOException("scheme");
+            }
+            HttpResponse<InputStream> res = http.send(HttpRequest.newBuilder(discovery).timeout(TIMEOUT).header("Accept", "application/json")
                     .GET().build(), HttpResponse.BodyHandlers.ofInputStream());
             byte[] body;
             try (InputStream in = res.body()) {

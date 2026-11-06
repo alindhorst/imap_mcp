@@ -97,6 +97,11 @@ class IdTokenValidatorTest {
     }
 
     @Test
+    void aTokenWithoutIssuedAtIsRejected() throws Exception {
+        assertRejected(sign(key, b -> b.issueTime(null)));
+    }
+
+    @Test
     void aMultiValuedAudienceNeedsAnAuthorizedPartyThatIsTheClient() throws Exception {
         assertThat(validator.validate(sign(key, b -> b.audience(List.of(CLIENT, "account")).claim("azp", CLIENT)),
                 NONCE).subject()).isEqualTo("alice");

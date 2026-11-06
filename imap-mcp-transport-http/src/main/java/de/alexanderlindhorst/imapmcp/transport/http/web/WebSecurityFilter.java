@@ -49,7 +49,14 @@ public final class WebSecurityFilter implements Filter {
             AccountsServlet.writePage(res, HttpServletResponse.SC_FORBIDDEN, "Forbidden", "<p>Forbidden.</p>");
             return;
         }
-        if ("POST".equals(req.getMethod())) {
+        String method = req.getMethod();
+        if (!"GET".equals(method) && !"HEAD".equals(method) && !"POST".equals(method)) {
+            res.setHeader("Allow", "GET, HEAD, POST");
+            AccountsServlet.writePage(res, HttpServletResponse.SC_METHOD_NOT_ALLOWED, "Method not allowed",
+                    "<p>Method not allowed.</p>");
+            return;
+        }
+        if ("POST".equals(method)) {
             String origin = req.getHeader("Origin");
             if (origin != null && !origin.trim().toLowerCase(Locale.ROOT).equals(config.origin())) {
                 LOG.debug("accounts request refused: origin");
