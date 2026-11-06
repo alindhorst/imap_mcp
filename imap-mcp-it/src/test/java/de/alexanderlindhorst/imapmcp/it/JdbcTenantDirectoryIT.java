@@ -83,30 +83,30 @@ class JdbcTenantDirectoryIT {
     void createThenFindReturnsTheSameTenantAndCreateIsIdempotent() {
         JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), new TestClock(), 100);
 
-        TenantId created = dir.create("https://idp.example", "alice");
+        TenantId created = dir.create("https://idp.example", "alice").tenantId();
         TenantInfo found = dir.find("https://idp.example", "alice").orElseThrow();
 
         assertThat(UUID.fromString(created.value())).isNotNull();
         assertThat(found.tenantId()).isEqualTo(created);
         assertThat(found.disabled()).isFalse();
-        assertThat(dir.create("https://idp.example", "alice")).isEqualTo(created);
+        assertThat(dir.create("https://idp.example", "alice").tenantId()).isEqualTo(created);
     }
 
     @Test
     void sameSubjectUnderAnotherIssuerIsAnotherTenant() {
         JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), new TestClock(), 100);
 
-        TenantId a = dir.create("https://idp-a.example", "bob");
+        TenantId a = dir.create("https://idp-a.example", "bob").tenantId();
 
         assertThat(dir.find("https://idp-b.example", "bob")).isEmpty();
-        assertThat(dir.create("https://idp-b.example", "bob")).isNotEqualTo(a);
+        assertThat(dir.create("https://idp-b.example", "bob").tenantId()).isNotEqualTo(a);
     }
 
     @Test
     void aHitIsCachedForFiveMinutesAndReloadedAfterwards() throws Exception {
         TestClock clock = new TestClock();
         JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), clock, 100);
-        TenantId t = dir.create("https://idp.example", "carol");
+        TenantId t = dir.create("https://idp.example", "carol").tenantId();
         assertThat(dir.find("https://idp.example", "carol")).isPresent();
 
         exec("UPDATE tenant SET status = 'disabled' WHERE id = ?", UUID.fromString(t.value()));
@@ -120,7 +120,7 @@ class JdbcTenantDirectoryIT {
     @Test
     void invalidateDropsTheEntryAtOnce() throws Exception {
         JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), new TestClock(), 100);
-        TenantId t = dir.create("https://idp.example", "dave");
+        TenantId t = dir.create("https://idp.example", "dave").tenantId();
         dir.find("https://idp.example", "dave");
         exec("UPDATE tenant SET status = 'disabled' WHERE id = ?", UUID.fromString(t.value()));
 
@@ -147,5 +147,138 @@ class JdbcTenantDirectoryIT {
         assertThat(dir.find("https://idp.example", "x".repeat(5000))).isEmpty();
         assertThat(dir.find("y".repeat(5000), "s")).isEmpty();
         assertThat(dir.cachedEntries()).isZero();
+    }
+
+    @Test
+    void missesAreNotCachedAndARowInsertedBySqlIsFoundAtOnce() throws Exception {
+        JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), new TestClock(), 100);
+        assertThat(dir.find("https://idp.example", "late")).isEmpty();
+        assertThat(dir.cachedEntries()).isZero();
+
+        UUID id = UUID.randomUUID();
+        exec("INSERT INTO tenant (id, issuer, subject) VALUES (?, 'https://idp.example', 'late')", id);
+
+        assertThat(dir.find("https://idp.example", "late").orElseThrow().tenantId().value()).isEqualTo(id.toString());
+    }
+
+    @Test
+    void concurrentCreateForTheSamePrincipalGivesOneRowAndOneId() throws Exception {
+        JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), new TestClock(), 100);
+        java.util.Set<TenantId> ids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(8)) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 16; i++) {
+                futures.add(pool.submit(() -> ids.add(dir.create("https://idp.example", "racer").tenantId())));
+            }
+            for (var f : futures) {
+                f.get();
+            }
+        }
+
+        assertThat(ids).hasSize(1);
+        try (Connection c = db.dataSource().getConnection();
+                var st = c.createStatement();
+                var rs = st.executeQuery("SELECT count(*) FROM tenant WHERE issuer = 'https://idp.example'"
+                        + " AND subject = 'racer'")) {
+            rs.next();
+            assertThat(rs.getInt(1)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void aLoadThatStartedBeforeInvalidateDoesNotCacheTheStaleRow() throws Exception {
+        UUID id = UUID.randomUUID();
+        exec("INSERT INTO tenant (id, issuer, subject) VALUES (?, 'https://idp.example', 'stale-race')", id);
+        SlowReads slow = new SlowReads(db.dataSource());
+        JdbcTenantDirectory dir = new JdbcTenantDirectory(slow.dataSource(), new TestClock(), 100);
+        slow.arm();
+
+        var loader = java.util.concurrent.CompletableFuture.supplyAsync(
+                () -> dir.find("https://idp.example", "stale-race").orElseThrow());
+        slow.awaitReadDone(); // the loader has read the active row and is held before it can cache it
+        exec("UPDATE tenant SET status = 'disabled' WHERE id = ?", id);
+        dir.invalidate("https://idp.example", "stale-race");
+        slow.release();
+        assertThat(loader.get(5, java.util.concurrent.TimeUnit.SECONDS).disabled()).isFalse(); // its own stale read
+
+        assertThat(dir.find("https://idp.example", "stale-race").orElseThrow().disabled()).isTrue();
+    }
+
+    /** DataSource whose next tenant SELECT returns its rows and then waits, to interleave an invalidate. */
+    private static final class SlowReads {
+        private final javax.sql.DataSource delegate;
+        private volatile boolean armed;
+        private final java.util.concurrent.CountDownLatch readDone = new java.util.concurrent.CountDownLatch(1);
+        private final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        SlowReads(javax.sql.DataSource delegate) {
+            this.delegate = delegate;
+        }
+
+        void arm() {
+            armed = true;
+        }
+
+        void awaitReadDone() throws InterruptedException {
+            assertThat(readDone.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+
+        void release() {
+            release.countDown();
+        }
+
+        javax.sql.DataSource dataSource() {
+            return (javax.sql.DataSource) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[] {javax.sql.DataSource.class}, (proxy, method, args) -> {
+                        Object r = invoke(delegate, method, args);
+                        if (method.getName().equals("getConnection")) {
+                            return wrap(Connection.class, (Connection) r);
+                        }
+                        return r;
+                    });
+        }
+
+        private <T> T wrap(Class<T> type, T target) {
+            return type.cast(java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[] {type}, (proxy, method, args) -> {
+                        Object r = invoke(target, method, args);
+                        if (method.getName().equals("prepareStatement")) {
+                            boolean tenantSelect = armed && String.valueOf(args[0]).startsWith("SELECT id, status FROM tenant");
+                            return wrapStatement((PreparedStatement) r, tenantSelect);
+                        }
+                        return r;
+                    }));
+        }
+
+        private PreparedStatement wrapStatement(PreparedStatement target, boolean hold) {
+            return (PreparedStatement) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[] {PreparedStatement.class}, (proxy, method, args) -> {
+                        Object r = invoke(target, method, args);
+                        if (hold && method.getName().equals("executeQuery")) {
+                            armed = false;
+                            // materialise nothing: the cursor was read by the caller after we return, so read first
+                            java.sql.ResultSet rs = (java.sql.ResultSet) r;
+                            java.sql.ResultSet snapshot = snapshot(rs);
+                            readDone.countDown();
+                            release.await();
+                            return snapshot;
+                        }
+                        return r;
+                    });
+        }
+
+        private static java.sql.ResultSet snapshot(java.sql.ResultSet rs) throws java.sql.SQLException {
+            javax.sql.rowset.CachedRowSet cached = javax.sql.rowset.RowSetProvider.newFactory().createCachedRowSet();
+            cached.populate(rs);
+            return cached;
+        }
+
+        private static Object invoke(Object target, java.lang.reflect.Method m, Object[] args) throws Throwable {
+            try {
+                return m.invoke(target, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                throw e.getCause();
+            }
+        }
     }
 }

@@ -123,10 +123,10 @@ class JdbcAccountRepositoryIT {
         ResolvedAccount created = repo.create(t, newAccount("l"));
         AccountId id = created.account().id();
 
-        assertThat(repo.recordRefusedLogin(t, id)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
-        assertThat(repo.recordRefusedLogin(t, id)).isEqualTo(new LoginState(2, MailAccount.Status.ACTIVE));
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(2, MailAccount.Status.ACTIVE));
         assertThat(repo.findByTenantAndId(t, id).orElseThrow().account().revision()).isEqualTo(1L);
-        assertThat(repo.recordRefusedLogin(t, id)).isEqualTo(new LoginState(3, MailAccount.Status.NEEDS_RELINK));
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(3, MailAccount.Status.NEEDS_RELINK));
 
         MailAccount after = repo.findByTenantAndId(t, id).orElseThrow().account();
         assertThat(after.status()).isEqualTo(MailAccount.Status.NEEDS_RELINK);
@@ -138,11 +138,11 @@ class JdbcAccountRepositoryIT {
         TenantId t = AccountSql.newTenant(db.dataSource());
         AccountId id = repo.create(t, newAccount("l")).account().id();
 
-        repo.recordRefusedLogin(t, id);
-        repo.recordRefusedLogin(t, id);
-        repo.recordSuccessfulLogin(t, id);
+        repo.recordRefusedLogin(t, id, 1L);
+        repo.recordRefusedLogin(t, id, 1L);
+        repo.recordSuccessfulLogin(t, id, 1L);
 
-        assertThat(repo.recordRefusedLogin(t, id)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
     }
 
     @Test
@@ -150,21 +150,81 @@ class JdbcAccountRepositoryIT {
         TenantId t = AccountSql.newTenant(db.dataSource());
         AccountId id = repo.create(t, newAccount("l")).account().id();
 
+        Set<Integer> counts = new HashSet<>();
+        int applied = 0;
         try (ExecutorService pool = Executors.newFixedThreadPool(8)) {
             java.util.List<Future<LoginState>> results = new java.util.ArrayList<>();
             for (int i = 0; i < 40; i++) {
-                results.add(pool.submit(() -> repo.recordRefusedLogin(t, id)));
+                results.add(pool.submit(() -> repo.recordRefusedLogin(t, id, 1L)));
             }
-            Set<Integer> counts = new HashSet<>();
             for (Future<LoginState> f : results) {
-                counts.add(f.get().failedLogins());
+                LoginState state = f.get();
+                if (state != null) {
+                    applied++;
+                    counts.add(state.failedLogins());
+                }
             }
-            assertThat(counts).hasSize(40); // no lost update: every call saw its own count
         }
 
+        // revision 1 is only valid until the flip raises it: exactly the first three refusals are applied
+        assertThat(applied).isEqualTo(3);
+        assertThat(counts).containsExactlyInAnyOrder(1, 2, 3);
         MailAccount after = repo.findByTenantAndId(t, id).orElseThrow().account();
         assertThat(after.status()).isEqualTo(MailAccount.Status.NEEDS_RELINK);
         assertThat(after.revision()).isEqualTo(2L);
+    }
+
+    @Test
+    void aStaleRevisionChangesNothing() throws Exception {
+        TenantId t = AccountSql.newTenant(db.dataSource());
+        AccountId id = repo.create(t, newAccount("l")).account().id();
+
+        assertThat(repo.recordRefusedLogin(t, id, 0L)).isNull();
+        assertThat(repo.recordRefusedLogin(t, id, 2L)).isNull();
+        repo.recordSuccessfulLogin(t, id, 0L);
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
+        repo.recordSuccessfulLogin(t, id, 7L); // stale: the counter stays
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isEqualTo(new LoginState(2, MailAccount.Status.ACTIVE));
+    }
+
+    @Test
+    void aRefusalAfterTheRelinkFlipIsIgnoredBecauseTheRevisionMovedOn() throws Exception {
+        TenantId t = AccountSql.newTenant(db.dataSource());
+        AccountId id = repo.create(t, newAccount("l")).account().id();
+        for (int i = 0; i < 3; i++) {
+            repo.recordRefusedLogin(t, id, 1L);
+        }
+
+        assertThat(repo.recordRefusedLogin(t, id, 1L)).isNull();
+        assertThat(repo.findByTenantAndId(t, id).orElseThrow().account().revision()).isEqualTo(2L);
+    }
+
+    @Test
+    void aSuccessfulLoginOfAForeignTenantLeavesTheOwnersCounterUnchanged() throws Exception {
+        TenantId owner = AccountSql.newTenant(db.dataSource());
+        TenantId other = AccountSql.newTenant(db.dataSource());
+        AccountId id = repo.create(owner, newAccount("l")).account().id();
+        repo.recordRefusedLogin(owner, id, 1L);
+
+        repo.recordSuccessfulLogin(other, id, 1L);
+
+        assertThat(repo.recordRefusedLogin(owner, id, 1L)).isEqualTo(new LoginState(2, MailAccount.Status.ACTIVE));
+    }
+
+    @Test
+    void onlyTheCanonicalLowerCaseTenantUuidFindsAnything() throws Exception {
+        TenantId t = AccountSql.newTenant(db.dataSource());
+        ResolvedAccount created = repo.create(t, newAccount("l"));
+        String canonical = t.value();
+        for (String variant : new String[] {canonical.toUpperCase(), canonical.replace("-", ""),
+                "{" + canonical + "}", " " + canonical, "1-1-1-1-1"}) {
+            TenantId v = new TenantId(variant);
+            assertThat(repo.findByTenant(v)).as(variant).isEmpty();
+            assertThat(repo.findByTenantAndHandle(v, created.handle())).as(variant).isEmpty();
+            assertThat(repo.findByTenantAndId(v, created.account().id())).as(variant).isEmpty();
+            assertThat(repo.recordRefusedLogin(v, created.account().id(), 1L)).as(variant).isNull();
+        }
+        assertThat(repo.findByTenantAndId(t, created.account().id())).isPresent();
     }
 
     @Test
@@ -173,7 +233,7 @@ class JdbcAccountRepositoryIT {
         TenantId other = AccountSql.newTenant(db.dataSource());
         AccountId id = repo.create(owner, newAccount("l")).account().id();
 
-        assertThat(repo.recordRefusedLogin(other, id)).isNull();
-        assertThat(repo.recordRefusedLogin(owner, id)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
+        assertThat(repo.recordRefusedLogin(other, id, 1L)).isNull();
+        assertThat(repo.recordRefusedLogin(owner, id, 1L)).isEqualTo(new LoginState(1, MailAccount.Status.ACTIVE));
     }
 }
