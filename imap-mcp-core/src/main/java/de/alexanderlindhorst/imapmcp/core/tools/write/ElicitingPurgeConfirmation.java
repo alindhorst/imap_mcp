@@ -93,6 +93,8 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         }
     }
 
+    private static final Duration SWEEP_INTERVAL = Duration.ofMinutes(1);
+
     private static final Map<String, Object> SCHEMA = Map.of("type", "object", "properties", Map.of(ALLOW_FOR_SESSION,
             Map.of("type", "boolean", "title", "Allow for this session", "description",
                     "Also allow permanent deletion of messages already in this Trash folder for the next 15 minutes, "
@@ -102,6 +104,8 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
     private final Map<String, Instant> declinedUntil = new ConcurrentHashMap<>();
     private final Map<String, Approval> approvals = new ConcurrentHashMap<>();
     private final TrashStatus status;
+    private Instant nextSweep = Instant.EPOCH; // guarded by sweepLock
+    private final Object sweepLock = new Object();
 
     public ElicitingPurgeConfirmation(Clock clock) {
         this(clock, LIVE_STATUS);
@@ -124,6 +128,7 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
             return new Decision.Refused(ElicitationReason.ERROR);
         }
         Instant now = clock.instant();
+        sweepExpired(now);
         String key = ctx.accountContext().tenantId().value() + "/" + request.account().account().id().value();
         Approval approval = approvals.get(key);
         if (approval != null && approval.covers(request, now)) {
@@ -164,6 +169,26 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
             case Answer.TimedOut t -> new Decision.Refused(ElicitationReason.TIMEOUT);
             case Answer.Failed f -> new Decision.Refused(ElicitationReason.ERROR);
         };
+    }
+
+    /** Drops expired cooldowns and approvals, at most once a minute (SPEC 5.5, bounded maps). */
+    private void sweepExpired(Instant now) {
+        synchronized (sweepLock) {
+            if (now.isBefore(nextSweep)) {
+                return;
+            }
+            nextSweep = now.plus(SWEEP_INTERVAL);
+        }
+        declinedUntil.values().removeIf(until -> !now.isBefore(until));
+        approvals.values().removeIf(a -> !now.isBefore(a.expiresAt));
+    }
+
+    int cooldownCount() {
+        return declinedUntil.size();
+    }
+
+    int approvalCount() {
+        return approvals.size();
     }
 
     private void createApproval(String key, String trashName, TrashState state) {

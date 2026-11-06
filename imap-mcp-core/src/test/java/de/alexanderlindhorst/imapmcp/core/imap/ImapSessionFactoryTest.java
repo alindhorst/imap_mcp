@@ -257,4 +257,53 @@ class ImapSessionFactoryTest {
                         && c.getName().equals("getDefaultInstance"));
         ArchRuleDefinition.noClasses().should().callCodeUnitWhere(callsDefault).check(classes);
     }
+
+    @Test
+    void sessionsUnusedForADayAreDropped() {
+        MutableClock clock = new MutableClock();
+        try (ImapSessionFactory f = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> p, false, clock, 10_000)) {
+            MailAccount a = account("a", Security.IMPLICIT_TLS, Flavor.GENERIC);
+            MailAccount b = account("b", Security.IMPLICIT_TLS, Flavor.GENERIC);
+            f.sessionFor(key(a), a);
+            f.sessionFor(key(b), b);
+            clock.now = clock.now.plus(Duration.ofHours(23));
+            Session kept = f.sessionFor(key(a), a);
+            clock.now = clock.now.plus(Duration.ofHours(2));
+            assertThat(f.sessionCount()).isEqualTo(1);
+            assertThat(f.sessionFor(key(a), a)).isSameAs(kept);
+        }
+    }
+
+    @Test
+    void sessionCountIsCappedLeastRecentlyUsedOut() {
+        assertThat(ImapSessionFactory.MAX_SESSIONS).isEqualTo(10_000);
+        assertThat(ImapSessionFactory.SESSION_IDLE_EXPIRY).isEqualTo(Duration.ofHours(24));
+        try (ImapSessionFactory f = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> p, false,
+                new MutableClock(), 2)) {
+            for (String id : List.of("a", "b", "c")) {
+                MailAccount acc = account(id, Security.IMPLICIT_TLS, Flavor.GENERIC);
+                f.sessionFor(key(acc), acc);
+            }
+            assertThat(f.sessionCount()).isEqualTo(2);
+        }
+    }
+
+    private static final class MutableClock extends java.time.Clock {
+        java.time.Instant now = java.time.Instant.parse("2026-11-06T12:00:00Z");
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return now;
+        }
+    }
 }

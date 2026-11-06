@@ -21,6 +21,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,10 +37,21 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
 
     private static final Logger LOG = LoggerFactory.getLogger(InMemoryMetricsRecorder.class);
 
+    /** Upper bound of the series kept per kind (pool, tenant, operation); the rest is counted as overflow. */
+    public static final int MAX_SERIES = 10_000;
+
+    /** Series not updated for this many summary periods are dropped. */
+    private static final int IDLE_PERIODS = 2;
+
     private record OpKey(TenantId tenant, String tool, String op) { }
 
+    /** Time of the last update, for dropping idle series. */
+    private abstract static class Touched {
+        volatile Instant touched = Instant.EPOCH;
+    }
+
     /** Count, sum and max of durations; tiny critical sections. */
-    private static final class Timing {
+    private static final class Timing extends Touched {
         private long count;
         private long sumNanos;
         private long maxNanos;
@@ -64,12 +76,12 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
         }
     }
 
-    private static final class PoolStats {
+    private static final class PoolStats extends Touched {
         final Timing wait = new Timing();
         final Map<String, AtomicLong> busy = new ConcurrentHashMap<>();
     }
 
-    private static final class TenantStats {
+    private static final class TenantStats extends Touched {
         final AtomicLong authFailures = new AtomicLong();
         final AtomicLong timeouts = new AtomicLong();
     }
@@ -80,6 +92,9 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     private final Map<TenantId, TenantStats> tenants = new ConcurrentHashMap<>();
     private final Map<OpKey, Timing> operations = new ConcurrentHashMap<>();
     private final AtomicLong events = new AtomicLong();
+    private final AtomicLong overflow = new AtomicLong();
+    private final int maxSeries;
+    private volatile Duration summaryPeriod = DEFAULT_SUMMARY_PERIOD;
     private final Object summaryLock = new Object();
     private long eventsAtLastSummary; // guarded by summaryLock
     private volatile PoolGauges gauges;
@@ -88,6 +103,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     private boolean ownsScheduler; // guarded by this
 
     public InMemoryMetricsRecorder(LogIds logIds, Clock clock) {
+        this(logIds, clock, MAX_SERIES);
+    }
+
+    InMemoryMetricsRecorder(LogIds logIds, Clock clock, int maxSeries) {
+        this.maxSeries = maxSeries;
         this.logIds = Objects.requireNonNull(logIds, "logIds");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -104,36 +124,79 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
 
     @Override
     public void leaseAcquired(PoolKey key, Duration wait) {
-        pools.computeIfAbsent(key, k -> new PoolStats()).wait.add(wait);
-        events.incrementAndGet();
+        PoolStats s = series(pools, key, PoolStats::new);
+        if (s != null) {
+            s.wait.add(wait);
+        }
     }
 
     @Override
     public void operation(TenantId tenant, String tool, String op, Duration latency) {
-        operations.computeIfAbsent(new OpKey(tenant, tool, op), k -> new Timing()).add(latency);
-        events.incrementAndGet();
+        Timing t = series(operations, new OpKey(tenant, tool, op), Timing::new);
+        if (t != null) {
+            t.add(latency);
+        }
     }
 
     @Override
     public void authFailure(TenantId tenant) {
-        tenants.computeIfAbsent(tenant, k -> new TenantStats()).authFailures.incrementAndGet();
-        events.incrementAndGet();
+        TenantStats s = series(tenants, tenant, TenantStats::new);
+        if (s != null) {
+            s.authFailures.incrementAndGet();
+        }
     }
 
     @Override
     public void busyRejection(PoolKey key, String scope) {
-        pools.computeIfAbsent(key, k -> new PoolStats()).busy
-                .computeIfAbsent(scope, s -> new AtomicLong()).incrementAndGet();
-        events.incrementAndGet();
+        PoolStats s = series(pools, key, PoolStats::new);
+        if (s != null) {
+            s.busy.computeIfAbsent(scope, x -> new AtomicLong()).incrementAndGet();
+        }
     }
 
     @Override
     public void timeout(TenantId tenant) {
-        tenants.computeIfAbsent(tenant, k -> new TenantStats()).timeouts.incrementAndGet();
+        TenantStats s = series(tenants, tenant, TenantStats::new);
+        if (s != null) {
+            s.timeouts.incrementAndGet();
+        }
+    }
+
+    /**
+     * The series for {@code key}, marked as updated now. At the cap, idle series are dropped first; if there is
+     * still no room the event is counted in the single overflow series and null is returned (SPEC 5.5).
+     */
+    private <K, S extends Touched> S series(Map<K, S> map, K key, Supplier<S> factory) {
         events.incrementAndGet();
+        S s = map.get(key);
+        if (s == null) {
+            if (map.size() >= maxSeries) {
+                sweep();
+                if (map.size() >= maxSeries) {
+                    overflow.incrementAndGet();
+                    return null;
+                }
+            }
+            s = map.computeIfAbsent(key, k -> factory.get());
+        }
+        s.touched = clock.instant();
+        return s;
+    }
+
+    /** Drops series not updated for two summary periods. */
+    private void sweep() {
+        Instant cutoff = clock.instant().minus(summaryPeriod.multipliedBy(IDLE_PERIODS));
+        pools.values().removeIf(s -> s.touched.isBefore(cutoff));
+        tenants.values().removeIf(s -> s.touched.isBefore(cutoff));
+        operations.values().removeIf(s -> s.touched.isBefore(cutoff));
+    }
+
+    int seriesCount() {
+        return pools.size() + tenants.size() + operations.size();
     }
 
     public MetricsSnapshot snapshot() {
+        sweep();
         PoolGauges g = gauges;
         List<PoolMetrics> poolList = new ArrayList<>();
         pools.forEach((key, s) -> {
@@ -155,7 +218,7 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
         opList.sort(Comparator.comparing(OperationMetrics::tenant).thenComparing(OperationMetrics::tool)
                 .thenComparing(OperationMetrics::op));
         return new MetricsSnapshot(g == null ? 0 : g.createdCount(), g == null ? 0 : g.destroyedCount(),
-                poolList, tenantList, opList);
+                poolList, tenantList, opList, overflow.get());
     }
 
     /**
@@ -172,7 +235,8 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
         }
         MetricsSnapshot s = snapshot();
         StringBuilder sb = new StringBuilder("metrics summary created_total=").append(s.createdTotal())
-                .append(" destroyed_total=").append(s.destroyedTotal());
+                .append(" destroyed_total=").append(s.destroyedTotal())
+                .append(" overflow=").append(s.overflowEvents());
         for (TenantMetrics t : s.tenants()) {
             sb.append(" | tenant=").append(t.tenant()).append(" auth_failures=").append(t.authFailures())
                     .append(" timeouts=").append(t.timeouts());
@@ -213,6 +277,7 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
             this.scheduler = scheduler;
             this.ownsScheduler = false;
         }
+        this.summaryPeriod = period;
         long nanos = period.toNanos();
         task = this.scheduler.scheduleAtFixedRate(this::safeSummary, nanos, nanos, TimeUnit.NANOSECONDS);
     }

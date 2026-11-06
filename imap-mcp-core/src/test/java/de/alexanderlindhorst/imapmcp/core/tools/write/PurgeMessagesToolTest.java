@@ -34,6 +34,7 @@ import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
+import de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler;
@@ -294,6 +295,63 @@ class PurgeMessagesToolTest {
     private static UidCommands.Result okResult() {
         Response r = new Response("A1 OK done");
         return new UidCommands.Result(r, new Response[] {r});
+    }
+
+    private RecordingAuditLog auditedCall(List<String> hs) {
+        RecordingAuditLog recorded = new RecordingAuditLog();
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-aud");
+        ctx.attachAudit(recorded, "purge_messages");
+        handler.handle(ctx, args(T1, hs));
+        return recorded;
+    }
+
+    @Test
+    void theAuditRowCarriesTheConfirmationAndIsWrittenBeforeTheDeletion() throws Exception {
+        List<String> t = uids("Trash").stream().limit(1).map(u -> {
+            try {
+                return handle(T1, "Trash", u);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }).toList();
+        RecordingAuditLog recorded = auditedCall(t);
+        assertThat(recorded.order).containsExactly("begin", "complete");
+        assertThat(recorded.calls.get(0).tool()).isEqualTo("purge_messages");
+        assertThat(recorded.begun.get(0)).hasSize(1);
+        assertThat(recorded.completions.get(0).confirmation()).isEqualTo(BulkResult.ELICITED);
+        assertThat(recorded.completions.get(0).items()).extracting(i -> i.status()).containsExactly("ok");
+    }
+
+    @Test
+    void theConfirmationIsWrittenWithTheRowsAtBegin() throws Exception {
+        RecordingAuditLog recorded = auditedCall(List.of(handle(T1, "Trash", uids("Trash").get(0))));
+        assertThat(recorded.calls.get(0).confirmation()).isEqualTo(BulkResult.ELICITED);
+    }
+
+    @Test
+    void aRefusedConfirmationIsAuditedPerVerifiedItemWithPermissionDeniedAndTheElicitationValue() throws Exception {
+        confirmation = refusing(ToolError.ElicitationReason.DECLINED);
+        rebuild();
+        List<Long> t = uids("Trash");
+        RecordingAuditLog recorded = auditedCall(List.of(handle(T1, "Trash", t.get(0)), handle(T1, "Trash", t.get(1))));
+        assertThat(recorded.order).containsExactly("begin", "complete");
+        assertThat(recorded.begun.get(0)).hasSize(2);
+        assertThat(recorded.calls.get(0).confirmation()).isEqualTo("declined");
+        assertThat(recorded.completions.get(0).errorCode()).isEqualTo("PERMISSION_DENIED");
+        assertThat(recorded.completions.get(0).result()).isEqualTo("failed");
+        assertThat(uids("Trash")).containsAll(t);
+    }
+
+    @Test
+    void aFailingAuditWriteDoesNotChangeTheRefusal() throws Exception {
+        confirmation = refusing(ToolError.ElicitationReason.DECLINED);
+        rebuild();
+        RecordingAuditLog recorded = new RecordingAuditLog();
+        recorded.failBegin = true;
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-aud2");
+        ctx.attachAudit(recorded, "purge_messages");
+        ToolOutcome out = handler.handle(ctx, args(T1, List.of(handle(T1, "Trash", uids("Trash").get(0)))));
+        assertThat(((ToolOutcome.Failure) out).error().code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
     }
 
     // ---- contract ----
