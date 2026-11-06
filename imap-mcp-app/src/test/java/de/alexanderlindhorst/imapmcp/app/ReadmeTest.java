@@ -331,6 +331,15 @@ class ReadmeTest {
         }
     }
 
+    /** v3b D-2 (#323, D8): purge in http-public stays off until the owner's smoke test with the Claude connector. */
+    @Test
+    void smokeChecklistListsTheV3bConnectorPurgeCheck() {
+        Matcher m = Pattern.compile("(?s)\\n### Smoke checklist for v3b\\R(.*?)(?=\\n##+ |\\z)").matcher(readme);
+        assertThat(m.find()).as("README has a '### Smoke checklist for v3b' section").isTrue();
+        assertThat(m.group(1)).contains("Claude connector").contains("purge_messages").contains("`purge.enabled`")
+                .contains("form elicitation").contains("off by default").contains("pending");
+    }
+
     /** #204: SPEC v0.8 has no write-tools switch; the only switch is accounts[].readOnly. */
     @Test
     void doesNotMentionAWriteToolsSwitch() {
