@@ -188,7 +188,7 @@ class StatefulHttpServerTest {
 
     @Test
     void hostOriginAndTokenChecksCoverGetAndDeleteToo() throws Exception {
-        start(builder().hostFilter(new HostFilter(List.of("127.0.0.1")))
+        start(builder().hostFilter(new HostFilter(List.of("127.0.0.1:*")))
                 .originFilter(new OriginFilter(List.of()))
                 .bearerFilter(new BearerTokenFilter(TOKEN.toCharArray(), new AccountContext(new TenantId("t")))));
         String auth = "Bearer " + TOKEN;
@@ -199,8 +199,14 @@ class StatefulHttpServerTest {
             assertThat(send(m, body, "alice", "s").statusCode()).as(m + " no token").isEqualTo(401);
             assertThat(send(m, body, "alice", "s", "Authorization", auth, "Origin", "http://evil.example")
                     .statusCode()).as(m + " origin").isEqualTo(403);
-            assertThat(send(m, body, "alice", "s", "Authorization", auth, "Host", "evil.example")
-                    .statusCode()).as(m + " host").isNotEqualTo(200);
+        }
+    }
+
+    @Test
+    void theHostCheckCoversGetAndDeleteToo() throws Exception {
+        start(builder().hostFilter(new HostFilter(List.of("other.example:*"))));
+        for (String m : List.of("GET", "DELETE", "POST")) {
+            assertThat(send(m, m.equals("POST") ? INIT : null, "alice", null).statusCode()).as(m).isEqualTo(403);
         }
     }
 
@@ -236,7 +242,7 @@ class StatefulHttpServerTest {
         try (McpSyncClient client = McpClient
                 .sync(HttpClientStreamableHttpTransport.builder("http://127.0.0.1:" + server.port())
                         .endpoint("/mcp")
-                        .customizeRequest(b -> b.header("X-Test-Principal", "alice")).build())
+                        .httpRequestCustomizer((b, m, u, body, ctx) -> b.header("X-Test-Principal", "alice")).build())
                 .requestTimeout(Duration.ofSeconds(30)).initializationTimeout(Duration.ofSeconds(30))
                 .capabilities(McpSchema.ClientCapabilities.builder().elicitation(true, false).build())
                 .elicitation(req -> {
