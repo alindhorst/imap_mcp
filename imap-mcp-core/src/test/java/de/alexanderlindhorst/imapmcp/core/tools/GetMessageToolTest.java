@@ -27,6 +27,7 @@ import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -223,7 +224,7 @@ class GetMessageToolTest {
     }
 
     List<String> traceLines() {
-        return new ArrayList<>(trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+        return new ArrayList<>(WireTrace.lines(trace));
     }
 
     // AC1

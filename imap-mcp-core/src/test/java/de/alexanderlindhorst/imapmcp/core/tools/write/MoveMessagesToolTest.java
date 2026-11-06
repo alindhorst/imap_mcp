@@ -26,6 +26,7 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.LeaseTestSeams;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -391,7 +392,7 @@ class MoveMessagesToolTest {
         assertThat(err.code()).isEqualTo(ErrorCode.INVALID_HANDLE);
         assertThat(err.details()).containsEntry("field", "handles[1]");
         assertThat(pool.createdCount()).isEqualTo(created);
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
         assertThat(snapshot("INBOX").keySet()).containsAll(uids);
         assertThat(snapshot("Target")).isEmpty();
     }
