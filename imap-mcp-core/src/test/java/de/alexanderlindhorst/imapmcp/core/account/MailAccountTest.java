@@ -49,4 +49,38 @@ class MailAccountTest {
                 MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"));
         assertThat(account.address()).isNull();
     }
+
+    @Test
+    void authStatusAndRevisionDefaultForOldConstructors() {
+        MailAccount account = new MailAccount(new AccountId("w"), "W", null, "h", 143,
+                MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), true, true);
+        assertThat(account.auth()).isEqualTo(MailAccount.Auth.PASSWORD);
+        assertThat(account.status()).isEqualTo(MailAccount.Status.ACTIVE);
+        assertThat(account.revision()).isZero();
+    }
+
+    @Test
+    void fullConstructorCarriesAuthStatusAndRevision() {
+        MailAccount account = new MailAccount(new AccountId("w"), "W", null, "h", 143,
+                MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("db:"), false, false,
+                MailAccount.Auth.XOAUTH2, MailAccount.Status.NEEDS_RELINK, 7L);
+        assertThat(account.auth()).isEqualTo(MailAccount.Auth.XOAUTH2);
+        assertThat(account.status()).isEqualTo(MailAccount.Status.NEEDS_RELINK);
+        assertThat(account.revision()).isEqualTo(7L);
+        assertThat(account.toString()).contains("revision=7").doesNotContain("db:");
+    }
+
+    @Test
+    void negativeRevisionAndNullAuthOrStatusAreRejected() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new MailAccount(new AccountId("w"), "W", null, "h",
+                143, MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), false,
+                false, MailAccount.Auth.PASSWORD, MailAccount.Status.ACTIVE, -1L))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new MailAccount(new AccountId("w"), "W", null, "h",
+                143, MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), false,
+                false, null, MailAccount.Status.ACTIVE, 0L)).isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new MailAccount(new AccountId("w"), "W", null, "h",
+                143, MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), false,
+                false, MailAccount.Auth.PASSWORD, null, 0L)).isInstanceOf(NullPointerException.class);
+    }
 }

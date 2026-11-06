@@ -156,6 +156,13 @@ class TenantIsolationIT {
                 AccountRepository r = repos.get(tenant);
                 return r == null ? Optional.empty() : r.findByTenantAndHandle(tenant, handle);
             }
+
+            @Override
+            public Optional<ResolvedAccount> findByTenantAndId(TenantId tenant,
+                    de.alexanderlindhorst.imapmcp.core.tenancy.AccountId id) {
+                AccountRepository r = repos.get(tenant);
+                return r == null ? Optional.empty() : r.findByTenantAndId(tenant, id);
+            }
         };
 
         PoolSettings settings = new PoolSettings(MAX_PER_TENANT, MAX_PER_TENANT, 64, Duration.ofMinutes(5),

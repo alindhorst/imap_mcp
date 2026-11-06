@@ -33,6 +33,13 @@ class ConfiguredAccountRepositoryContractTest extends AccountRepositoryContract 
                 return perTenant.values().stream().map(r -> r.findByTenantAndHandle(tenant, handle))
                         .flatMap(java.util.Optional::stream).findFirst();
             }
+
+            @Override
+            public java.util.Optional<de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount>
+                    findByTenantAndId(TenantId tenant, AccountId id) {
+                return perTenant.values().stream().map(r -> r.findByTenantAndId(tenant, id))
+                        .flatMap(java.util.Optional::stream).findFirst();
+            }
         };
     }
 
