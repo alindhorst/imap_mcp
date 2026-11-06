@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
+import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
@@ -47,6 +48,7 @@ public final class ToolExecutor {
     private final LogIds logIds;
     private final MetricsRecorder metrics;
     private final OutcomeListener listener;
+    private final AuditLog auditLog;
 
     /** Told about an executor-produced failure of a write tool; {@code code} is the final code on the wire. */
     @FunctionalInterface
@@ -75,6 +77,13 @@ public final class ToolExecutor {
     }
 
     public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics, OutcomeListener listener) {
+        this(deadline, logIds, metrics, listener, AuditLog.NONE);
+    }
+
+    /** With the multi-tenant audit log (SPEC 5.3): write tools get it through {@link ToolCallContext#audit()}. */
+    public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics, OutcomeListener listener,
+            AuditLog auditLog) {
+        this.auditLog = Objects.requireNonNull(auditLog, "auditLog");
         this.listener = Objects.requireNonNull(listener, "listener");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.deadline = Objects.requireNonNull(deadline, "deadline");
