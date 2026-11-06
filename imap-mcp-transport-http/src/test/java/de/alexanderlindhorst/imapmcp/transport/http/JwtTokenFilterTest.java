@@ -89,6 +89,7 @@ class JwtTokenFilterTest {
                 .hostFilter(new HostFilter(List.of("localhost:*", "127.0.0.1:*")))
                 .originFilter(new OriginFilter(List.of()))
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, source), cfg))
+                .principalFilter((rq, rs, ch) -> ch.doFilter(rq, rs)) // B2's filter is tested in PrincipalContextFilterTest
                 .openServlet(cfg.metadataPath(), new ProtectedResourceMetadataServlet(cfg))
                 .openServlet(OAuthResourceConfig.METADATA_ROOT, new ProtectedResourceMetadataServlet(cfg))
                 .build();
@@ -210,7 +211,8 @@ class JwtTokenFilterTest {
             throw new KeySourceException("down");
         });
         java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
-        server = HttpLocalServer.builder().port(0).bearerFilter(new JwtTokenFilter(down, cfg, now::get)).build();
+        server = HttpLocalServer.builder().port(0).bearerFilter(new JwtTokenFilter(down, cfg, now::get))
+                .principalFilter((rq, rs, ch) -> ch.doFilter(rq, rs)).build();
         server.start();
         String t = keys.rs256(b -> { });
         for (int i = 0; i < 5; i++) {

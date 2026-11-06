@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.CredentialStore;
+import de.alexanderlindhorst.imapmcp.core.account.LoginOutcomes;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
@@ -8,6 +9,7 @@ import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import java.time.Duration;
@@ -38,6 +40,7 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     private final Function<PoolKey, MailAccount> accounts;
     private final PoolSettings settings;
     private final MetricsRecorder metrics;
+    private final LoginOutcomes outcomes;
     /** Account revision each live Store was made for; entries leave in {@link #destroyObject}. */
     private final Map<IMAPStore, Long> revisions = new ConcurrentHashMap<>();
 
@@ -49,6 +52,14 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     /** {@code metrics} receives the connect+login latency of every new Store (SPEC 5.6). */
     public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings settings, MetricsRecorder metrics) {
+        this(sessions, credentials, capabilities, accounts, settings, metrics, LoginOutcomes.NONE);
+    }
+
+    /** {@code outcomes} gets every real LOGIN result with the revision it used (SPEC 5.3 "Re-link"). */
+    public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings settings, MetricsRecorder metrics,
+            LoginOutcomes outcomes) {
+        this.outcomes = Objects.requireNonNull(outcomes, "outcomes");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
@@ -74,7 +85,7 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
             throw new MessagingException("no account for pool key");
         }
         if (account.status() != MailAccount.Status.ACTIVE) { // no connect for an account that needs a re-link
-            throw new MessagingException("account is not active");
+            throw new AccountNeedsRelinkException();
         }
         Session session = sessions.sessionFor(key, account);
         IMAPStore store = (IMAPStore) session.getStore(ImapSessionFactory.protocolFor(account));
@@ -86,10 +97,39 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
             capabilities.put(key, ImapCapabilities.from(store));
         } catch (MessagingException | RuntimeException e) {
             closeQuietly(store);
+            if (isCountedRefusal(e)) {
+                report(() -> outcomes.refused(key.tenantId(), key.accountId(), account.revision()));
+            }
             throw e;
         }
+        report(() -> outcomes.succeeded(key.tenantId(), key.accountId(), account.revision()));
         revisions.put(store, account.revision());
         return new DefaultPooledObject<>(store);
+    }
+
+    /**
+     * A LOGIN answered {@code NO} that counts toward a re-link (SPEC 5.3): Angus reports it as an
+     * {@link AuthenticationFailedException}; one whose server text carries {@code [UNAVAILABLE]} is a temporary
+     * server problem, not a credential refusal. The text is only inspected, never logged.
+     */
+    static boolean isCountedRefusal(Throwable t) {
+        for (int depth = 0; t != null && depth < 8; depth++, t = t.getCause()) {
+            if (t instanceof AuthenticationFailedException) {
+                String text = t.getMessage();
+                // the response code is the first thing in the server's text (RFC 5530)
+                return text == null || !text.strip().toUpperCase(java.util.Locale.ROOT).startsWith("[UNAVAILABLE]");
+            }
+        }
+        return false;
+    }
+
+    /** The counter update must never change the connect result: a failure is a WARN with the class only. */
+    private void report(Runnable outcome) {
+        try {
+            outcome.run();
+        } catch (RuntimeException e) {
+            LOG.warn("login outcome not recorded ({})", e.getClass().getSimpleName());
+        }
     }
 
     /** Revision of the account the Store was made for, or -1 for a Store this factory did not make. */

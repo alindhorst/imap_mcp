@@ -33,6 +33,7 @@ public final class ToolCallContext {
     private volatile ElicitationChannel elicitation;
     private volatile AccountId boundAccountId;
     private volatile CallAudit audit = CallAudit.disabled();
+    private volatile String linkUrl;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -58,6 +59,16 @@ public final class ToolCallContext {
     /** The call's audit record; a no-op object when no audit log is attached. */
     public CallAudit audit() {
         return audit;
+    }
+
+    /** The linking surface's page for re-link errors, set by the account resolution (http-public). */
+    public void bindLinkUrl(String linkUrl) {
+        this.linkUrl = linkUrl;
+    }
+
+    /** The bound link URL, or null. */
+    public String linkUrl() {
+        return linkUrl;
     }
 
     /** Set once by the stateful adapter before the handler runs; the stateless one leaves it empty. */

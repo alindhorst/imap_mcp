@@ -70,7 +70,13 @@ public record AppConfig(List<Account> accounts, Imap imap, Pool pool, Tools tool
     }
 
     public record Http(String bind, int port, boolean allowNonLoopbackBind, SecretRef token,
-            List<String> allowedHosts, List<String> allowedOrigins, long maxRequestBytes) {
+            List<String> allowedHosts, List<String> allowedOrigins, long maxRequestBytes, boolean stateful) {
+
+        /** Stateless transport ({@code http.stateful} false). */
+        public Http(String bind, int port, boolean allowNonLoopbackBind, SecretRef token, List<String> allowedHosts,
+                List<String> allowedOrigins, long maxRequestBytes) {
+            this(bind, port, allowNonLoopbackBind, token, allowedHosts, allowedOrigins, maxRequestBytes, false);
+        }
     }
 
     /** @param handleKey legacy single key (id 1); @param handleKeys key ring entries; @param signingKeyId signing id */
