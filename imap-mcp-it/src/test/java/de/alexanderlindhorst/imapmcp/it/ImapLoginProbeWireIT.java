@@ -44,9 +44,11 @@ class ImapLoginProbeWireIT {
             }
 
             List<String> commands = tap.all();
-            assertThat(commands).anyMatch(c -> c.startsWith("LOGIN") || c.startsWith("AUTHENTICATE"));
-            assertThat(commands).anyMatch(c -> c.startsWith("CAPABILITY") || c.startsWith("LOGIN"));
+            // the LOGIN itself is not traced (Angus keeps credentials out of the trace); the OK result above shows it
+            // was accepted, and the server only answers CAPABILITY-after-login and LOGOUT on an authenticated session
+            assertThat(commands).anyMatch(c -> c.startsWith("CAPABILITY"));
             assertThat(commands).anyMatch(c -> c.startsWith("LOGOUT"));
+            assertThat(commands).noneMatch(c -> c.contains("pw"));
             assertThat(commands).noneMatch(c -> c.startsWith("SELECT") || c.startsWith("EXAMINE")
                     || c.startsWith("LIST") || c.startsWith("STATUS") || c.startsWith("FETCH")
                     || c.startsWith("UID") || c.startsWith("SEARCH") || c.startsWith("CREATE")
