@@ -583,4 +583,19 @@ class ElicitingPurgeConfirmationTest {
         assertThat(confirmation.cooldownCount()).isZero();
         assertThat(confirmation.approvalCount()).isZero();
     }
+
+    @Test
+    void manyTenantsLeaveNothingBehindOnceCooldownsAndApprovalsExpire() throws Exception {
+        int tenants = 20_000;
+        for (int i = 0; i < tenants; i++) {
+            script.answers.add(new ElicitationChannel.Answer.Declined());
+            confirm(ctx(new TenantId("soak-" + i), null), request("a" + i, "L", "Trash", 1));
+        }
+        assertThat(confirmation.cooldownCount()).isEqualTo(tenants);
+        clock.now = clock.now.plus(Duration.ofHours(1));
+        script.answers.add(new ElicitationChannel.Answer.Accepted(null));
+        confirm(ctx(T2, null), request("a-last", "L", "Trash", 1)); // any later call sweeps
+        assertThat(confirmation.cooldownCount()).isZero();
+        assertThat(confirmation.approvalCount()).isZero();
+    }
 }

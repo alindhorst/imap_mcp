@@ -385,4 +385,63 @@ class HttpPublicDownloadIT {
         assertThat(foreignHandle.get("content").get(0).get("text").asString()).contains("INVALID_HANDLE");
         assertThat(foreignAccount.get("content").get(0).get("text").asString()).contains("ACCOUNT_NOT_FOUND");
     }
+
+    // ---- DEBUG log audit (Q1, SPEC 5.6, 5.8) ----
+
+    @Test
+    void aFullFlowAtDebugLeavesNoHandleNameContentCredentialTokenOrKeyInTheLog() throws Exception {
+        String mailPassword = "mailbox-secret-canary-7f3";
+        String subject = "SubjectCanary-91b";
+        String bodyText = "BodyCanary-4c2 see attached";
+        String attachmentName = "AttachmentCanary-5d8.pdf";
+        String folderName = "FolderCanary-2e6";
+        String createdFolder = "CreatedFolderCanary-8a1";
+        mail.createUser("dave@localhost", "dave", mailPassword);
+        TenantId dave = directory.create(ISSUER, "dave").tenantId();
+        ResolvedAccount box = accounts.create(dave, new NewAccount("Dave box", null, "imap.example.com",
+                mail.imapsPort(), MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "dave", false, false));
+        components.credentials().insert(dave, box.account().id(), 1, mailPassword.toCharArray());
+        try (MailSeeder seeder = mail.seeder("dave", mailPassword)) {
+            seeder.appendMultipart("INBOX", subject, bodyText, "<p>" + bodyText + "</p>", List.of(
+                    new MailSeeder.Attachment(attachmentName, "application/pdf", randomBytes(300))));
+            seeder.appendPlain(folderName, subject + "-other", "other body");
+        }
+        String read = token("dave", "imap-mcp:read");
+        String write = token("dave", "imap-mcp:read imap-mcp:write");
+
+        ProductionLogCapture capture = new ProductionLogCapture(dir.resolve("audit-logs"));
+        String handle;
+        try {
+            callTool(read, "list_accounts", "{}");
+            callTool(read, "list_folders", "{\"account\":\"" + box.handle() + "\"}");
+            JsonNode found = rpcResult(callTool(read, "search_messages",
+                    "{\"account\":\"" + box.handle() + "\",\"folder\":\"INBOX\"}"));
+            handle = found.get("structuredContent").findValue("handle").asString();
+            callTool(read, "get_message", "{\"account\":\"" + box.handle() + "\",\"message\":\"" + handle + "\"}");
+            JsonNode list = rpcResult(callTool(read, "list_attachments",
+                    "{\"account\":\"" + box.handle() + "\",\"message\":\"" + handle + "\"}"));
+            String part = list.get("structuredContent").get("attachments").get(0).get("part").asString();
+            callTool(read, "download_attachment", "{\"account\":\"" + box.handle() + "\",\"message\":\"" + handle
+                    + "\",\"part\":\"" + part + "\"}");
+            callTool(write, "set_flags", "{\"account\":\"" + box.handle() + "\",\"handles\":[\"" + handle
+                    + "\"],\"add_keywords\":[\"Reviewed\"]}");
+            callTool(write, "create_folder", "{\"account\":\"" + box.handle() + "\",\"name\":\"" + createdFolder + "\"}");
+            callTool(read, "get_message", "{\"account\":\"" + box.handle() + "\",\"message\":\"m1.tampered\"}");
+            rpc(read + "x", "{}"); // a bad token
+            rpc(null, "{}");
+        } finally {
+            capture.close();
+        }
+
+        String all = capture.text();
+        assertThat(capture.ours()).as("DEBUG output of the server was captured").isNotEmpty();
+        String[] canaries = {mailPassword, subject, "BodyCanary-4c2", attachmentName, folderName, createdFolder,
+                box.handle(), handle, aliceAccount.handle(), read, write, read.split("\\.")[2], write.split("\\.")[2],
+                b64(1), b64(2), postgres.getPassword(), "sender@example.org", "recipient@example.org",
+                "dave@localhost", "Reviewed"};
+        for (String canary : canaries) {
+            assertThat(all).as("log must not contain %s...", canary.substring(0, Math.min(8, canary.length())))
+                    .doesNotContain(canary);
+        }
+    }
 }
