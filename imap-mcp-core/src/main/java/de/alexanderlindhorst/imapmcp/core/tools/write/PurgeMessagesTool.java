@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.tools.write;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.audit.ItemRef;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
@@ -156,9 +157,14 @@ public final class PurgeMessagesTool implements ToolHandler {
             return failure(ToolError.timeout(rid), null, start);
         }
         if (decision instanceof PurgeConfirmation.Decision.Refused refused) {
+            // the handles are verified: audit the refusal per item (SPEC 5.3); not fail-closed, nothing changes
+            ctx.audit().recordRefusal(items.stream()
+                    .map(i -> new ItemRef(i.ref().folder(), i.ref().uidValidity(), i.ref().uid())).toList(),
+                    ErrorCode.PERMISSION_DENIED.name(), refused.reason().name().toLowerCase(java.util.Locale.ROOT));
             return failure(ToolError.notConfirmed(refused.reason(), rid), refused.reason(), start);
         }
         String how = ((PurgeConfirmation.Decision.Confirmed) decision).confirmation();
+        ctx.audit().confirmation(how); // recorded with the audit rows the runner writes before the first deletion
         List<BulkResult.Item> results = runner.run(lease, ctx, ok.groups(), FolderGroupRunner.AbsentStatus.ALREADY_GONE,
                 new PurgeStep(trashName, rid, wire));
         BulkResult result = BulkResult.purgeInInputOrder(account, how, handleList, results);
