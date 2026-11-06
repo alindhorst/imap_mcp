@@ -159,6 +159,7 @@ public final class PurgeMessagesTool implements ToolHandler {
             return failure(ToolError.notConfirmed(refused.reason(), rid), refused.reason(), start);
         }
         String how = ((PurgeConfirmation.Decision.Confirmed) decision).confirmation();
+        ctx.audit().confirmation(how); // recorded with the audit rows the runner writes before the first deletion
         List<BulkResult.Item> results = runner.run(lease, ctx, ok.groups(), FolderGroupRunner.AbsentStatus.ALREADY_GONE,
                 new PurgeStep(trashName, rid, wire));
         BulkResult result = BulkResult.purgeInInputOrder(account, how, handleList, results);
