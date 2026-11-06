@@ -134,4 +134,64 @@ class InMemoryMetricsRecorderTest {
         assertThat(s.createdTotal()).isEqualTo(7);
         assertThat(s.destroyedTotal()).isEqualTo(4);
     }
+
+    private static final Duration TWO_PERIODS_PLUS = InMemoryMetricsRecorder.DEFAULT_SUMMARY_PERIOD.multipliedBy(2)
+            .plusSeconds(1);
+
+    @Test
+    void seriesNotUpdatedForTwoSummaryPeriodsAreDroppedAndUpdatedOnesStay() {
+        rec.authFailure(T1);
+        rec.operation(T1, "search_messages", "search", Duration.ofMillis(5));
+        rec.leaseAcquired(key(T1, "old"), Duration.ofMillis(1));
+        rec.leaseAcquired(key(T2, "live"), Duration.ofMillis(1));
+        clock.now = clock.now.plus(TWO_PERIODS_PLUS.minusSeconds(60));
+        rec.leaseAcquired(key(T2, "live"), Duration.ofMillis(1)); // refreshed
+        clock.now = clock.now.plusSeconds(60);
+        MetricsSnapshot s = rec.snapshot();
+        assertThat(s.tenants()).isEmpty();
+        assertThat(s.operations()).isEmpty();
+        assertThat(s.pools()).hasSize(1);
+        assertThat(s.pools().get(0).leases()).isEqualTo(2);
+        assertThat(rec.seriesCount()).isEqualTo(1);
+    }
+
+    @Test
+    void periodGivenToStartDecidesTheIdleLimit() throws Exception {
+        rec.authFailure(T1);
+        java.util.concurrent.ScheduledThreadPoolExecutor sched = new java.util.concurrent.ScheduledThreadPoolExecutor(1);
+        try {
+            rec.start(sched, Duration.ofSeconds(30));
+            clock.now = clock.now.plusSeconds(61);
+            assertThat(rec.snapshot().tenants()).isEmpty();
+        } finally {
+            rec.close();
+            sched.shutdownNow();
+        }
+    }
+
+    @Test
+    void seriesBeyondTheCapAreCountedInOneOverflowSeries() {
+        InMemoryMetricsRecorder capped = new InMemoryMetricsRecorder(logIds, clock, 2);
+        capped.authFailure(new TenantId("a"));
+        capped.authFailure(new TenantId("b"));
+        capped.authFailure(new TenantId("c"));
+        capped.authFailure(new TenantId("c"));
+        capped.authFailure(new TenantId("a")); // existing series still count
+        MetricsSnapshot s = capped.snapshot();
+        assertThat(s.tenants()).hasSize(2);
+        assertThat(s.tenants()).filteredOn(t -> t.authFailures() == 2).hasSize(1);
+        assertThat(s.overflowEvents()).isEqualTo(2);
+        assertThat(InMemoryMetricsRecorder.MAX_SERIES).isEqualTo(10_000);
+    }
+
+    @Test
+    void expiredSeriesMakeRoomBeforeAnythingOverflows() {
+        InMemoryMetricsRecorder capped = new InMemoryMetricsRecorder(logIds, clock, 1);
+        capped.authFailure(new TenantId("a"));
+        clock.now = clock.now.plus(TWO_PERIODS_PLUS);
+        capped.authFailure(new TenantId("b"));
+        MetricsSnapshot s = capped.snapshot();
+        assertThat(s.tenants()).hasSize(1);
+        assertThat(s.overflowEvents()).isZero();
+    }
 }
