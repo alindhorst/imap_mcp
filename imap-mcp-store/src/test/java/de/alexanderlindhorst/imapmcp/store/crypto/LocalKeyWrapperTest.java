@@ -31,7 +31,9 @@ class LocalKeyWrapperTest {
         WrappedKey wrapped = w.wrap(dek, "tenant", "account");
 
         assertThat(wrapped.kekId()).isEqualTo("local-1");
-        assertThat(wrapped.bytes()).hasSize(12 + 32 + 16).doesNotContain(dek);
+        assertThat(wrapped.bytes()).hasSize(12 + 32 + 16);
+        assertThat(new String(wrapped.bytes(), java.nio.charset.StandardCharsets.ISO_8859_1))
+                .doesNotContain(new String(dek, java.nio.charset.StandardCharsets.ISO_8859_1));
         assertThat(w.unwrap("local-1", wrapped.bytes(), "tenant", "account")).isEqualTo(dek);
     }
 

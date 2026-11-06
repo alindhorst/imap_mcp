@@ -7,7 +7,19 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
+import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
+import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
+import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
+import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
+import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
+import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
+import de.alexanderlindhorst.imapmcp.core.imap.ImapTimeouts;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
+import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
@@ -22,7 +34,9 @@ import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.net.ServerSocket;
 import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -236,5 +250,42 @@ class JdbcCredentialStoreIT {
                 .doesNotContain("victim-pw-canary");
         assertThat(errors.get(0).getThrowableProxy()).isNull();
         assertThat(operations).contains("credentials/decrypt_failure");
+    }
+
+    @Test
+    void aFailedDecryptEndsAsInternalErrorAndNeverOpensAConnectionToTheMailServer() throws Exception {
+        TenantId t = newTenant();
+        AccountId victim = newAccount(t, "victim-acct2");
+        AccountId attacker = newAccount(t, "attacker-acct2");
+        store.insert(t, victim, 1, "victim-pw-canary".toCharArray());
+        copyCredential(t, victim, t, attacker);
+        AtomicInteger connections = new AtomicInteger();
+        try (ServerSocket mailServer = new ServerSocket(0, 5, java.net.InetAddress.getLoopbackAddress());
+                ImapSessionFactory sessions = new ImapSessionFactory(new ImapTimeouts(Duration.ofSeconds(2),
+                        Duration.ofSeconds(2), Duration.ofSeconds(2)))) {
+            Thread acceptor = Thread.startVirtualThread(() -> {
+                try {
+                    while (true) {
+                        mailServer.accept().close();
+                        connections.incrementAndGet();
+                    }
+                } catch (java.io.IOException e) {
+                    // closed by the test
+                }
+            });
+            MailAccount account = new MailAccount(attacker, "l", null, "127.0.0.1", mailServer.getLocalPort(),
+                    MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "u", new SecretRef("env:UNUSED"));
+            StorePool pool = new StorePool(sessions, store, new CapabilityCache(), key -> account,
+                    PoolSettings.DEFAULTS);
+            PoolKey key = PoolKey.of(new AccountContext(t), new ResolvedAccount(t, account, "acc_TESTHANDLE"));
+
+            assertThatThrownBy(() -> pool.borrow(key)).satisfies(e ->
+                    assertThat(ImapErrorMapper.map(e, "req").error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+            pool.close();
+            mailServer.close();
+            acceptor.join(2000);
+        }
+
+        assertThat(connections).hasValue(0);
     }
 }
