@@ -337,4 +337,32 @@ class HttpPublicLinkingIT {
         assertThat(form(carol, "/accounts/unlink", Map.of("account", created.handle())).statusCode()).isEqualTo(404);
         assertThat(accounts.findByTenantAndHandle(new TenantId(alice.tenantId()), created.handle())).isPresent();
     }
+
+    /** Login, link attempts (refused and unreachable) and unlink at DEBUG: no credential, session or key in the log. */
+    @Test
+    void theLoginAndLinkFlowAtDebugLeavesNoCredentialSessionKeyOrNameInTheLog() throws Exception {
+        String label = "LabelCanary-3a9";
+        ProductionLogCapture capture = new ProductionLogCapture(dir.resolve("audit-logs"));
+        Session s;
+        try {
+            s = signIn(KeycloakFixture.CAROL, KeycloakFixture.CAROL_PASSWORD);
+            form(s, "/accounts/link", linkFields(label, "127.0.0.1"));
+            form(s, "/accounts/link", linkFields(label, "imap.example.com"));
+            form(s, "/accounts/unlink", Map.of("account", "acc_unknownunknownunknownunknow"));
+            ours("GET", "/accounts", s.cookie(), null);
+            ours("POST", "/accounts/link", s.cookie(), null); // no CSRF token
+        } finally {
+            capture.close();
+        }
+
+        String all = capture.text();
+        assertThat(capture.ours()).as("DEBUG output of the server was captured").isNotEmpty();
+        String sessionValue = s.cookie().substring(s.cookie().indexOf('=') + 1);
+        for (String canary : new String[] {PASSWORD_CANARY, label, "carol-mailbox@example.org", sessionValue, s.csrf(),
+                KeycloakFixture.CLIENT_SECRET, KeycloakFixture.CAROL_PASSWORD, key(1), key(2),
+                postgres.getPassword(), "imap.example.com"}) {
+            assertThat(all).as("log must not contain %s...", canary.substring(0, Math.min(8, canary.length())))
+                    .doesNotContain(canary);
+        }
+    }
 }
