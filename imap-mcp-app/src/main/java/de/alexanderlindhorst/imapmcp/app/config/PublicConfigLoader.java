@@ -246,7 +246,7 @@ public final class PublicConfigLoader {
         if (!ids.contains(current)) {
             throw new ConfigException(s.path("currentKekId") + ": not one of kms.local.keks");
         }
-        return new PublicConfig.Kms("local", current, List.copyOf(keks));
+        return new PublicConfig.Kms("local", current, List.copyOf(keks), null);
     }
 
     private static PublicConfig.Http http(Section s, PublicConfig.Public pub) {
