@@ -388,4 +388,14 @@ class JdbcWebStoresIT {
         assertThat(provisioner.find("https://idp.example", "blocked")).isEmpty();
         assertThat(countWhere("SELECT count(*) FROM tenant WHERE subject = 'blocked'")).isZero();
     }
+
+    @Test
+    void theTwoArgumentCreateIsAuditedToo() throws Exception {
+        var directory = new de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory(db.dataSource());
+
+        TenantId t = directory.create("https://idp.example", "two-arg").tenantId();
+
+        assertThat(countWhere("SELECT count(*) FROM audit_event WHERE tenant_id = '" + t.value()
+                + "' AND event_type = 'tenant_created'")).isEqualTo(1);
+    }
 }

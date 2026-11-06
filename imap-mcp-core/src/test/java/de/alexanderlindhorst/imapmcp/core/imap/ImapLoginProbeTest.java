@@ -96,4 +96,13 @@ class ImapLoginProbeTest {
         assertThat(factory.probeSession(a)).isNotSameAs(factory.probeSession(a));
         assertThat(probe.probe(a, "pw".toCharArray())).isEqualTo(LoginProbe.Result.OK);
     }
+
+    @Test
+    void aFactoryWithoutThePinnedSocketFactoryIsRefusedAtConstruction() {
+        try (ImapSessionFactory plain = new ImapSessionFactory(ImapTimeouts.DEFAULTS)) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new ImapLoginProbe(plain))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(factory.pinsSockets()).isTrue();
+    }
 }

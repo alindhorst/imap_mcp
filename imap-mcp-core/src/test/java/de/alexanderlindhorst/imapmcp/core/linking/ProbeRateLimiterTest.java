@@ -48,14 +48,30 @@ class ProbeRateLimiterTest {
     }
 
     @Test
-    void tenantsAreIndependentAndTheMapIsBounded() {
+    void whenFullOfLiveEntriesANewTenantIsRefusedAndNoLiveEntryIsEvicted() {
         TestClock clock = new TestClock();
         ProbeRateLimiter limiter = new ProbeRateLimiter(clock, 1, Duration.ofHours(1), 3);
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 3; i++) {
             assertThat(limiter.tryAcquire(new TenantId("t" + i))).isTrue();
         }
 
-        assertThat(limiter.trackedTenants()).isLessThanOrEqualTo(3);
+        assertThat(limiter.tryAcquire(new TenantId("newcomer"))).isFalse(); // fail-closed, nothing evicted
+        assertThat(limiter.trackedTenants()).isEqualTo(3);
+        for (int i = 0; i < 3; i++) { // the tracked tenants stay limited: no way to reset a limit by flooding
+            assertThat(limiter.tryAcquire(new TenantId("t" + i))).isFalse();
+        }
+    }
+
+    @Test
+    void expiredEntriesMakeRoomForNewTenants() {
+        TestClock clock = new TestClock();
+        ProbeRateLimiter limiter = new ProbeRateLimiter(clock, 1, Duration.ofHours(1), 2);
+        limiter.tryAcquire(new TenantId("a"));
+        limiter.tryAcquire(new TenantId("b"));
+        clock.now = clock.now.plus(Duration.ofMinutes(61));
+
+        assertThat(limiter.tryAcquire(new TenantId("c"))).isTrue();
+        assertThat(limiter.trackedTenants()).isEqualTo(1);
     }
 
     @Test

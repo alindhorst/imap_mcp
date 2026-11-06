@@ -209,6 +209,30 @@ class JdbcLinkedAccountStoreIT {
     }
 
     @Test
+    void anInterruptedKeyServiceCallIsUnavailabilityWithoutAWarnLineOrMetric() throws Exception {
+        TenantId t = AccountSql.newTenant(db.dataSource());
+        wire(new KeyWrapper() {
+            @Override
+            public WrappedKey wrap(byte[] dek, String tenantId, String accountId) {
+                throw new de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceInterruptedException("vault");
+            }
+
+            @Override
+            public byte[] unwrap(String kekId, byte[] wrapped, String tenantId, String accountId) {
+                throw new de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceInterruptedException("vault");
+            }
+        });
+
+        assertThatThrownBy(() -> store.create(t, request("Work"), "pw".toCharArray(), 10, "req-1"))
+                .isInstanceOf(LinkedAccountStore.UnavailableException.class); // the page answers a generic 503
+
+        assertThat(count("SELECT count(*) FROM mailbox_account WHERE tenant_id = ?", UUID.fromString(t.value())))
+                .isZero();
+        assertThat(logs.list).noneMatch(e -> e.getLevel() == Level.WARN);
+        assertThat(operations).doesNotContain("credentials/key_service_unavailable");
+    }
+
+    @Test
     void aFailingAuditWriteUndoesTheLinkFailClosed() throws Exception {
         TenantId t = AccountSql.newTenant(db.dataSource());
         exec("ALTER TABLE audit_event ADD CONSTRAINT audit_block_link CHECK (event_type <> 'link') NOT VALID");

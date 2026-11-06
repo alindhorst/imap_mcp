@@ -305,7 +305,8 @@ class LinkingPagesTest {
 
         Resp r = post("/accounts/link", form);
 
-        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.status()).isEqualTo(303);
+        assertThat(r.header("location")).isEqualTo("/accounts");
         assertThat(linker.calls).containsExactly("link:" + PW);
         assertThat(linker.lastLink.label()).isEqualTo("Private");
         assertThat(linker.lastLink.host()).isEqualTo("imap.example.com");
@@ -398,7 +399,8 @@ class LinkingPagesTest {
     void aRelinkPostPassesTheHandleAndThePassword() throws Exception {
         Resp r = post("/accounts/relink", Map.of("account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "password", PW));
 
-        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.status()).isEqualTo(303);
+        assertThat(r.header("location")).isEqualTo("/accounts");
         assertThat(linker.calls).containsExactly("relink:acc_aaaaaaaaaaaaaaaaaaaaaaaaaa:" + PW);
         assertHeadersAndNoPassword(r);
     }
@@ -424,7 +426,7 @@ class LinkingPagesTest {
         Resp r = post("/accounts/settings", Map.of("account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "label", "New",
                 "access", "read_write", "allow_purge", "on"));
 
-        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.status()).isEqualTo(303);
         assertThat(linker.calls).containsExactly("settings:acc_aaaaaaaaaaaaaaaaaaaaaaaaaa");
         assertThat(linker.lastSettings).isEqualTo(new SettingsRequest("New", false, true));
         assertThat(linker.lastAuthTime).isNotNull();
@@ -443,7 +445,8 @@ class LinkingPagesTest {
 
         Resp done = post("/accounts/unlink", Map.of("account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"));
 
-        assertThat(done.status()).isEqualTo(200);
+        assertThat(done.status()).isEqualTo(303);
+        assertThat(done.header("location")).isEqualTo("/accounts");
         assertThat(linker.calls).containsExactly("unlink:acc_aaaaaaaaaaaaaaaaaaaaaaaaaa");
     }
 
@@ -475,6 +478,29 @@ class LinkingPagesTest {
             assertThat(r.status()).as(path).isEqualTo(302);
             assertThat(r.header("location")).isEqualTo("/accounts/login");
         }
+    }
+
+    @Test
+    void aSuccessfulChangeAnswersWithARedirectSoAReloadCannotRepeatIt() throws Exception {
+        for (String path : List.of("/accounts/link", "/accounts/relink", "/accounts/settings", "/accounts/unlink")) {
+            Map<String, String> form = new LinkedHashMap<>(linkForm());
+            form.put("account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa");
+            Resp r = post(path, form);
+            assertThat(r.status()).as(path).isEqualTo(303);
+            assertThat(r.header("location")).as(path).isEqualTo("/accounts");
+            assertThat(r.body()).as(path).isEmpty();
+        }
+    }
+
+    @Test
+    void methodNotAllowedAnswersNameTheMethodsThePathAccepts() throws Exception {
+        Resp logout = get("/accounts/logout");
+        Resp loginPost = post("/accounts/login", Map.of());
+
+        assertThat(logout.status()).isEqualTo(405);
+        assertThat(logout.header("Allow")).isEqualTo("POST");
+        assertThat(loginPost.status()).isEqualTo(405);
+        assertThat(loginPost.header("Allow")).isEqualTo("GET");
     }
 
     @Test

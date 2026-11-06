@@ -374,6 +374,25 @@ class AccountLinkingTest {
         assertThat(probes).isEmpty();
     }
 
+    @Test
+    void relinkRechecksTheStoredEndpointAgainstThePolicyBeforeBudgetAndProbe() {
+        AccountLinking l = linking(false, 10);
+        l.link(T1, good(), PASSWORD, FRESH, "r");
+        String handle = fake.accounts.get(0).handle();
+        probes.clear();
+        // the operator has narrowed the allowlist since the account was linked
+        AccountLinking narrowed = new AccountLinking(fake, fake, probe,
+                SsrfPolicy.of(List.of("other.example.com"), false, List.of()), audit,
+                new ProbeRateLimiter(clock, 10, Duration.ofHours(1), 100), clock, 10, false);
+        audit.events.clear();
+
+        assertThat(narrowed.relink(T1, handle, PASSWORD, "r2")).isEqualTo(LinkOutcome.HOST_REFUSED);
+
+        assertThat(probes).isEmpty();
+        assertThat(fake.calls).noneMatch(c -> c.startsWith("relink"));
+        assertThat(audit.events).extracting(e -> e.type() + ":" + e.result()).containsExactly("relink:refused_host");
+    }
+
     // ---- settings ----
 
     @Test

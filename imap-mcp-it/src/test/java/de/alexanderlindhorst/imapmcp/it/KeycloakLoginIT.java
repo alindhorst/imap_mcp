@@ -325,7 +325,8 @@ class KeycloakLoginIT {
 
         // link
         HttpResponse<String> linked = form(s, "/accounts/link", linkFields("Work", "imap.example.com"));
-        assertThat(linked.statusCode()).isEqualTo(200);
+        assertThat(linked.statusCode()).isEqualTo(303);
+        assertThat(linked.headers().firstValue("location")).contains("/accounts");
         assertThat(linked.body()).doesNotContain("mailbox-pw-canary");
         assertThat(PROBED).containsExactly("imap.example.com:993:mailbox-pw-canary");
         var accounts = accountRepo.findByTenant(tenant(s));
@@ -344,7 +345,7 @@ class KeycloakLoginIT {
         // settings (a fresh login allows turning on allow_purge; the deployment switch is on in this test)
         HttpResponse<String> settings = form(s, "/accounts/settings", Map.of("account", created.handle(),
                 "label", "Renamed", "access", "read_write", "allow_purge", "on"));
-        assertThat(settings.statusCode()).isEqualTo(200);
+        assertThat(settings.statusCode()).isEqualTo(303);
         var changed = accountRepo.findByTenantAndHandle(tenant(s), created.handle()).orElseThrow().account();
         assertThat(changed.label()).isEqualTo("Renamed");
         assertThat(changed.readOnly()).isFalse();
@@ -359,7 +360,7 @@ class KeycloakLoginIT {
                 .isEqualTo(de.alexanderlindhorst.imapmcp.core.account.MailAccount.Status.NEEDS_RELINK);
         HttpResponse<String> relinked = form(s, "/accounts/relink", Map.of("account", created.handle(),
                 "password", "second-pw-canary"));
-        assertThat(relinked.statusCode()).isEqualTo(200);
+        assertThat(relinked.statusCode()).isEqualTo(303);
         var after = accountRepo.findByTenantAndHandle(tenant(s), created.handle()).orElseThrow().account();
         assertThat(after.status()).isEqualTo(de.alexanderlindhorst.imapmcp.core.account.MailAccount.Status.ACTIVE);
         assertThat(after.revision()).isGreaterThan(revision + 1);
@@ -369,7 +370,7 @@ class KeycloakLoginIT {
 
         // unlink
         HttpResponse<String> unlinked = form(s, "/accounts/unlink", Map.of("account", created.handle()));
-        assertThat(unlinked.statusCode()).isEqualTo(200);
+        assertThat(unlinked.statusCode()).isEqualTo(303);
         assertThat(accountRepo.findByTenantAndHandle(tenant(s), created.handle())).isEmpty();
         assertThat(credentialStore.resolve(tenant(s), created.account().id())).isEmpty();
         assertThat(form(s, "/accounts/unlink", Map.of("account", created.handle())).statusCode()).isEqualTo(404);
@@ -441,7 +442,7 @@ class KeycloakLoginIT {
         removeAccountsOf(alice);
         for (int i = 0; i < MAX_ACCOUNTS; i++) {
             assertThat(form(alice, "/accounts/link", linkFields("A" + i, "imap.example.com")).statusCode())
-                    .isEqualTo(200);
+                    .isEqualTo(303);
         }
         PROBED.clear();
 
