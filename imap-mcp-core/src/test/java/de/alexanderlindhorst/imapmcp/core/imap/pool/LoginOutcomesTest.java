@@ -88,7 +88,7 @@ class LoginOutcomesTest {
     void aRefusedLoginIsReportedWithTheRevisionTheLoginUsed() throws Exception {
         MailAccount a = account(greenMail.getImaps().getPort(), "u", MailAccount.Status.ACTIVE, 5);
         PoolKey key = borrowWith(a, "wrong");
-        assertThatThrownBy(() -> pool.borrow(key)).hasRootCauseInstanceOf(AuthenticationFailedException.class);
+        assertThatThrownBy(() -> pool.borrow(key)).satisfies(e -> assertThat(StorePoolFactory.isCountedRefusal(e)).isTrue());
         assertThat(events).containsExactly("refused:t1:a:5");
     }
 

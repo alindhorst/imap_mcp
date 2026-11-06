@@ -90,7 +90,7 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setTimeBetweenEvictionRuns(s.evictionInterval());
         config.setNumTestsPerEvictionRun(-1);
         config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
-        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics);
+        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes);
         this.pool = new GenericKeyedObjectPool<>(factory, config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
