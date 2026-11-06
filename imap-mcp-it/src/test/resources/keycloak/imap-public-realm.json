@@ -2,6 +2,7 @@
   "realm": "imap-public",
   "enabled": true,
   "sslRequired": "none",
+  "attributes": { "frontendUrl": "https://idp.example.com" },
   "registrationAllowed": false,
   "clientScopes": [
     {
