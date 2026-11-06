@@ -107,6 +107,8 @@ class KeycloakPublicIT {
                   issuer: %s
                   resource: %s
                   requiredRole: imap-mcp-user
+                  webClientId: imap-mcp-web
+                  webClientSecret: env:WEB_SECRET
                 public:
                   baseUrl: https://mail.example.com
                 security:
@@ -128,7 +130,7 @@ class KeycloakPublicIT {
                 """.formatted(postgres.getJdbcUrl(), postgres.getUsername(), ISSUER, RESOURCE);
         Path file = dir.resolve("config.yaml");
         Files.writeString(file, yaml);
-        Map<String, String> env = Map.of("DB_PW", postgres.getPassword(), "HANDLE_KEY_1", b64(1), "KEK_1", b64(2),
+        Map<String, String> env = Map.of("DB_PW", postgres.getPassword(), "WEB_SECRET", "web-secret", "HANDLE_KEY_1", b64(1), "KEK_1", b64(2),
                 "IMAP_MCP_HTTP_PORT", "8081");
         PublicConfig config = PublicConfigLoader.load(file, env);
         AppPaths paths = AppPaths.resolve(new String[] {"--config", file.toString()},

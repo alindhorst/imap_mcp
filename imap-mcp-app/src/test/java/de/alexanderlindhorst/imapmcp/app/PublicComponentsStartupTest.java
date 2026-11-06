@@ -37,6 +37,8 @@ class PublicComponentsStartupTest {
               issuer: https://idp.example.com/realms/test
               resource: https://mail.example.com/mcp
               requiredRole: r
+              webClientId: web
+              webClientSecret: env:WEB_SECRET
             public:
               baseUrl: https://mail.example.com
             security:
@@ -71,6 +73,7 @@ class PublicComponentsStartupTest {
     private Map<String, String> env() {
         Map<String, String> env = new HashMap<>();
         env.put("DB_PW", "pw");
+        env.put("WEB_SECRET", "web-secret");
         env.put("HK1", key(1));
         env.put("HK2", key(2));
         env.put("KEK_A", key(3));
@@ -84,6 +87,15 @@ class PublicComponentsStartupTest {
         PublicConfig config = PublicConfigLoader.load(file, env);
         AppPaths paths = new AppPaths(file, dir.resolve("state"), dir.resolve("logs"));
         PublicComponents.create(config, paths, Clock.systemUTC(), env).close();
+    }
+
+    @Test
+    void anUnresolvableWebClientSecretFailsStartupNamingThePathBeforeTheDatabaseIsOpened() {
+        Map<String, String> env = env();
+        env.remove("WEB_SECRET");
+        assertThatThrownBy(() -> start(BASE, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("oauth.webClientSecret").hasMessageContaining("config.yaml")
+                .hasMessageNotContaining("web-secret");
     }
 
     @Test

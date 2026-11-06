@@ -128,8 +128,9 @@ public final class PublicConfigLoader {
         }
         String roleClaim = s.string("roleClaim", "realm_access.roles");
         boolean allowWithoutRole = s.bool("allowWithoutRole", false);
-        String webClientId = s.optionalString("webClientId");
-        SecretRef webClientSecret = s.optionalRef("webClientSecret");
+        // the linking surface is part of http-public: its confidential web client is required (SPEC 5.7)
+        String webClientId = s.string("webClientId", null);
+        SecretRef webClientSecret = s.requiredRef("webClientSecret");
         s.finish();
         if (requiredRole == null && !allowWithoutRole) {
             throw new ConfigException(s.path("requiredRole")
@@ -140,11 +141,33 @@ public final class PublicConfigLoader {
     }
 
     private static PublicConfig.Public pub(Section s) {
-        String baseUrl = httpsUri(s, "baseUrl");
+        String baseUrl = baseUrl(s);
         int max = s.integer("maxAccountsPerTenant", 10, 1, 1000);
         s.finish();
-        return new PublicConfig.Public(baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl,
-                max);
+        return new PublicConfig.Public(baseUrl, max);
+    }
+
+    /**
+     * {@code public.baseUrl} (SPEC 5.7): an {@code https} origin without path, query, fragment or user info. It is
+     * normalised to the form browsers send in {@code Origin}: lower-case host, an explicit {@code :443} dropped, no
+     * trailing slash. The value is not echoed.
+     */
+    private static String baseUrl(Section s) {
+        String v = s.string("baseUrl", null);
+        try {
+            URI u = new URI(v);
+            String path = u.getRawPath();
+            if ("https".equals(u.getScheme()) && u.getHost() != null && u.getRawUserInfo() == null
+                    && u.getRawQuery() == null && u.getRawFragment() == null
+                    && (path == null || path.isEmpty() || "/".equals(path))) {
+                int port = u.getPort();
+                return "https://" + u.getHost().toLowerCase(Locale.ROOT) + (port == -1 || port == 443 ? "" : ":" + port);
+            }
+        } catch (URISyntaxException ignored) {
+            // reported below
+        }
+        throw new ConfigException(s.path("baseUrl")
+                + ": must be an https URI without path, user info, query or fragment");
     }
 
     /** A required {@code https} URI with a host and without user info, query or fragment; the value is not echoed. */
