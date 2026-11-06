@@ -62,15 +62,17 @@ public final class ListAccountsTool implements ToolHandler {
                     "provider", schema("type", "string", "enum", List.of("generic", "gmail")),
                     "read_only", schema("type", "boolean"),
                     "allow_purge", schema("type", "boolean"),
-                    "status", schema("type", "string", "enum", List.of("ok", "auth_failed", "unreachable", "unknown")),
+                    "status", schema("type", "string", "enum", List.of("ok", "auth_failed", "unreachable", "unknown",
+                            "needs_relink")),
                     "capabilities", CAPABILITIES_SCHEMA,
                     "capabilities_detected_at", schema("type", List.of("string", "null"))),
             "required", List.of("account", "label", "address", "provider", "read_only", "allow_purge", "status",
                     "capabilities", "capabilities_detected_at"));
 
     static final Map<String, Object> OUTPUT_SCHEMA = schema("type", "object",
-            "properties", schema("accounts", schema("type", "array", "items", ITEM_SCHEMA)),
-            "required", List.of("accounts"));
+            "properties", schema("accounts", schema("type", "array", "items", ITEM_SCHEMA),
+                    "link_url", schema("type", List.of("string", "null"))),
+            "required", List.of("accounts", "link_url"));
 
     public static final ToolDefinition DEFINITION = new ToolDefinition(NAME, "List mail accounts",
             "List the mail accounts linked for this user, with a label, an optional address, the provider, "
@@ -82,9 +84,16 @@ public final class ListAccountsTool implements ToolHandler {
     private final CapabilityCache capabilities;
     private final StoreLeases leases;
     private final int parallelism;
+    private final String linkUrl;
 
     public ListAccountsTool(AccountRepository accounts, CapabilityCache capabilities, StoreLeases leases,
             int parallelism) {
+        this(accounts, capabilities, leases, parallelism, null);
+    }
+
+    /** {@code linkUrl}: the linking surface's account page (http-public), null in the single-tenant modes. */
+    public ListAccountsTool(AccountRepository accounts, CapabilityCache capabilities, StoreLeases leases,
+            int parallelism, String linkUrl) {
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.leases = Objects.requireNonNull(leases, "leases");
@@ -92,6 +101,7 @@ public final class ListAccountsTool implements ToolHandler {
             throw new IllegalArgumentException("parallelism must be positive");
         }
         this.parallelism = parallelism;
+        this.linkUrl = linkUrl;
     }
 
     @Override
@@ -102,7 +112,10 @@ public final class ListAccountsTool implements ToolHandler {
             int c = compareCodePoints((String) a.get("label"), (String) b.get("label"));
             return c != 0 ? c : compareCodePoints((String) a.get("account"), (String) b.get("account"));
         });
-        return new ToolOutcome.Success(Map.of("accounts", entries));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("accounts", entries);
+        out.put("link_url", linkUrl); // additive (v0.18): the linking surface in http-public, null otherwise
+        return new ToolOutcome.Success(out);
     }
 
     private List<Map<String, Object>> describe(ToolCallContext ctx, List<ResolvedAccount> mine) {
@@ -139,7 +152,9 @@ public final class ListAccountsTool implements ToolHandler {
     private Map<String, Object> entry(ToolCallContext ctx, ResolvedAccount r) {
         PoolKey key = PoolKey.of(ctx.accountContext(), r);
         String status = "ok";
-        if (!(capabilities.get(key) instanceof CapabilityCache.Lookup.Fresh)) {
+        if (r.account().status() == MailAccount.Status.NEEDS_RELINK) {
+            status = "needs_relink"; // no probe: no connection is attempted for an account that needs a re-link
+        } else if (!(capabilities.get(key) instanceof CapabilityCache.Lookup.Fresh)) {
             status = refresh(ctx, key);
         }
         CapabilityCache.Lookup lookup = capabilities.get(key);

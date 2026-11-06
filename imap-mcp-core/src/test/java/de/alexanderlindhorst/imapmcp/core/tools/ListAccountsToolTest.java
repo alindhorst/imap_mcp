@@ -164,6 +164,56 @@ class ListAccountsToolTest {
         return (List<Map<String, Object>>) ((Map<String, Object>) ((ToolOutcome.Success) o).structured()).get("accounts");
     }
 
+    @SuppressWarnings("unchecked")
+    Map<String, Object> listOutput(ListAccountsTool t, TenantId tenant) {
+        ToolOutcome o = t.handle(new ToolCallContext(new AccountContext(tenant), "rid"), Map.of());
+        return (Map<String, Object>) ((ToolOutcome.Success) o).structured();
+    }
+
+    ListAccountsTool withLinkUrl(String url) {
+        return new ListAccountsTool(repo, cache, new StoreLeases(pool, Duration.ofSeconds(10), admission, recorder), 4,
+                url);
+    }
+
+    @Test
+    void linkUrlIsNullInTheSingleTenantModes() {
+        wireDefault();
+        assertThat(listOutput(tool, A)).containsEntry("link_url", null);
+    }
+
+    @Test
+    void linkUrlIsReportedWhenConfiguredAlsoForATenantWithoutAccounts() {
+        wireDefault();
+        ListAccountsTool t = withLinkUrl("https://mail.example.com/accounts");
+        Map<String, Object> out = listOutput(t, new TenantId("nobody"));
+        assertThat((List<?>) out.get("accounts")).isEmpty();
+        assertThat(out).containsEntry("link_url", "https://mail.example.com/accounts");
+    }
+
+    @Test
+    void aNeedsRelinkAccountIsReportedWithoutAProbe() {
+        MailAccount stale = new MailAccount(new AccountId("stale"), "Stale", null, "127.0.0.1",
+                greenMail.getImaps().getPort(), Security.IMPLICIT_TLS, Flavor.GENERIC, "alpha",
+                new SecretRef("env:alpha"), false, false, MailAccount.Auth.PASSWORD, MailAccount.Status.NEEDS_RELINK, 3);
+        wire(Map.of(A, List.of(stale)));
+        trace.list.clear();
+        ListAccountsTool t = withLinkUrl("https://mail.example.com/accounts");
+        List<Map<String, Object>> accounts = list(A, t);
+        assertThat(accounts).singleElement().satisfies(m -> assertThat(m).containsEntry("status", "needs_relink"));
+        assertThat(trace.list).isEmpty();
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> list(TenantId tenant, ListAccountsTool t) {
+        return (List<Map<String, Object>>) listOutput(t, tenant).get("accounts");
+    }
+
+    @Test
+    void theOutputSchemaListsNeedsRelinkAndRequiresLinkUrl() {
+        assertThat(ListAccountsTool.OUTPUT_SCHEMA.toString()).contains("needs_relink").contains("link_url");
+        assertThat(((List<?>) ListAccountsTool.OUTPUT_SCHEMA.get("required")).contains("link_url")).isTrue();
+    }
+
     // AC1
 
     @Test

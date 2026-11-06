@@ -43,7 +43,7 @@ public final class ConfigLoader {
     private static final Pattern SIZE = Pattern.compile("(\\d{1,12})(B|KiB|MiB|GiB)");
     private static final Set<String> GMAIL_HOSTS = Set.of("imap.gmail.com", "imap.googlemail.com");
     private static final Set<String> MODES = Set.of("stdio", "http-local");
-    private static final Set<String> LOG_LEVELS = Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR");
+    static final Set<String> LOG_LEVELS = Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR");
     private static final Duration WRITE_MIN_DEADLINE = Duration.ofSeconds(30);
     private static final YAMLMapper YAML = YAMLMapper.builder().build();
 
@@ -164,7 +164,7 @@ public final class ConfigLoader {
         return new AppConfig.Security(handleKey, List.copyOf(keys), signing);
     }
 
-    private static AppConfig.Imap imap(Section s) {
+    static AppConfig.Imap imap(Section s) {
         var r = new AppConfig.Imap(s.duration("connectTimeout", Duration.ofSeconds(10)),
                 s.duration("readTimeout", Duration.ofSeconds(60)), s.duration("writeTimeout", Duration.ofSeconds(60)),
                 s.bool("trace", false));
@@ -172,7 +172,7 @@ public final class ConfigLoader {
         return r;
     }
 
-    private static AppConfig.Pool pool(Section s) {
+    static AppConfig.Pool pool(Section s) {
         var r = new AppConfig.Pool(s.integer("maxPerMailbox", 3, 1, 1000), s.integer("maxPerTenant", 8, 1, 10000),
                 s.integer("maxTotal", 64, 1, 100000), s.duration("idleEviction", Duration.ofMinutes(5)),
                 s.duration("validateAfterIdle", Duration.ofSeconds(60)),
@@ -210,7 +210,8 @@ public final class ConfigLoader {
         var r = new AppConfig.Http(s.nonBlank("bind", "127.0.0.1"), s.integer("port", 8080, 1, 65535),
                 s.bool("allowNonLoopbackBind", false), s.optionalRef("token"),
                 s.stringList("allowedHosts", List.of("localhost:*", "127.0.0.1:*", "[::1]:*")),
-                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE));
+                s.stringList("allowedOrigins", List.of()), s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE),
+                s.bool("stateful", false));
         s.finish();
         return r;
     }
@@ -244,7 +245,7 @@ public final class ConfigLoader {
             nonLoopback = Boolean.parseBoolean(v);
         }
         return new AppConfig.Http(bind, port, nonLoopback, h.token(), h.allowedHosts(), h.allowedOrigins(),
-                h.maxRequestBytes());
+                h.maxRequestBytes(), h.stateful());
     }
 
     private static String envMode(Map<String, String> env) {
@@ -256,7 +257,7 @@ public final class ConfigLoader {
         return v;
     }
 
-    private static String envLogLevel(Map<String, String> env) {
+    static String envLogLevel(Map<String, String> env) {
         String v = set(env, ENV_LOG_LEVEL);
         if (v != null && !LOG_LEVELS.contains(v.toUpperCase(Locale.ROOT))) {
             throw new ConfigException(ENV_LOG_LEVEL + ": must be one of TRACE, DEBUG, INFO, WARN, ERROR");
@@ -264,7 +265,7 @@ public final class ConfigLoader {
         return v == null ? null : v.toUpperCase(Locale.ROOT);
     }
 
-    private static String set(Map<String, String> env, String name) {
+    static String set(Map<String, String> env, String name) {
         String v = env.get(name);
         return v == null || v.isBlank() ? null : v;
     }
@@ -272,7 +273,7 @@ public final class ConfigLoader {
     // ---- binding helper ----
 
     /** A YAML mapping being bound; tracks consumed keys so leftovers are reported as unknown. */
-    private static final class Section {
+    static final class Section {
         private final JsonNode node;
         private final String path;
         private final Set<String> used = new HashSet<>();

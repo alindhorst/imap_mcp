@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
  */
 public final class HttpLocalMain {
 
+    private static final java.time.Duration STATEFUL_REQUEST_TIMEOUT = java.time.Duration.ofMinutes(11);
     private static final String VIRTUAL_THREADS_PROPERTY = "reactor.schedulers.defaultBoundedElasticOnVirtualThreads";
 
     /** A shutdown step; failures are logged and never skip the following steps. */
@@ -64,7 +65,15 @@ public final class HttpLocalMain {
                     .bearerFilter(new BearerTokenFilter(token, components.accountContext()))
                     .contextExtractor(BearerTokenFilter.contextExtractor())
                     .healthServlet(health);
-            components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
+            if (h.stateful()) {
+                // Stateful Streamable HTTP (SPEC 4 v3b): one session per client, bound to the fixed local principal;
+                // the SDK's server-to-client request timeout is above the longest tool deadline (SPEC 5.5).
+                builder.stateful(true).sessionEndListener(components.sessionEndListener())
+                        .requestTimeout(STATEFUL_REQUEST_TIMEOUT);
+                components.statefulToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::statefulTool);
+            } else {
+                components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
+            }
             HttpLocalServer server = builder.build();
             server.start();
             org.slf4j.LoggerFactory.getLogger("imapmcp.app")

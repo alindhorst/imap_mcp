@@ -436,4 +436,16 @@ class ConfigLoaderTest {
                 Arguments.of("displayDir without dir", "    displayDir: /h\n", "tools.download.dir"),
                 Arguments.of("unknown key", "    dir: /d\n    types: [pdf]\n", "tools.download.types"));
     }
+
+    @Test
+    void httpStatefulDefaultsToFalseAndIsParsed() throws IOException {
+        assertThat(load(ACCOUNT).http().stateful()).isFalse();
+        assertThat(load(ACCOUNT + "http: {stateful: true}\n").http().stateful()).isTrue();
+        assertThat(load(ACCOUNT + "http: {stateful: false}\n").http().stateful()).isFalse();
+    }
+
+    @Test
+    void httpStatefulMustBeABoolean() {
+        assertThatThrownBy(() -> load(ACCOUNT + "http: {stateful: maybe}\n")).hasMessageContaining("http.stateful");
+    }
 }
