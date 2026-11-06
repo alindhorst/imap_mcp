@@ -194,10 +194,131 @@ class PublicComponentsStartupTest {
                 .hasMessageNotContaining("SECRETKEK");
     }
 
+    // ---- Vault: startup key check (SPEC 5.7) ----
+
+    private com.sun.net.httpserver.HttpServer vault;
+    private volatile int vaultStatus = 200;
+    private volatile String vaultBody = "{\"data\":{\"type\":\"aes256-gcm96\"}}";
+    private final java.util.List<String> vaultRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @org.junit.jupiter.api.AfterEach
+    void stopVault() {
+        if (vault != null) {
+            vault.stop(0);
+        }
+    }
+
+    private String vaultYaml() throws IOException {
+        vault = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        vault.createContext("/", ex -> {
+            vaultRequests.add(ex.getRequestMethod() + " " + ex.getRequestURI().getPath() + " "
+                    + ex.getRequestHeaders().getFirst("X-Vault-Token"));
+            byte[] b = vaultBody.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(vaultStatus, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        vault.start();
+        return without(BASE, "kms") + """
+                kms:
+                  provider: vault
+                  vault:
+                    address: http://127.0.0.1:%d
+                    allowInsecureHttp: true
+                    keyName: imap-mcp
+                    auth:
+                      method: token
+                      token: env:VAULT_TOKEN
+                """.formatted(vault.getAddress().getPort());
+    }
+
+    private static String without(String yaml, String key) {
+        StringBuilder out = new StringBuilder();
+        boolean skipping = false;
+        for (String line : yaml.split("\n")) {
+            if (!line.startsWith(" ") && !line.isEmpty()) {
+                skipping = line.startsWith(key + ":");
+            }
+            if (!skipping) {
+                out.append(line).append('\n');
+            }
+        }
+        return out.toString();
+    }
+
     @Test
-    void theVaultProviderIsRefusedAtStartup() {
-        String yaml = BASE.replace("provider: local", "provider: vault");
-        assertThatThrownBy(() -> start(yaml, env())).hasMessageContaining("kms.provider");
+    void aVaultKeyOfTheRightTypePassesTheCheckAndStartupContinuesToTheDatabase() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "s.token-SECRET");
+        assertThatThrownBy(() -> start(vaultYaml(), env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("Cannot open the database");
+        assertThat(vaultRequests).containsExactly("GET /v1/transit/keys/imap-mcp s.token-SECRET");
+    }
+
+    @Test
+    void aVaultKeyOfAnotherTypeOrMissingFailsStartupNamingTheKeyName() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "t");
+        String yaml = vaultYaml();
+        vaultBody = "{\"data\":{\"type\":\"rsa-4096\"}}";
+        assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.vault.keyName").hasMessageNotContaining("rsa-4096");
+        vaultStatus = 404;
+        vaultBody = "{\"errors\":[]}";
+        assertThatThrownBy(() -> start(yaml, env)).hasMessageContaining("kms.vault.keyName");
+    }
+
+    @Test
+    void anUnreachableOrRefusingVaultFailsStartupWithoutLeakingTheTokenOrTheResponse() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "s.token-SECRET");
+        String yaml = vaultYaml();
+        vaultStatus = 503;
+        vaultBody = "{\"errors\":[\"vault is sealed RESPONSETEXT\"]}";
+        assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.vault").hasMessageNotContaining("SECRET")
+                .hasMessageNotContaining("RESPONSETEXT");
+        vault.stop(0);
+        assertThatThrownBy(() -> start(yaml, env)).hasMessageContaining("kms.vault").hasMessageNotContaining("SECRET");
+    }
+
+    @Test
+    void anUnresolvableVaultTokenReferenceFailsStartupNamingTheKms() throws IOException {
+        String yaml = vaultYaml();
+        assertThatThrownBy(() -> start(yaml, env())).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.vault");
+    }
+
+    @Test
+    void anUnreadableCaCertFailsStartupNamingTheKey() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "t");
+        String yaml = vaultYaml().replace("keyName: imap-mcp", "keyName: imap-mcp\n    caCert: /nonexistent/ca.pem");
+        assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.vault.caCert");
+    }
+
+    @Test
+    void insecureHttpToVaultGivesAStartupWarning() throws IOException {
+        Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Level old = log.getLevel();
+        log.setLevel(Level.TRACE);
+        appender.start();
+        log.addAppender(appender);
+        try {
+            Map<String, String> env = env();
+            env.put("VAULT_TOKEN", "t");
+            String yaml = vaultYaml();
+            assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class);
+            assertThat(appender.list).anySatisfy(e -> {
+                assertThat(e.getLevel()).isEqualTo(Level.WARN);
+                assertThat(e.getFormattedMessage()).contains("kms.vault.allowInsecureHttp");
+            });
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(old);
+        }
     }
 
     @Test
