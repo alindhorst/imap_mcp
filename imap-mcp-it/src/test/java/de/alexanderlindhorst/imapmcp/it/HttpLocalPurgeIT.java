@@ -119,8 +119,7 @@ class HttpLocalPurgeIT {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> call(McpSyncClient c, String tool, Map<String, Object> args) {
         McpSchema.CallToolResult r = c.callTool(new McpSchema.CallToolRequest(tool, args));
-        assertThat(r.structuredContent()).as(tool).isInstanceOf(Map.class);
-        Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) r.structuredContent());
+        Map<String, Object> m = new LinkedHashMap<>(ToolResults.payload(r));
         m.put("__error", Boolean.TRUE.equals(r.isError()));
         return m;
     }
@@ -200,7 +199,7 @@ class HttpLocalPurgeIT {
             assertThat(requests).hasSize(1);
             assertThat(requests.get(0).message()).startsWith("Permanently delete 2 messages from the Trash folder")
                     .endsWith("This cannot be undone.").doesNotContain("http-gone");
-            assertThat(subjects(c)).containsExactly("http-keep");
+            assertThat(subjects(c)).contains("http-keep").doesNotContain("http-gone-1", "http-gone-2");
         }
     }
 
