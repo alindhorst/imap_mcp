@@ -91,4 +91,29 @@ public abstract class AccountRepositoryContract {
             assertThat(repository.findByTenantAndHandle(TENANT_A, bad)).as("handle %s", bad).isEmpty();
         }
     }
+
+    @Test
+    void findByTenantAndIdResolvesOwnAccountOnly() {
+        ResolvedAccount own = repository.findByTenantAndId(TENANT_A, new AccountId("only-a")).orElseThrow();
+        assertThat(own.tenantId()).isEqualTo(TENANT_A);
+        assertThat(own.account().id()).isEqualTo(new AccountId("only-a"));
+        assertThat(own.handle()).isEqualTo(handleFor(repository, TENANT_A, new AccountId("only-a")));
+        assertThat(repository.findByTenantAndId(TENANT_B, new AccountId("only-a"))).isEmpty();
+        assertThat(repository.findByTenantAndId(TENANT_A, new AccountId("only-b"))).isEmpty();
+    }
+
+    @Test
+    void findByTenantAndIdOfSharedIdStaysInsideTheTenant() {
+        for (TenantId t : List.of(TENANT_A, TENANT_B)) {
+            ResolvedAccount r = repository.findByTenantAndId(t, new AccountId("shared")).orElseThrow();
+            assertThat(r.tenantId()).isEqualTo(t);
+            assertThat(r.handle()).isEqualTo(handleFor(repository, t, new AccountId("shared")));
+        }
+    }
+
+    @Test
+    void findByTenantAndIdOfUnknownTenantOrIdIsEmpty() {
+        assertThat(repository.findByTenantAndId(new TenantId("nobody"), new AccountId("shared"))).isEmpty();
+        assertThat(repository.findByTenantAndId(TENANT_A, new AccountId("missing"))).isEmpty();
+    }
 }

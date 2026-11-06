@@ -28,7 +28,7 @@ public final class ImapSessionFactory implements AutoCloseable {
     private final boolean trace;
     private final AtomicBoolean traceWarned = new AtomicBoolean();
     private final UnaryOperator<Properties> propertiesHook;
-    private final Map<PoolKey, Session> sessions = new ConcurrentHashMap<>();
+    private final Map<SessionKey, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledThreadPoolExecutor writeTimeoutExecutor;
 
     public ImapSessionFactory(ImapTimeouts timeouts) {
@@ -68,10 +68,14 @@ public final class ImapSessionFactory implements AutoCloseable {
         return account.security() == Security.IMPLICIT_TLS ? "imaps" : "imap";
     }
 
+    /** Sessions are keyed by pool key and revision: a revision may change protocol and so the property prefix. */
+    private record SessionKey(PoolKey key, long revision) {
+    }
+
     public Session sessionFor(PoolKey key, MailAccount account) {
         Objects.requireNonNull(key, "key");
         String protocol = protocolFor(account);
-        return sessions.computeIfAbsent(key, k -> newSession(protocol));
+        return sessions.computeIfAbsent(new SessionKey(key, key.revision()), k -> newSession(protocol));
     }
 
     private Session newSession(String protocol) {

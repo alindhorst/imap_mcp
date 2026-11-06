@@ -68,7 +68,6 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
-import java.util.stream.Collectors;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -173,8 +172,6 @@ public final class AppComponents implements AutoCloseable {
         LoggerFactory.getLogger("imapmcp.app").info("download_attachment registered={}", downloadDirectory != null);
         LogIds logIds = new LogIds(keys);
         AccountRepository repository = new ConfiguredAccountRepository(TENANT, accounts, salt);
-        Map<String, MailAccount> byId = accounts.stream()
-                .collect(Collectors.toMap(a -> a.id().value(), a -> a));
 
         AppConfig.Imap imap = config.imap();
         AppConfig.Pool p = config.pool();
@@ -190,9 +187,7 @@ public final class AppComponents implements AutoCloseable {
         try {
             CapabilityCache capabilities = new CapabilityCache(p.capabilityTtl(), clock);
             metrics = new InMemoryMetricsRecorder(logIds, clock);
-            pool = new StorePool(sessions, credentials, capabilities,
-                    key -> TENANT.equals(key.tenantId()) ? byId.get(key.accountId().value()) : null, settings,
-                    metrics);
+            pool = new StorePool(sessions, credentials, capabilities, repository, settings, metrics);
             metrics.attachPool(pool);
             Admission admission = new Admission(settings, Admission.recording(metrics));
             StoreLeases leases = new StoreLeases(pool, settings.acquireTimeout(), admission, metrics);

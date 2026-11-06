@@ -59,6 +59,23 @@ class ImapSessionFactoryTest {
     }
 
     @Test
+    void sessionIsReplacedWhenTheRevisionChangesTheProtocol() {
+        MailAccount starttls = revised(account("r", Security.STARTTLS, Flavor.GENERIC), 0);
+        MailAccount implicit = revised(account("r", Security.IMPLICIT_TLS, Flavor.GENERIC), 1);
+        Session first = factory.sessionFor(key(starttls), starttls);
+        Session second = factory.sessionFor(key(implicit), implicit);
+        assertThat(second).isNotSameAs(first);
+        assertThat(second.getProperties().getProperty("mail.imaps.ssl.checkserveridentity")).isEqualTo("true");
+        assertThat(second.getProperties().getProperty("mail.imaps.timeout")).isNotNull();
+        assertThat(factory.sessionFor(key(implicit), implicit)).isSameAs(second);
+    }
+
+    private static MailAccount revised(MailAccount a, long revision) {
+        return new MailAccount(a.id(), a.label(), a.address(), a.host(), a.port(), a.security(), a.flavor(),
+                a.username(), a.secretRef(), a.readOnly(), a.allowPurge(), a.auth(), a.status(), revision);
+    }
+
+    @Test
     void prefixFollowsProtocol() {
         assertPrefixOnly(account("a", Security.IMPLICIT_TLS, Flavor.GENERIC), "imaps");
         assertPrefixOnly(account("b", Security.IMPLICIT_TLS, Flavor.GMAIL), "gimaps");

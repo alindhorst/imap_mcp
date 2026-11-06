@@ -1,13 +1,17 @@
 package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
+import de.alexanderlindhorst.imapmcp.core.account.AccountRepository;
 import de.alexanderlindhorst.imapmcp.core.account.CredentialStore;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
+import jakarta.mail.MessagingException;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.function.Function;
 import org.apache.commons.pool2.PooledObject;
 import org.apache.commons.pool2.impl.AbandonedConfig;
@@ -24,8 +28,34 @@ import org.eclipse.angus.mail.imap.IMAPStore;
  */
 public final class StorePool implements AutoCloseable, PoolGauges {
 
-    private final GenericKeyedObjectPool<PoolKey, IMAPStore> pool;
+    /** Borrow attempts before giving up on a Store of the revision the call resolved. */
+    private static final int REVISION_ATTEMPTS = 3;
 
+    private final GenericKeyedObjectPool<PoolKey, IMAPStore> pool;
+    private final StorePoolFactory factory;
+
+    /**
+     * Pool whose account lookup is the tenant-scoped {@code findByTenantAndId} of the repository, in every mode
+     * (SPEC 5.5); there is no startup map of accounts.
+     */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            AccountRepository repository, PoolSettings s, MetricsRecorder metrics) {
+        this(sessions, credentials, capabilities, lookup(repository), s, metrics);
+    }
+
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            AccountRepository repository, PoolSettings s) {
+        this(sessions, credentials, capabilities, repository, s, MetricsRecorder.NOOP);
+    }
+
+    private static Function<PoolKey, MailAccount> lookup(AccountRepository repository) {
+        Objects.requireNonNull(repository, "repository");
+        return key -> repository.findByTenantAndId(key.tenantId(), key.accountId())
+                .filter(r -> r.tenantId().equals(key.tenantId())) // defence in depth
+                .map(ResolvedAccount::account).orElse(null);
+    }
+
+    /** Tests only: production wiring passes the repository, so no startup map of accounts exists. */
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s) {
         this(sessions, credentials, capabilities, accounts, s, MetricsRecorder.NOOP);
@@ -46,8 +76,8 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setTimeBetweenEvictionRuns(s.evictionInterval());
         config.setNumTestsPerEvictionRun(-1);
         config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
-        this.pool = new GenericKeyedObjectPool<>(
-                new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics), config);
+        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics);
+        this.pool = new GenericKeyedObjectPool<>(factory, config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
         abandoned.setRemoveAbandonedTimeout(s.abandonedTimeout());
@@ -71,8 +101,24 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         }
     }
 
+    /**
+     * Borrows a Store made for at least {@code key.revision()}: an older one (credentials or status changed since)
+     * is invalidated and the borrow repeated, never used (SPEC 5.5).
+     */
     public IMAPStore borrow(PoolKey key) throws Exception {
-        return pool.borrowObject(key);
+        if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
+            pool.clear(key);
+            throw new MessagingException("account is not active");
+        }
+        for (int attempt = 0; attempt < REVISION_ATTEMPTS; attempt++) {
+            IMAPStore store = pool.borrowObject(key);
+            if (factory.revisionOf(store) >= key.revision()) {
+                return store;
+            }
+            pool.invalidateObject(key, store);
+            pool.clear(key); // the other idle Stores of the key are as old; drop them in one go
+        }
+        throw new MessagingException("no connection for the current account revision");
     }
 
     public void release(PoolKey key, IMAPStore store) {

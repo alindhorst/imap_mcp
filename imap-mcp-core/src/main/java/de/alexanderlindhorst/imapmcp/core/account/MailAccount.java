@@ -9,11 +9,26 @@ import java.util.Objects;
  * {@code readOnly} (config {@code accounts[].readOnly}) blocks write tools for this account (SPEC 5.3).
  * {@code allowPurge} (config {@code accounts[].allowPurge}, default false) is the operator's switch for
  * {@code purge_messages}; read per call from this record (SPEC 5.3).
+ * {@code auth}, {@code status} and {@code revision} (SPEC 5.5, v3b) default to {@code PASSWORD}, {@code ACTIVE}
+ * and 0 for configured accounts; a repository raises {@code revision} whenever a change must make pooled
+ * connections obsolete (credentials, host, status).
  */
 public record MailAccount(AccountId id, String label, String address, String host, int port, Security security,
-        Flavor flavor, String username, SecretRef secretRef, boolean readOnly, boolean allowPurge) {
+        Flavor flavor, String username, SecretRef secretRef, boolean readOnly,
+        boolean allowPurge, Auth auth, Status status, long revision) {
 
     public enum Security { IMPLICIT_TLS, STARTTLS }
+
+    public enum Auth { PASSWORD, XOAUTH2 }
+
+    public enum Status { ACTIVE, NEEDS_RELINK }
+
+    /** Account with the defaults {@code PASSWORD}, {@code ACTIVE} and revision 0. */
+    public MailAccount(AccountId id, String label, String address, String host, int port, Security security,
+            Flavor flavor, String username, SecretRef secretRef, boolean readOnly, boolean allowPurge) {
+        this(id, label, address, host, port, security, flavor, username, secretRef, readOnly, allowPurge,
+                Auth.PASSWORD, Status.ACTIVE, 0L);
+    }
 
     public enum Flavor { GENERIC, GMAIL }
 
@@ -37,11 +52,18 @@ public record MailAccount(AccountId id, String label, String address, String hos
         Objects.requireNonNull(flavor, "flavor");
         Objects.requireNonNull(username, "username");
         Objects.requireNonNull(secretRef, "secretRef");
+        Objects.requireNonNull(auth, "auth");
+        Objects.requireNonNull(status, "status");
+        if (revision < 0) {
+            throw new IllegalArgumentException("revision must not be negative");
+        }
     }
 
     @Override
     public String toString() {
         return "MailAccount[id=" + id.value() + ", host=" + host + ", port=" + port + ", security=" + security
-                + ", flavor=" + flavor + ", readOnly=" + readOnly + ", allowPurge=" + allowPurge + "]";
+                + ", flavor=" + flavor + ", readOnly=" + readOnly + ", allowPurge=" + allowPurge + ", auth=" + auth
+                + ", status=" + status
+                + ", revision=" + revision + "]";
     }
 }
