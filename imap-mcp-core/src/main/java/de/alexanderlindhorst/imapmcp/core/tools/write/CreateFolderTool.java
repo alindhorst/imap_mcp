@@ -255,8 +255,9 @@ public final class CreateFolderTool implements ToolHandler {
         boolean created = false;
         Optional<Directory.Entry> existing = directory.list(lease, full);
         if (existing.isEmpty() || !selectable(existing.get())) {
+            ctx.audit().begin(List.of()); // fail-closed: before the first mutating command (SPEC 5.3)
             if (!ctx.tryBeginMutation()) {
-                return cancelled(rid, start);
+                return cancelled(ctx, rid, start);
             }
             UidCommands.Result result = commands.create(lease, full);
             if (result.ok()) {
@@ -264,13 +265,14 @@ public final class CreateFolderTool implements ToolHandler {
             } else {
                 Optional<Directory.Entry> now = directory.list(lease, full); // race-safe after any NO
                 if (now.isEmpty() || !selectable(now.get())) {
-                    return fail(WriteResponses.map(result.tagged(), full, rid)
+                    return fail(ctx, WriteResponses.map(result.tagged(), full, rid)
                             .orElseGet(() -> ToolError.internalError(rid)), start);
                 }
             }
         }
+        ctx.audit().begin(List.of());
         if (!ctx.tryBeginMutation()) { // idempotent; for created=false this is the only mutating command
-            return cancelled(rid, start);
+            return cancelled(ctx, rid, start);
         }
         boolean subscribed;
         try {
@@ -286,13 +288,20 @@ public final class CreateFolderTool implements ToolHandler {
         out.put("delimiter", delimiter == null ? null : String.valueOf(delimiter));
         out.put("created", created);
         out.put("subscribed", subscribed);
+        ctx.audit().complete(List.of(), "complete", null);
         WriteCallLog.createFolder(NAME, created, subscribed, elapsed(start));
         return new ToolOutcome.Success(out);
     }
 
     /** The call was cancelled or its deadline decided before a mutating command: nothing sent; the executor's result wins. */
-    private static ToolOutcome cancelled(String rid, long start) {
-        return fail(ToolError.timeout(rid), start);
+    private static ToolOutcome cancelled(ToolCallContext ctx, String rid, long start) {
+        ctx.audit().completeAborted(ctx.mutationStarted(), ErrorCode.TIMEOUT.name());
+        return fail(ctx, ToolError.timeout(rid), start);
+    }
+
+    private static ToolOutcome fail(ToolCallContext ctx, ToolError error, long start) {
+        ctx.audit().complete(List.of(), "failed", error.code().name());
+        return fail(error, start);
     }
 
     private static ToolOutcome fail(ToolError error, long start) {
