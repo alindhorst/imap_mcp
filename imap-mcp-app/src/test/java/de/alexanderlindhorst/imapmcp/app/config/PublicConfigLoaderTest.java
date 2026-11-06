@@ -105,10 +105,11 @@ class PublicConfigLoaderTest {
     }
 
     @Test
-    void theWebClientSecretIsASecretReferenceAndNeverTheValue() {
+    void theWebClientSecretIsHeldAsAReferenceAndItsToStringHidesIt() {
         PublicConfig c = bind(VALID);
         assertThat(c.oauth().webClientId()).isEqualTo("imap-mcp-web");
-        assertThat(c.oauth().webClientSecret().toString()).doesNotContain("WEB_SECRET-VALUE");
+        assertThat(c.oauth().webClientSecret().value()).isEqualTo("env:WEB_SECRET");
+        assertThat(c.oauth().webClientSecret().toString()).doesNotContain("WEB_SECRET");
     }
 
     @Test
@@ -282,6 +283,10 @@ class PublicConfigLoaderTest {
                 Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com/app"),
                         "public.baseUrl: must be an https URI without path"),
                 Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com/?a=1"),
+                        "public.baseUrl: must be an https URI without path"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://mail.example.com#frag"),
+                        "public.baseUrl: must be an https URI without path"),
+                Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: \"https://mail.example.com?\""),
                         "public.baseUrl: must be an https URI without path"),
                 Arguments.of(VALID.replace("baseUrl: https://mail.example.com", "baseUrl: https://u@mail.example.com"),
                         "public.baseUrl: must be an https URI without path"),

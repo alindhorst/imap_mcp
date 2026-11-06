@@ -93,7 +93,9 @@ class ReadmeTest {
                 .contains("10 probes per tenant per hour").contains("per replica")
                 .contains("`public.maxAccountsPerTenant`").contains("`oauth.allowWithoutRole`")
                 .contains("`link_url`").contains("`__Host-session`")
-                .doesNotContain("the linking surface follows");
+                .doesNotContain("the linking surface follows").doesNotContain("`keyring:` or `cmd:`")
+                .contains("`env:`, `file:` or `keyring:`").contains("only with `file:` or `keyring:`")
+                .contains("`purge.enabled` is true, `read_only` is off");
     }
 
     /**
