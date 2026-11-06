@@ -73,6 +73,13 @@ class ReadmeTest {
         assertThat(c.kms().provider()).isEqualTo("local");
         assertThat(readme).contains("--mode stdio|http-local|http-public").contains("Mcp-Session-Id")
                 .doesNotContain("Not implemented; planned for phase v3");
+        // review of PR #362: tools bullet, status line and the Vault provider
+        assertThat(readme).contains("`purge_messages` is registered only with `purge.enabled` (which requires `http.stateful`)")
+                .doesNotContain("the stateful transport for `purge_messages` and the linking surface follow")
+                .contains("`kms.provider: vault`").contains("`kms.vault.allowInsecureHttp`")
+                .contains("`update` on `<transitMount>/encrypt/<keyName>` and `<transitMount>/decrypt/<keyName>`")
+                .contains("`read` on `<transitMount>/keys/<keyName>`").contains("`http_403`")
+                .contains("Rotation with `kms.provider: local`").contains("rotate the Transit key");
     }
 
     /**
