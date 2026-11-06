@@ -1,5 +1,9 @@
 package de.alexanderlindhorst.imapmcp.transport.http.web;
 
+import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
+import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
+import de.alexanderlindhorst.imapmcp.core.audit.EventInfo;
+import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
 import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
 import de.alexanderlindhorst.imapmcp.core.web.WebSession;
@@ -19,6 +23,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,16 +45,20 @@ public final class AccountsServlet extends HttpServlet {
     private final OidcPendingStore pending;
     private final WebSessionStore sessions;
     private final TenantProvisioner tenants;
+    private final AuditLog audit;
+    private final LinkingPages pages;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
-            WebSessionStore sessions, TenantProvisioner tenants, Clock clock) {
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, AuditLog audit, Clock clock) {
         this.config = config;
         this.provider = provider;
         this.pending = pending;
         this.sessions = sessions;
         this.tenants = tenants;
+        this.audit = audit;
+        this.pages = new LinkingPages(linker);
         this.clock = clock;
     }
 
@@ -87,7 +96,38 @@ public final class AccountsServlet extends HttpServlet {
                     methodNotAllowed(res);
                 }
             }
+            case WebConfig.BASE_PATH + "/link" -> accountPage(req, res, (s) -> pages.linkForm(s, res),
+                    (s) -> pages.linkSubmit(s, req, res));
+            case WebConfig.BASE_PATH + "/relink" -> accountPage(req, res, (s) -> pages.relinkForm(s, req, res),
+                    (s) -> pages.relinkSubmit(s, req, res));
+            case WebConfig.BASE_PATH + "/settings" -> accountPage(req, res, (s) -> pages.settingsForm(s, req, res),
+                    (s) -> pages.settingsSubmit(s, req, res));
+            case WebConfig.BASE_PATH + "/unlink" -> accountPage(req, res, (s) -> pages.unlinkForm(s, req, res),
+                    (s) -> pages.unlinkSubmit(s, req, res));
             default -> writePage(res, HttpServletResponse.SC_NOT_FOUND, "Not found", "<p>Not found.</p>");
+        }
+    }
+
+    /** Page action with the session of the request (set by the session filter; without it no page is served). */
+    @FunctionalInterface
+    private interface PageAction {
+        void run(WebSession session) throws IOException;
+    }
+
+    private void accountPage(HttpServletRequest req, HttpServletResponse res, PageAction get, PageAction post)
+            throws IOException {
+        WebSession session = (WebSession) req.getAttribute(WebSurface.SESSION_ATTRIBUTE);
+        if (session == null) {
+            res.setStatus(HttpServletResponse.SC_FOUND);
+            res.setHeader("Location", WebSessionFilter.LOGIN_PATH);
+            return;
+        }
+        if ("GET".equals(req.getMethod()) || "HEAD".equals(req.getMethod())) {
+            get.run(session);
+        } else if ("POST".equals(req.getMethod())) {
+            post.run(session);
+        } else {
+            methodNotAllowed(res);
         }
     }
 
@@ -167,7 +207,14 @@ public final class AccountsServlet extends HttpServlet {
             }
             return;
         }
-        TenantProvisioner.TenantRef tenant = tenantFor(token);
+        TenantProvisioner.TenantRef tenant;
+        try {
+            tenant = tenantFor(token);
+        } catch (AuditWriteException e) { // fail-closed (D5): no audit row, no session
+            writePage(res, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Sign-in unavailable",
+                    "<p>Sign-in is not available right now. Try again later.</p>");
+            return;
+        }
         if (tenant == null || tenant.disabled()) {
             LOG.debug("login refused: tenant");
             writePage(res, HttpServletResponse.SC_FORBIDDEN, "No access",
@@ -195,7 +242,12 @@ public final class AccountsServlet extends HttpServlet {
         boolean allowed = config.requiredRole() == null
                 ? config.allowWithoutRole()
                 : Roles.has(token.claims(), config.roleClaim(), config.requiredRole());
-        return allowed ? tenants.create(token.issuer(), token.subject()) : null;
+        if (!allowed) {
+            return null;
+        }
+        TenantProvisioner.TenantRef created = tenants.create(token.issuer(), token.subject());
+        audit.event(new EventInfo("tenant_created", created.tenantId(), null, UUID.randomUUID().toString(), "ok"));
+        return created;
     }
 
     private static void clearBindingCookie(HttpServletResponse res) {
@@ -217,8 +269,7 @@ public final class AccountsServlet extends HttpServlet {
             res.setHeader("Location", WebSessionFilter.LOGIN_PATH);
             return;
         }
-        writePage(res, HttpServletResponse.SC_OK, "Mail accounts",
-                "<h1>Mail accounts</h1><p>You are signed in.</p>" + logoutForm(session));
+        pages.list(session, res);
     }
 
     private void logout(HttpServletRequest req, HttpServletResponse res) throws IOException {

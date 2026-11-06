@@ -38,6 +38,7 @@ class AccountsFlowTest {
     InMemoryStores.Sessions sessions;
     InMemoryStores.Pending pending;
     InMemoryStores.Tenants tenants;
+    de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog audit;
     HttpLocalServer server;
     int port;
     String origin;
@@ -60,6 +61,7 @@ class AccountsFlowTest {
         sessions = new InMemoryStores.Sessions();
         pending = new InMemoryStores.Pending();
         tenants = new InMemoryStores.Tenants();
+        audit = new de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog();
         Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
         logs = new CollectingAppender();
         logs.start();
@@ -95,7 +97,8 @@ class AccountsFlowTest {
         OidcProvider provider = HttpOidcProvider.forTest(config,
                 new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())), true);
         server = HttpLocalServer.builder().port(port)
-                .webSurface(WebSurface.of(config, provider, pending, sessions, tenants, Clock.systemUTC())).build();
+                .webSurface(WebSurface.of(config, provider, pending, sessions, tenants, new LinkingPagesTest.FakeLinker(), audit,
+                        Clock.systemUTC())).build();
         server.start();
     }
 
@@ -284,6 +287,38 @@ class AccountsFlowTest {
         assertThat(tenants.find(idp.issuer, "alice")).isPresent();
         assertThat(sessions.byId.values()).singleElement()
                 .satisfies(ws -> assertThat(ws.tenantId()).isEqualTo(tenants.find(idp.issuer, "alice").get().tenantId()));
+    }
+
+    @Test
+    void creatingATenantWritesATenantCreatedRowWithoutSubjectOrIssuer() throws Exception {
+        login();
+
+        assertThat(audit.events).singleElement().satisfies(e -> {
+            assertThat(e.type()).isEqualTo("tenant_created");
+            assertThat(e.result()).isEqualTo("ok");
+            assertThat(e.tenant()).isEqualTo(tenants.find(idp.issuer, "alice").get().tenantId());
+            assertThat(e.toString()).doesNotContain("alice").doesNotContain(idp.issuer);
+        });
+    }
+
+    @Test
+    void aFailingAuditWriteRefusesTheLoginFailClosed() throws Exception {
+        audit.failEvent = true;
+
+        Resp r = callback(startLogin(), "good-code");
+
+        assertThat(r.status()).isEqualTo(503);
+        assertThat(sessions.size()).isZero();
+        assertThat(r.cookieHeader("__Host-session")).isNull();
+    }
+
+    @Test
+    void anExistingTenantWritesNoTenantCreatedRow() throws Exception {
+        tenants.create(idp.issuer, "alice");
+
+        callback(startLogin(), "good-code");
+
+        assertThat(audit.events).isEmpty();
     }
 
     @Test
