@@ -85,7 +85,7 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
             throw new MessagingException("no account for pool key");
         }
         if (account.status() != MailAccount.Status.ACTIVE) { // no connect for an account that needs a re-link
-            throw new MessagingException("account is not active");
+            throw new AccountNeedsRelinkException();
         }
         Session session = sessions.sessionFor(key, account);
         IMAPStore store = (IMAPStore) session.getStore(ImapSessionFactory.protocolFor(account));
@@ -116,7 +116,8 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
         for (int depth = 0; t != null && depth < 8; depth++, t = t.getCause()) {
             if (t instanceof AuthenticationFailedException) {
                 String text = t.getMessage();
-                return text == null || !text.toUpperCase(java.util.Locale.ROOT).contains("[UNAVAILABLE]");
+                // the response code is the first thing in the server's text (RFC 5530)
+                return text == null || !text.strip().toUpperCase(java.util.Locale.ROOT).startsWith("[UNAVAILABLE]");
             }
         }
         return false;

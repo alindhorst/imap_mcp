@@ -115,7 +115,9 @@ class LoginOutcomesTest {
     void anAccountThatNeedsARelinkIsNeverConnectedNorReported() throws Exception {
         MailAccount a = account(greenMail.getImaps().getPort(), "u", MailAccount.Status.NEEDS_RELINK, 2);
         PoolKey key = borrowWith(a, "right");
-        assertThatThrownBy(() -> pool.borrow(key)).isInstanceOf(AccountNeedsRelinkException.class);
+        assertThatThrownBy(() -> pool.borrow(key)).satisfies(e -> assertThat(
+                de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper.map(e, "r1").error().details())
+                .containsEntry("reason", "relink_required"));
         assertThat(events).isEmpty();
     }
 

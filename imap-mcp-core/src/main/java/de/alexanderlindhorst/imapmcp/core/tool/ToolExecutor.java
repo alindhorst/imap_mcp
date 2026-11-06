@@ -236,7 +236,12 @@ public final class ToolExecutor {
         ctx.sealMutation();
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
-        return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
+        ToolError mapped = ImapErrorMapper.map(cause, ctx.requestId()).error();
+        if (mapped.details() != null && "relink_required".equals(mapped.details().get("reason"))
+                && ctx.linkUrl() != null) {
+            mapped = ToolError.relinkRequired(ctx.linkUrl(), ctx.requestId());
+        }
+        return new ToolOutcome.Failure(afterMutation(toolName, mapped, idempotent, ctx));
     }
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {

@@ -43,6 +43,7 @@ public final class ToolCallContext {
 
     /** The linking surface's page for re-link errors, set by the account resolution (http-public). */
     public void bindLinkUrl(String linkUrl) {
+        this.linkUrl = linkUrl;
     }
 
     /** The bound link URL, or null. */

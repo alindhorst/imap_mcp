@@ -51,6 +51,7 @@ public final class AccountArgument {
         }
         ResolvedAccount resolved = found.get();
         ctx.bindAccount(resolved.account().id());
+        ctx.bindLinkUrl(linkUrl); // for a re-link error that surfaces later, from the pool
         if (resolved.account().status() == MailAccount.Status.NEEDS_RELINK) {
             // SPEC 5.3: no connection is attempted; every account tool fails here, before any I/O
             return new Result.NotFound(ToolError.relinkRequired(linkUrl, ctx.requestId()));
