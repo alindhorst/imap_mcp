@@ -135,9 +135,38 @@ class PublicComponentsStartupTest {
     }
 
     @Test
-    void theStatefulTransportIsRefusedUntilItIsWired() {
+    void theStatefulTransportIsNoLongerRefusedAtStartup() {
+        // the wiring now goes on to open the database (unreachable here), which is the failure that is reported
         String yaml = BASE + "http:\n  stateful: true\n";
-        assertThatThrownBy(() -> start(yaml, env())).hasMessageContaining("http.stateful");
+        assertThatThrownBy(() -> start(yaml, env())).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("database").hasMessageNotContaining("not available in this build");
+    }
+
+    @Test
+    void purgeIsRegisteredOnlyWithPurgeEnabledOverTheStatefulTransport() throws IOException {
+        Path file = dir.resolve("predicate.yaml");
+        for (var c : new String[][] {{"", "false"}, {"http:\n  stateful: true\n", "false"},
+                {"purge:\n  enabled: true\nhttp:\n  stateful: true\ntools:\n  deadline: 60s\n", "true"}}) {
+            Files.writeString(file, BASE + c[0]);
+            assertThat(PublicComponents.purgeRegistered(PublicConfigLoader.load(file, env()))).as(c[0])
+                    .isEqualTo(Boolean.parseBoolean(c[1]));
+        }
+    }
+
+    @Test
+    void sessionsAreBoundToIssuerAndSubjectOfTheTokenAndNotToTheTenant() {
+        var request = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+        org.mockito.Mockito.when(request.getAttribute(de.alexanderlindhorst.imapmcp.transport.http.JwtTokenFilter
+                .PRINCIPAL_ATTRIBUTE)).thenReturn(new de.alexanderlindhorst.imapmcp.transport.http.JwtPrincipal(
+                        "https://idp.example.com/realms/test", "alice", Map.of()));
+        var other = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+        org.mockito.Mockito.when(other.getAttribute(de.alexanderlindhorst.imapmcp.transport.http.JwtTokenFilter
+                .PRINCIPAL_ATTRIBUTE)).thenReturn(new de.alexanderlindhorst.imapmcp.transport.http.JwtPrincipal(
+                        "https://idp.example.com/realms/test", "bob", Map.of()));
+        var none = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+        assertThat(HttpPublicServer.sessionPrincipal(request)).isNotNull()
+                .isNotEqualTo(HttpPublicServer.sessionPrincipal(other));
+        assertThat(HttpPublicServer.sessionPrincipal(none)).isNull();
     }
 
     @Test

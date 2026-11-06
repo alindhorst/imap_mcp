@@ -153,4 +153,26 @@ class McpElicitationChannelTest {
     void channelIsAnElicitationChannel() {
         assertThat(channel()).isInstanceOf(ElicitationChannel.class);
     }
+
+    @Test
+    void sessionIdIsTheExchangesSessionId() {
+        when(exchange.sessionId()).thenReturn("sess-42");
+        assertThat(channel().sessionId()).isEqualTo("sess-42");
+    }
+
+    @Test
+    void channelsWithoutASessionReportTheStdioConstant() {
+        ElicitationChannel plain = new ElicitationChannel() {
+            @Override
+            public boolean supportsFormMode() {
+                return true;
+            }
+
+            @Override
+            public Answer ask(String message, Map<String, Object> requestedSchema, Duration window) {
+                return new Answer.Failed();
+            }
+        };
+        assertThat(plain.sessionId()).isEqualTo(ElicitationChannel.STDIO_SESSION);
+    }
 }
