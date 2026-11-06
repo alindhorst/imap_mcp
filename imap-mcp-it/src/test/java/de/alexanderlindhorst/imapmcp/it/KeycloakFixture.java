@@ -26,6 +26,10 @@ public final class KeycloakFixture extends GenericContainer<KeycloakFixture> {
     public KeycloakFixture() {
         super(DockerImageName.parse(ItImages.KEYCLOAK).asCompatibleSubstituteFor("quay.io/keycloak/keycloak"));
         withExposedPorts(HTTP_PORT);
+        // a few attempts: a failed create call on a stale engine connection is retried on a fresh one
+        withStartupAttempts(3);
+        // bounded heap: the JVM default is a quarter of the host memory, which hurts when ITs run in parallel
+        withEnv("JAVA_OPTS_KC_HEAP", "-Xms128m -Xmx768m");
         withEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin");
         withEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin-for-tests");
         withCopyFileToContainer(MountableFile.forClasspathResource("keycloak/imap-realm.json"),

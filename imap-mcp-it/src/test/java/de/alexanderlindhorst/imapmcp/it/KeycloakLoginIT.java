@@ -49,9 +49,10 @@ class KeycloakLoginIT {
     @BeforeAll
     static void start() throws Exception {
         keycloak = new KeycloakFixture();
-        keycloak.start();
         postgres = new PostgresFixture();
-        postgres.start();
+        // Both at once: Keycloak needs a long time to start, and a container created after that wait used to hit a
+        // Docker socket connection that the engine (Podman under load) had closed meanwhile ("broken pipe").
+        org.testcontainers.lifecycle.Startables.deepStart(keycloak, postgres).join();
         db = Database.open(postgres.config());
         try (ServerSocket s = new ServerSocket(0)) {
             port = s.getLocalPort();
