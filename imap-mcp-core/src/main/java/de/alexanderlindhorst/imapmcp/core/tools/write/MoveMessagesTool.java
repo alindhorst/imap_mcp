@@ -143,15 +143,19 @@ public final class MoveMessagesTool implements ToolHandler {
         var accountId = ok.account().account().id();
         List<BulkResult.Item> items = new ArrayList<>();
         List<WritePreflight.Group> toRun = new ArrayList<>();
+        List<FolderGroupRunner.Settled> settled = new ArrayList<>();
         for (WritePreflight.Group g : ok.groups()) {
             if (g.folder().equals(targetName)) {
-                g.items().forEach(i -> items.add(BulkResult.Item.alreadyInTarget(i.handle())));
+                g.items().forEach(i -> {
+                    items.add(BulkResult.Item.alreadyInTarget(i.handle()));
+                    settled.add(new FolderGroupRunner.Settled(i, BulkResult.Item.alreadyInTarget(i.handle())));
+                });
             } else {
                 toRun.add(g);
             }
         }
         MoveStep step = new MoveStep(targetName, caps.move(), ref -> handles.encode(tenant, accountId, ref), rid);
-        items.addAll(runner.run(lease, ctx, toRun, FolderGroupRunner.AbsentStatus.ALREADY_GONE, step));
+        items.addAll(runner.run(lease, ctx, toRun, FolderGroupRunner.AbsentStatus.ALREADY_GONE, step, settled));
         BulkResult result = BulkResult.inInputOrder(BulkResult.Kind.MOVE, account, targetName, handleList, items);
         WriteCallLog.bulk(NAME, result, ok.groups().size(), step.usedFallback(), Duration.ofNanos(System.nanoTime() - start));
         return new ToolOutcome.Success(result.toMap());

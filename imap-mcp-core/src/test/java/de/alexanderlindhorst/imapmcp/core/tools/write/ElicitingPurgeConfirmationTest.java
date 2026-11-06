@@ -564,4 +564,23 @@ class ElicitingPurgeConfirmationTest {
         script.session = "s2";
         assertThat(covered("a1", 1)).isEqualTo(new Decision.Refused(ElicitationReason.RECENTLY_DECLINED));
     }
+
+    // ---- bounded maps (SPEC 5.5, #309) ----
+
+    @Test
+    void expiredApprovalsAndCooldownsAreDroppedOnLaterCalls() throws Exception {
+        script.answers.add(new ElicitationChannel.Answer.Declined());
+        confirm(ctx(T1, null), request("a1", "L", "Trash", 1)); // cooldown for t1/a1
+        ToolCallContext approving = ctx(T1, null);
+        script.answers.add(new ElicitationChannel.Answer.Accepted(Map.of("allow_for_session", true)));
+        confirm(approving, request("a2", "L", "Trash", 1));
+        approving.tryBeginMutation(); // creates the approval for t1/a2
+        assertThat(confirmation.cooldownCount()).isEqualTo(1);
+        assertThat(confirmation.approvalCount()).isEqualTo(1);
+        clock.now = clock.now.plus(Duration.ofHours(1));
+        script.answers.add(new ElicitationChannel.Answer.Accepted(null));
+        confirm(ctx(T2, null), request("a9", "L", "Trash", 1)); // an unrelated key triggers the sweep
+        assertThat(confirmation.cooldownCount()).isZero();
+        assertThat(confirmation.approvalCount()).isZero();
+    }
 }

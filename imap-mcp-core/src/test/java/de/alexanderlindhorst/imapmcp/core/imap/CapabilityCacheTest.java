@@ -119,4 +119,32 @@ class CapabilityCacheTest {
         cache.invalidate(key);
         assertThat(cache.get(key)).isInstanceOf(CapabilityCache.Lookup.Missing.class);
     }
+
+    @Test
+    void entriesUnusedForADayAreDropped() {
+        FakeClock clock = new FakeClock();
+        CapabilityCache cache = new CapabilityCache(CapabilityCache.DEFAULT_TTL, clock);
+        cache.put(key("t1", "a"), CAPS);
+        cache.put(key("t1", "b"), CAPS);
+        clock.now = clock.now.plus(Duration.ofHours(23));
+        assertThat(cache.get(key("t1", "a"))).isInstanceOf(CapabilityCache.Lookup.Expired.class); // use refreshes it
+        clock.now = clock.now.plus(Duration.ofHours(2));
+        assertThat(cache.get(key("t1", "b"))).isInstanceOf(CapabilityCache.Lookup.Missing.class);
+        assertThat(cache.get(key("t1", "a"))).isInstanceOf(CapabilityCache.Lookup.Expired.class);
+        assertThat(cache.size()).isEqualTo(1);
+    }
+
+    @Test
+    void cacheHoldsAtMostTheConfiguredEntriesLeastRecentlyUsedOut() {
+        assertThat(CapabilityCache.MAX_ENTRIES).isEqualTo(10_000);
+        assertThat(CapabilityCache.IDLE_EXPIRY).isEqualTo(Duration.ofHours(24));
+        CapabilityCache cache = new CapabilityCache(CapabilityCache.DEFAULT_TTL, new FakeClock(), 2);
+        cache.put(key("t1", "a"), CAPS);
+        cache.put(key("t1", "b"), CAPS);
+        cache.get(key("t1", "a"));
+        cache.put(key("t1", "c"), CAPS);
+        assertThat(cache.size()).isEqualTo(2);
+        assertThat(cache.get(key("t1", "b"))).isInstanceOf(CapabilityCache.Lookup.Missing.class);
+        assertThat(cache.get(key("t1", "a"))).isInstanceOf(CapabilityCache.Lookup.Fresh.class);
+    }
 }

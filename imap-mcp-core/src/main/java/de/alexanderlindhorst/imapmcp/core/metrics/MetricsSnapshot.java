@@ -8,9 +8,16 @@ import java.util.Map;
  * Immutable point-in-time view of the in-memory metrics. All ids are hashed (LogIds). Counters are cumulative
  * since start; {@code active}/{@code idle} are gauges read at snapshot time. {@code createdTotal} and
  * {@code destroyedTotal} count Stores of the whole pool (Commons Pool keeps no per-key counters).
+ * {@code overflowEvents} counts events of series that were refused because the series cap was reached (SPEC 5.5).
  */
 public record MetricsSnapshot(long createdTotal, long destroyedTotal, List<PoolMetrics> pools,
-        List<TenantMetrics> tenants, List<OperationMetrics> operations) {
+        List<TenantMetrics> tenants, List<OperationMetrics> operations, long overflowEvents) {
+
+    /** Without overflow (no series was refused). */
+    public MetricsSnapshot(long createdTotal, long destroyedTotal, List<PoolMetrics> pools,
+            List<TenantMetrics> tenants, List<OperationMetrics> operations) {
+        this(createdTotal, destroyedTotal, pools, tenants, operations, 0L);
+    }
 
     public MetricsSnapshot {
         pools = List.copyOf(pools);

@@ -95,6 +95,8 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         }
     }
 
+    private static final Duration SWEEP_INTERVAL = Duration.ofMinutes(1);
+
     /** An approval is valid for one MCP session, one tenant and one account (SPEC 4, v3b). */
     private record ApprovalKey(String sessionId, String tenant, String account) {
     }
@@ -108,6 +110,8 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
     private final Map<String, Instant> declinedUntil = new ConcurrentHashMap<>();
     private final Map<ApprovalKey, Approval> approvals = new ConcurrentHashMap<>();
     private final TrashStatus status;
+    private Instant nextSweep = Instant.EPOCH; // guarded by sweepLock
+    private final Object sweepLock = new Object();
 
     public ElicitingPurgeConfirmation(Clock clock) {
         this(clock, LIVE_STATUS);
@@ -130,6 +134,7 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
             return new Decision.Refused(ElicitationReason.ERROR);
         }
         Instant now = clock.instant();
+        sweepExpired(now);
         String key = ctx.accountContext().tenantId().value() + "/" + request.account().account().id().value();
         String sessionId = channel.sessionId();
         ApprovalKey approvalKey = new ApprovalKey(sessionId, ctx.accountContext().tenantId().value(),
@@ -184,6 +189,22 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         if (sessionId != null) {
             approvals.values().removeIf(a -> a.sessionId.equals(sessionId));
         }
+    }
+
+    /** Drops expired cooldowns and approvals, at most once a minute (SPEC 5.5, bounded maps). */
+    private void sweepExpired(Instant now) {
+        synchronized (sweepLock) {
+            if (now.isBefore(nextSweep)) {
+                return;
+            }
+            nextSweep = now.plus(SWEEP_INTERVAL);
+        }
+        declinedUntil.values().removeIf(until -> !now.isBefore(until));
+        approvals.values().removeIf(a -> !now.isBefore(a.expiresAt));
+    }
+
+    int cooldownCount() {
+        return declinedUntil.size();
     }
 
     int approvalCount() {

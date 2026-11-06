@@ -1,5 +1,8 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
+import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
+import de.alexanderlindhorst.imapmcp.core.audit.CallAudit;
+import de.alexanderlindhorst.imapmcp.core.audit.CallInfo;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
@@ -28,6 +31,8 @@ public final class ToolCallContext {
     private volatile boolean mutationStarted; // written under this lock only
     private volatile boolean authFailureCounted;
     private volatile ElicitationChannel elicitation;
+    private volatile AccountId boundAccountId;
+    private volatile CallAudit audit = CallAudit.disabled();
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -38,6 +43,21 @@ public final class ToolCallContext {
     public ToolCallContext(AccountContext accountContext, String requestId, Instant deadline) {
         this(accountContext, requestId);
         this.deadline = Objects.requireNonNull(deadline, "deadline");
+    }
+
+    /**
+     * Turns on the multi-tenant audit log for this call (SPEC 5.3); the executor does it for write tools when the
+     * deployment has an audit log. Without it {@link #audit()} does nothing.
+     */
+    public void attachAudit(AuditLog log, String tool) {
+        Objects.requireNonNull(log, "log");
+        Objects.requireNonNull(tool, "tool");
+        this.audit = new CallAudit(log, () -> new CallInfo(accountContext.tenantId(), boundAccountId, requestId, tool));
+    }
+
+    /** The call's audit record; a no-op object when no audit log is attached. */
+    public CallAudit audit() {
+        return audit;
     }
 
     /** Set once by the stateful adapter before the handler runs; the stateless one leaves it empty. */
@@ -157,6 +177,7 @@ public final class ToolCallContext {
     /** Sets the hashed account id in the worker's MDC once resolved; no-op outside the executor. */
     public void bindAccount(AccountId accountId) {
         Objects.requireNonNull(accountId, "accountId");
+        boundAccountId = accountId;
         LogIds ids = logIds;
         if (ids != null) {
             String hash = ids.account(accountId.value());
