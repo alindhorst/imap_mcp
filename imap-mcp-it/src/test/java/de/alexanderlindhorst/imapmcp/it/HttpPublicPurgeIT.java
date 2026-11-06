@@ -141,7 +141,7 @@ class HttpPublicPurgeIT {
         }, policy -> new de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory(policy,
                 host -> new java.net.InetAddress[] {java.net.InetAddress.getLoopbackAddress()}, a -> false, p -> true));
         JdbcAccountRepository accounts = new JdbcAccountRepository(components.database().dataSource());
-        for (String user : List.of("alice", "bob")) {
+        for (String user : List.of("alice", "bob", "dave")) { // dave: the decline cooldown is per tenant and account
             TenantId tenant = components.tenantDirectory().create(ISSUER, user).tenantId();
             tenants.put(user, tenant);
             ResolvedAccount box = accounts.create(tenant, new NewAccount(user + " box", null, "imap.example.com",
@@ -329,17 +329,17 @@ class HttpPublicPurgeIT {
 
     @Test
     void aDeclineDeletesNothingAndIsAuditedPerItemWithoutAnItemStatus() throws Exception {
-        try (McpSyncClient c = client(token("alice", BOTH),
+        try (McpSyncClient c = client(token("dave", BOTH),
                 req -> new McpSchema.ElicitResult(McpSchema.ElicitResult.Action.DECLINE, null))) {
-            seed(c, "alice", "pub-declined");
-            String h = handles(c, "alice").get("pub-declined");
-            Map<String, Object> r = purge(c, "alice", h);
+            seed(c, "dave", "pub-declined");
+            String h = handles(c, "dave").get("pub-declined");
+            Map<String, Object> r = purge(c, "dave", h);
             assertThat(map(map(r, "error"), "details")).containsEntry("reason", "not_confirmed")
                     .containsEntry("elicitation", "declined");
-            assertThat(subjects(c, "alice")).contains("pub-declined");
+            assertThat(subjects(c, "dave")).contains("pub-declined");
         }
         assertThat(count("SELECT count(*) FROM audit_event WHERE tool = 'purge_messages' AND tenant_id = '"
-                + tenants.get("alice").value() + "'::uuid AND confirmation = 'declined' AND error_code = "
+                + tenants.get("dave").value() + "'::uuid AND confirmation = 'declined' AND error_code = "
                 + "'PERMISSION_DENIED' AND item_status IS NULL")).isPositive();
     }
 

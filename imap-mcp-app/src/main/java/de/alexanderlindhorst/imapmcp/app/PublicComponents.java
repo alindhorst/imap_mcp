@@ -40,6 +40,8 @@ import de.alexanderlindhorst.imapmcp.core.tools.SearchMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CopyMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.CreateFolderTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.DeleteMessagesTool;
+import de.alexanderlindhorst.imapmcp.core.tools.write.ElicitingPurgeConfirmation;
+import de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.FolderGroupRunner;
 import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
@@ -63,6 +65,7 @@ import de.alexanderlindhorst.imapmcp.store.secret.RefCredentialStore;
 import de.alexanderlindhorst.imapmcp.store.secret.SecretResolutionException;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -110,13 +113,15 @@ public final class PublicComponents implements AutoCloseable {
     private final String linkUrl;
     private final KeyRing keys;
     private final JdbcCredentialStore credentials;
+    private final ElicitingPurgeConfirmation purgeConfirmation; // null unless purge_messages is registered
     private boolean closed;
 
     private PublicComponents(Database database, ImapSessionFactory sessions, StorePool pool,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, JdbcTenantDirectory tenants,
             Map<ToolDefinition, ToolHandler> tools, ScheduledExecutorService scheduler, String linkUrl,
-            KeyRing keys, JdbcCredentialStore credentials) {
+            KeyRing keys, JdbcCredentialStore credentials, ElicitingPurgeConfirmation purgeConfirmation) {
         this.credentials = credentials;
+        this.purgeConfirmation = purgeConfirmation;
         this.database = database;
         this.sessions = sessions;
         this.pool = pool;
@@ -154,10 +159,6 @@ public final class PublicComponents implements AutoCloseable {
     private static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
             Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
-        if (config.http().stateful()) {
-            throw new AppStartupException("http.stateful in " + paths.configFile()
-                    + ": the stateful transport is not available in this build");
-        }
         if (config.oauth().allowWithoutRole()) {
             LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
                     + "login of the linking surface. Development only.");
@@ -229,8 +230,17 @@ public final class PublicComponents implements AutoCloseable {
                     new CopyMessagesTool(preflight, leases, handles, new FolderGroupRunner(clock)));
             tools.put(DeleteMessagesTool.DEFINITION, new DeleteMessagesTool(preflight, leases, handles, clock));
             tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
-            LOG.info("http-public tools registered={}, purge_messages registered=false, download_attachment "
-                    + "registered=true (embedded)", tools.size());
+            // purge_messages (D8): only with purge.enabled over the stateful transport, whose server-to-client requests
+            // carry the confirmation; the deployment switch also goes into the tool as its call-time gate
+            boolean purge = config.purgeEnabled() && config.http().stateful();
+            ElicitingPurgeConfirmation purgeConfirmation = null;
+            if (purge) {
+                purgeConfirmation = new ElicitingPurgeConfirmation(clock);
+                tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(preflight, leases, clock,
+                        purgeConfirmation, config.purgeEnabled()));
+            }
+            LOG.info("http-public tools registered={}, purge_messages registered={}, download_attachment "
+                    + "registered=true (embedded)", tools.size(), purge);
 
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread th = new Thread(r, "imap-mcp-cleanup");
@@ -241,7 +251,7 @@ public final class PublicComponents implements AutoCloseable {
             new ExpiredRowCleanup(ds).schedule(scheduler, CLEANUP_PERIOD);
             metrics.start();
             return new PublicComponents(database, sessions, pool, metrics, executor, new JdbcTenantDirectory(ds),
-                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials);
+                    Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation);
         } catch (RuntimeException e) {
             if (scheduler != null) {
                 scheduler.shutdownNow();
@@ -366,6 +376,23 @@ public final class PublicComponents implements AutoCloseable {
         McpToolAdapter adapter = new McpToolAdapter(resolver, McpJsonDefaults.getMapper(),
                 () -> UUID.randomUUID().toString(), executor);
         return tools.entrySet().stream().map(e -> adapter.stateless(e.getKey(), e.getValue())).toList();
+    }
+
+    /** Stateful HTTP flavour (needed for the purge confirmation); the resolver maps the principal to its tenant. */
+    public List<McpServerFeatures.SyncToolSpecification> statefulToolSpecs(
+            Function<McpTransportContext, AccountContext> resolver) {
+        McpToolAdapter adapter = new McpToolAdapter(resolver, McpJsonDefaults.getMapper(),
+                () -> UUID.randomUUID().toString(), executor);
+        return tools.entrySet().stream().map(e -> adapter.stateful(e.getKey(), e.getValue())).toList();
+    }
+
+    /**
+     * Session-end callback of the stateful transport: drops the purge approvals of the ended session (SPEC 4, v3b).
+     * Never null; does nothing when {@code purge_messages} is not registered.
+     */
+    public java.util.function.Consumer<String> sessionEndListener() {
+        ElicitingPurgeConfirmation c = purgeConfirmation;
+        return c == null ? id -> { } : c::sessionEnded;
     }
 
     List<ToolDefinition> definitions() {
