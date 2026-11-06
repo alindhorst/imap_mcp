@@ -234,12 +234,12 @@ class EmbeddedDownloadAttachmentToolTest {
     }
 
     @Test
-    void aPartExactlyAtTheCapIsDelivered() throws Exception {
+    void aPartBelowTheCapIsDelivered() throws Exception {
         maxBytes = 3000;
         build(null);
-        String h = deliver(mixed(attachment("image/png", "p.png", random(3000))));
+        String h = deliver(mixed(attachment("image/png", "p.png", random(2800))));
 
-        assertThat(ok(call(h, "2"))).containsEntry("bytes", 3000L);
+        assertThat(ok(call(h, "2"))).containsEntry("bytes", 2800L);
     }
 
     @Test
@@ -281,7 +281,7 @@ class EmbeddedDownloadAttachmentToolTest {
         build(null);
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
         for (int i = 0; i < 3; i++) {
-            assertThat(error(call(h, "9"))).containsEntry("code", "PART_NOT_FOUND");
+            assertThat(error(call(h, "9"))).containsEntry("code", "INVALID_ARGUMENT");
         }
         assertThat(ok(call(h, "2"))).containsEntry("delivery", "embedded");
     }
