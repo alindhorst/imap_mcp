@@ -374,4 +374,34 @@ class StorePoolTest {
                 new ResolvedAccount(new TenantId("t2"), stored, "acc_test"));
         assertThatThrownBy(() -> pool.borrow(foreign)).isInstanceOf(Exception.class);
     }
+
+    @Test
+    void allIdleStoresOfAnOlderRevisionAreClearedSoTheBorrowSucceeds() throws Exception {
+        account = accountAt(0, MailAccount.Status.ACTIVE);
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k0 = keyFor(account);
+        IMAPStore a = p.borrow(k0);
+        IMAPStore b = p.borrow(k0);
+        IMAPStore c = p.borrow(k0);
+        p.release(k0, a);
+        p.release(k0, b);
+        p.release(k0, c);
+        assertThat(p.numIdle(k0)).isEqualTo(3);
+        account = accountAt(1, MailAccount.Status.ACTIVE);
+        PoolKey k1 = keyFor(account);
+        IMAPStore fresh = p.borrow(k1);
+        assertThat(fresh).isNotSameAs(a).isNotSameAs(b).isNotSameAs(c);
+        p.release(k1, fresh);
+        await(() -> p.destroyedCount() == 3);
+    }
+
+    @Test
+    void borrowRefusesAKeyWhoseResolvedAccountNeedsRelink() {
+        account = accountAt(1, MailAccount.Status.ACTIVE); // lookup still says active
+        StorePool p = pool(PoolSettings.DEFAULTS);
+        PoolKey k = keyFor(accountAt(1, MailAccount.Status.NEEDS_RELINK));
+        assertThatThrownBy(() -> p.borrow(k)).isInstanceOf(Exception.class);
+        assertThat(credentialLookups.get()).isZero();
+        assertThat(p.createdCount()).isZero();
+    }
 }
