@@ -51,7 +51,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class VaultTransitKeyWrapper implements KeyWrapper {
 
     private static final String PROVIDER = "vault";
-    
+
     private static final Pattern CIPHERTEXT = Pattern.compile("vault:v[0-9]{1,9}:[A-Za-z0-9+/=]{1,16384}");
     private static final int DEK_LENGTH = 32;
     private static final int MAX_RESPONSE = 1 << 20;
