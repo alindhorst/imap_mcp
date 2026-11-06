@@ -96,11 +96,12 @@ public final class AppComponents implements AutoCloseable {
     private final Map<ToolDefinition, ToolHandler> tools;
     private final boolean purgeRegistered;
     private final DownloadDirectory downloadDirectory;
+    private final ElicitingPurgeConfirmation purgeConfirmation; // null unless purge_messages is registered
     private boolean closed;
 
     private AppComponents(ImapSessionFactory sessions, StorePool pool, Admission admission,
             InMemoryMetricsRecorder metrics, ToolExecutor executor, StateDirectory state, Map<ToolDefinition, ToolHandler> tools,
-            boolean purgeRegistered, DownloadDirectory downloadDirectory) {
+            boolean purgeRegistered, DownloadDirectory downloadDirectory, ElicitingPurgeConfirmation purgeConfirmation) {
         this.sessions = sessions;
         this.pool = pool;
         this.admission = admission;
@@ -110,14 +111,22 @@ public final class AppComponents implements AutoCloseable {
         this.tools = tools;
         this.purgeRegistered = purgeRegistered;
         this.downloadDirectory = downloadDirectory;
+        this.purgeConfirmation = purgeConfirmation;
     }
 
-    /** The transport the components are built for; {@code purge_messages} exists only in {@link #STDIO} (SPEC 5.3). */
+    /**
+     * The transport the components are built for; {@code purge_messages} exists in {@link #STDIO} and, with
+     * {@code http.stateful}, in {@link #HTTP_LOCAL} (SPEC 5.3, 4 v3b).
+     */
     public enum Mode { STDIO, HTTP_LOCAL }
 
-    /** SPEC 5.3: stdio only, and only if at least one account has {@code allowPurge}; fixed at startup. */
+    /**
+     * SPEC 5.3: stdio, or http-local with {@code http.stateful} (the confirmation needs server-to-client requests),
+     * and only if at least one account has {@code allowPurge}; fixed at startup.
+     */
     static boolean purgeRegistered(AppConfig config, Mode mode) {
-        return mode == Mode.STDIO && config.purgeAccounts() > 0;
+        boolean elicits = mode == Mode.STDIO || (mode == Mode.HTTP_LOCAL && config.http().stateful());
+        return elicits && config.purgeAccounts() > 0;
     }
 
     /** True iff {@code purge_messages} is registered in this instance. */
@@ -225,16 +234,18 @@ public final class AppComponents implements AutoCloseable {
             var appLog = LoggerFactory.getLogger("imapmcp.app");
             appLog.info("purge_messages registered={}, accounts with allowPurge={} of {}", purge,
                     config.purgeAccounts(), config.accounts().size());
-            if (mode == Mode.HTTP_LOCAL && config.purgeAccounts() > 0) {
+            if (mode == Mode.HTTP_LOCAL && config.purgeAccounts() > 0 && !config.http().stateful()) {
                 appLog.warn("accounts with allowPurge are configured, but purge_messages is not available in "
                         + "http-local mode (it needs MCP elicitation, stdio only)");
             }
 
+            ElicitingPurgeConfirmation purgeConfirmation = null;
             if (purge) {
+                purgeConfirmation = new ElicitingPurgeConfirmation(clock);
                 // Consent only from the user's answer to an MCP elicitation (SPEC 4); a session whose client cannot
                 // elicit gets confirmation_unavailable.
                 tools.put(PurgeMessagesTool.DEFINITION, new PurgeMessagesTool(new WritePreflight(account, locator),
-                        leases, clock, new ElicitingPurgeConfirmation(clock)));
+                        leases, clock, purgeConfirmation));
             }
 
             if (downloadDirectory != null) { // SPEC 5.3: independent of readOnly and of the write gate
@@ -244,7 +255,7 @@ public final class AppComponents implements AutoCloseable {
 
             metrics.start();
             return new AppComponents(sessions, pool, admission, metrics, executor, state,
-                    java.util.Collections.unmodifiableMap(tools), purge, downloadDirectory);
+                    java.util.Collections.unmodifiableMap(tools), purge, downloadDirectory, purgeConfirmation);
         } catch (RuntimeException e) {
             if (metrics != null) {
                 metrics.close();
@@ -374,6 +385,25 @@ public final class AppComponents implements AutoCloseable {
     public List<McpServerFeatures.SyncToolSpecification> statefulToolSpecs() {
         McpToolAdapter adapter = adapter(ctx -> LOCAL);
         return tools.entrySet().stream().map(e -> adapter.stateful(e.getKey(), e.getValue())).toList();
+    }
+
+    /**
+     * Stateful HTTP flavour ({@code http.stateful}): the launcher supplies the resolver, the principal's
+     * {@link AccountContext} comes from the validated request, as for the stateless flavour.
+     */
+    public List<McpServerFeatures.SyncToolSpecification> statefulToolSpecs(
+            Function<McpTransportContext, AccountContext> resolver) {
+        McpToolAdapter adapter = adapter(resolver);
+        return tools.entrySet().stream().map(e -> adapter.stateful(e.getKey(), e.getValue())).toList();
+    }
+
+    /**
+     * Session-end callback of the stateful transport: drops the purge approvals of the ended session (SPEC 4, v3b).
+     * Never null; does nothing when {@code purge_messages} is not registered.
+     */
+    public java.util.function.Consumer<String> sessionEndListener() {
+        ElicitingPurgeConfirmation c = purgeConfirmation;
+        return c == null ? id -> { } : c::sessionEnded;
     }
 
     /** HTTP flavour: the launcher supplies the resolver (principal to {@link AccountContext}). */

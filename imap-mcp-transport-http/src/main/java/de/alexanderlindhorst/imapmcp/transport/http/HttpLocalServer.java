@@ -4,14 +4,17 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
-import io.modelcontextprotocol.server.McpStatelessSyncServer;
 import io.modelcontextprotocol.server.transport.HttpServletStatelessServerTransport;
+import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.InetAddress;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
 import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
@@ -21,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import org.eclipse.jetty.ee10.servlet.FilterHolder;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
@@ -33,8 +37,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Embedded Jetty 12 (ee10) serving the SDK's stateless Streamable HTTP servlet at {@code /mcp} (SPEC 2, 5.1,
- * 5.3). Requests run on virtual threads. Filter chain order on /mcp: Host -> Origin -> POST-only guard ->
- * bearer -> MCP servlet (the method check precedes authentication; a 405 leaks nothing). The filters cover
+ * 5.3), or, with {@link Builder#stateful}, the SDK's stateful Streamable HTTP servlet with GET, POST and DELETE
+ * and sessions bound to the principal (SPEC 4, v3b). Requests run on virtual threads. Filter chain order on /mcp:
+ * Host -> Origin -> method guard (POST only, or GET/POST/DELETE) -> token -> principal context -> session binding (stateful only) ->
+ * MCP servlet (the method check precedes authentication; a 405 leaks nothing). The filters cover
  * /mcp only, not /health. The optional health servlet is mounted at /health. Everything else is 404.
  */
 public final class HttpLocalServer {
@@ -63,10 +69,20 @@ public final class HttpLocalServer {
     private final HttpServlet healthServlet;
     private final Map<String, HttpServlet> openServlets;
     private final WebSurface webSurface;
+    private final boolean stateful;
+    private final List<McpServerFeatures.SyncToolSpecification> statefulTools;
+    private final Function<HttpServletRequest, String> sessionPrincipal;
+    private final Consumer<String> sessionEndListener;
+    private final int maxSessionsPerPrincipal;
+    private final int maxSessions;
+    private final Duration sessionIdle;
+    private final Clock sessionClock;
+    private final Duration requestTimeout;
 
     private Server server;
     private ServerConnector connector;
-    private McpStatelessSyncServer mcpServer;
+    private Runnable mcpServerCloser = () -> { };
+    private SessionRegistry sessionRegistry;
 
     private HttpLocalServer(Builder b) {
         this.bind = b.bind;
@@ -85,6 +101,15 @@ public final class HttpLocalServer {
         this.healthServlet = b.healthServlet;
         this.openServlets = Map.copyOf(b.openServlets);
         this.webSurface = b.webSurface;
+        this.stateful = b.stateful;
+        this.statefulTools = List.copyOf(b.statefulTools);
+        this.sessionPrincipal = b.sessionPrincipal;
+        this.sessionEndListener = b.sessionEndListener;
+        this.maxSessionsPerPrincipal = b.maxSessionsPerPrincipal;
+        this.maxSessions = b.maxSessions;
+        this.sessionIdle = b.sessionIdle;
+        this.sessionClock = b.sessionClock;
+        this.requestTimeout = b.requestTimeout;
     }
 
     public static Builder builder() {
@@ -108,6 +133,16 @@ public final class HttpLocalServer {
         private HttpServlet healthServlet;
         private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
         private WebSurface webSurface;
+        private boolean stateful;
+        private final List<McpServerFeatures.SyncToolSpecification> statefulTools = new ArrayList<>();
+        private Function<HttpServletRequest, String> sessionPrincipal =
+                req -> req.getAttribute(BearerTokenFilter.ACCOUNT_ATTRIBUTE) != null ? "local" : null;
+        private Consumer<String> sessionEndListener = id -> { };
+        private int maxSessionsPerPrincipal = SessionRegistry.MAX_PER_PRINCIPAL;
+        private int maxSessions = SessionRegistry.MAX_PER_REPLICA;
+        private Duration sessionIdle = SessionRegistry.IDLE_TIMEOUT;
+        private Clock sessionClock = Clock.systemUTC();
+        private Duration requestTimeout = Duration.ofMinutes(11);
 
         public Builder bind(String bind) {
             this.bind = Objects.requireNonNull(bind, "bind");
@@ -203,6 +238,57 @@ public final class HttpLocalServer {
             return this;
         }
 
+        /**
+         * Serves the stateful Streamable HTTP transport (needed for server-to-client requests such as the purge
+         * confirmation) instead of the stateless one; tools then come from {@link #statefulTool}.
+         */
+        public Builder stateful(boolean stateful) {
+            this.stateful = stateful;
+            return this;
+        }
+
+        public Builder statefulTool(McpServerFeatures.SyncToolSpecification spec) {
+            this.statefulTools.add(Objects.requireNonNull(spec, "spec"));
+            return this;
+        }
+
+        /**
+         * The validated principal of a request (stateful mode): sessions are bound to it. It must identify the
+         * authenticated principal, never the tenant: {@code http-local} has the one fixed principal (the default,
+         * present only for an authenticated request); {@code http-public} must return issuer and subject of the
+         * validated JWT principal ({@code JwtTokenFilter.PRINCIPAL_ATTRIBUTE}), because unknown principals share one
+         * sentinel tenant and would otherwise share sessions and the caps. Null means "none": 404.
+         */
+        public Builder sessionPrincipal(Function<HttpServletRequest, String> principal) {
+            this.sessionPrincipal = Objects.requireNonNull(principal, "principal");
+            return this;
+        }
+
+        /** Called with the id of every session that ends (eviction, idle, DELETE); must not block. */
+        public Builder sessionEndListener(Consumer<String> listener) {
+            this.sessionEndListener = Objects.requireNonNull(listener, "listener");
+            return this;
+        }
+
+        /** Defaults: 10 per principal, 1000 per replica, 30 minutes idle (SPEC 4, v3b); settable for tests. */
+        public Builder sessionLimits(int perPrincipal, int perReplica, Duration idle) {
+            this.maxSessionsPerPrincipal = perPrincipal;
+            this.maxSessions = perReplica;
+            this.sessionIdle = Objects.requireNonNull(idle, "idle");
+            return this;
+        }
+
+        public Builder sessionClock(Clock clock) {
+            this.sessionClock = Objects.requireNonNull(clock, "clock");
+            return this;
+        }
+
+        /** Server-to-client request timeout of the stateful server; above the longest tool deadline (SPEC 5.5). */
+        public Builder requestTimeout(Duration timeout) {
+            this.requestTimeout = Objects.requireNonNull(timeout, "timeout");
+            return this;
+        }
+
         public HttpLocalServer build() {
             // http-public wiring invariant (SPEC 5.3): a token filter that validates JWTs without the filter that
             // maps the principal to a tenant would leave the AccountContext unset, and the reverse is meaningless
@@ -223,12 +309,30 @@ public final class HttpLocalServer {
             LOG.warn("http.bind {} is not a loopback address (http.allowNonLoopbackBind=true); restrict exposure at "
                     + "the host/network level", bind);
         }
-        HttpServletStatelessServerTransport transport = HttpServletStatelessServerTransport.builder()
-                .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
-                .contextExtractor(contextExtractor::apply).build();
-        // validateToolInputs(false): input validation is ours (ValidatingToolHandler), the SDK's error shape differs.
-        mcpServer = McpServer.sync(transport).serverInfo(serverName, serverVersion).immediateExecution(true)
-                .validateToolInputs(false).tools(tools).build();
+        HttpServlet mcpServlet;
+        SessionBindingFilter sessionFilter = null;
+        if (stateful) {
+            HttpServletStreamableServerTransportProvider transport = HttpServletStreamableServerTransportProvider
+                    .builder().jsonMapper(jsonMapper).mcpEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
+                    .contextExtractor(contextExtractor::apply).build();
+            // No immediateExecution: a tool call waits for the user's answer, which arrives as another request.
+            var mcp = McpServer.sync(transport).serverInfo(serverName, serverVersion).validateToolInputs(false)
+                    .requestTimeout(requestTimeout).tools(statefulTools).build();
+            mcpServerCloser = mcp::closeGracefully;
+            mcpServlet = transport;
+            sessionRegistry = new SessionRegistry(maxSessionsPerPrincipal, maxSessions, sessionIdle, sessionClock,
+                    sessionEndListener);
+            sessionFilter = new SessionBindingFilter(sessionRegistry, sessionPrincipal);
+        } else {
+            HttpServletStatelessServerTransport transport = HttpServletStatelessServerTransport.builder()
+                    .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
+                    .contextExtractor(contextExtractor::apply).build();
+            // validateToolInputs(false): input validation is ours (ValidatingToolHandler), the SDK's error shape differs.
+            var mcp = McpServer.sync(transport).serverInfo(serverName, serverVersion).immediateExecution(true)
+                    .validateToolInputs(false).tools(tools).build();
+            mcpServerCloser = mcp::closeGracefully;
+            mcpServlet = transport;
+        }
 
         QueuedThreadPool pool = new QueuedThreadPool();
         pool.setName("http-local");
@@ -243,10 +347,11 @@ public final class HttpLocalServer {
         ctx.setContextPath("/");
         addFilter(ctx, hostFilter, MCP_PATH);
         addFilter(ctx, originFilter, MCP_PATH);
-        addFilter(ctx, new PostOnlyFilter(), MCP_PATH);
+        addFilter(ctx, stateful ? AllowedMethodsFilter.STREAMABLE : AllowedMethodsFilter.POST_ONLY, MCP_PATH);
         addFilter(ctx, bearerFilter, MCP_PATH);
         addFilter(ctx, principalFilter, MCP_PATH);
-        ctx.addServlet(new ServletHolder(transport), MCP_PATH);
+        addFilter(ctx, sessionFilter, MCP_PATH); // after the token and the principal: the session binds to the principal
+        ctx.addServlet(new ServletHolder(mcpServlet), MCP_PATH);
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
         }
@@ -283,9 +388,12 @@ public final class HttpLocalServer {
         if (server != null) {
             server.stop();
         }
-        if (mcpServer != null) {
-            mcpServer.closeGracefully();
-        }
+        mcpServerCloser.run();
+    }
+
+    /** Number of live sessions (stateful mode; 0 otherwise). */
+    int sessionCount() {
+        return sessionRegistry == null ? 0 : sessionRegistry.size();
     }
 
     /** The actually bound port (useful with port 0). */
