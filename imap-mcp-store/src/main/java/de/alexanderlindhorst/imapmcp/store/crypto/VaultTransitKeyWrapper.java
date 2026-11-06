@@ -115,6 +115,36 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         }
     }
 
+    /**
+     * Startup check (SPEC 5.7): the configured Transit key exists and has type {@code aes256-gcm96}
+     * ({@code GET <transitMount>/keys/<keyName>}); encrypt would otherwise create a missing key silently.
+     *
+     * @throws IllegalStateException with a fixed text if the key is missing or of another type
+     * @throws KeyServiceUnavailableException if Vault cannot be asked
+     */
+    public void checkKey() {
+        String path = "/v1/" + config.transitMount() + "/keys/" + config.keyName();
+        String used = currentToken();
+        Response r = send("GET", path, null, used);
+        if (r.status == 401 || r.status == 403) {
+            used = refreshedToken(used);
+            r = send("GET", path, null, used);
+        }
+        if (r.status == 404) {
+            throw new IllegalStateException("the Transit key was not found (check kms.vault.transitMount and kms.vault.keyName)");
+        }
+        if (r.status < 200 || r.status > 299) {
+            throw unavailable("http_" + r.status);
+        }
+        String type = r.json().path("data").path("type").asString("");
+        if (type.isEmpty()) {
+            throw unavailable("bad_response");
+        }
+        if (!"aes256-gcm96".equals(type)) {
+            throw new IllegalStateException("the Transit key has the wrong type (aes256-gcm96 is required)");
+        }
+    }
+
     // ---- HTTP ----
 
     private JsonNode post(String path, String body) {
@@ -166,9 +196,17 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
     }
 
     private Response send(String path, String body, String clientToken) {
+        return send("POST", path, body, clientToken);
+    }
+
+    private Response send(String method, String path, String body, String clientToken) {
         HttpRequest.Builder rb = HttpRequest.newBuilder(base.resolve(path)).timeout(config.requestTimeout())
-                .header("Content-Type", "application/json").header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body));
+                .header("Accept", "application/json");
+        if (body == null) {
+            rb.method(method, HttpRequest.BodyPublishers.noBody());
+        } else {
+            rb.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body));
+        }
         if (clientToken != null) {
             rb.header("X-Vault-Token", clientToken);
         }

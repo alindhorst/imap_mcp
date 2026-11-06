@@ -120,10 +120,106 @@ class PublicConfigLoaderTest {
         assertThat(bind(VALID.replace("5432/imapmcp", "5432/imapmcp?sslmode=require")).db().url()).contains("sslmode");
     }
 
+    static final String VAULT_KMS = """
+            kms:
+              provider: vault
+              vault:
+                address: https://vault.example.com:8200
+                keyName: imap-mcp
+                auth:
+                  method: token
+                  token: env:VAULT_TOKEN
+            """;
+
+    private static String withVault(String kmsBlock) {
+        return without("kms") + kmsBlock;
+    }
+
     @Test
-    void theVaultProviderIsRefusedInThisBuild() {
+    void aVaultConfigurationBindsWithTheSpecDefaults() {
+        PublicConfig c = bind(withVault(VAULT_KMS));
+        assertThat(c.kms().provider()).isEqualTo("vault");
+        assertThat(c.kms().keks()).isEmpty();
+        var v = c.kms().vault();
+        assertThat(v.address().toString()).isEqualTo("https://vault.example.com:8200");
+        assertThat(v.transitMount()).isEqualTo("transit");
+        assertThat(v.keyName()).isEqualTo("imap-mcp");
+        assertThat(v.requestTimeout()).isEqualTo(Duration.ofSeconds(5));
+        assertThat(v.allowInsecureHttp()).isFalse();
+        assertThat(v.caCert()).isNull();
+        assertThat(v.auth()).isInstanceOf(de.alexanderlindhorst.imapmcp.store.crypto.VaultAuth.Token.class);
+    }
+
+    @Test
+    void anApproleConfigurationBindsWithTheDefaultPath() {
+        String yaml = withVault(VAULT_KMS.replace("method: token\n      token: env:VAULT_TOKEN",
+                "method: approle\n      roleId: env:RID\n      secretId: env:SID"));
+        var auth = (de.alexanderlindhorst.imapmcp.store.crypto.VaultAuth.AppRole) bind(yaml).kms().vault().auth();
+        assertThat(auth.path()).isEqualTo("approle");
+    }
+
+    static Stream<Arguments> vaultFailures() {
+        return Stream.of(
+                Arguments.of(VAULT_KMS.replace("    address: https://vault.example.com:8200\n", ""), "kms.vault.address: required"),
+                Arguments.of(VAULT_KMS.replace("https://vault", "http://vault"), "kms.vault.address"),
+                Arguments.of(VAULT_KMS.replace("    keyName: imap-mcp\n", ""), "kms.vault.keyName: required"),
+                Arguments.of(VAULT_KMS.replace("keyName: imap-mcp", "keyName: bad key!"), "kms.vault.keyName"),
+                Arguments.of(VAULT_KMS.replace("    auth:\n      method: token\n      token: env:VAULT_TOKEN\n", ""),
+                        "kms.vault.auth"),
+                Arguments.of(VAULT_KMS.replace("method: token", "method: ldap"), "kms.vault.auth.method: must be one of"),
+                Arguments.of(VAULT_KMS.replace("      token: env:VAULT_TOKEN\n", ""), "kms.vault.auth.token: required"),
+                Arguments.of(VAULT_KMS.replace("token: env:VAULT_TOKEN", "token: literal"), "kms.vault.auth.token: must be a secret reference"),
+                Arguments.of(VAULT_KMS.replace("method: token", "method: approle").replace("token: env:VAULT_TOKEN",
+                        "roleId: env:R\n      secretId: env:S\n      token: env:T"),
+                        "kms.vault.auth.token: not allowed with kms.vault.auth.method approle"),
+                Arguments.of(VAULT_KMS.replace("method: token\n      token: env:VAULT_TOKEN", "method: approle\n      roleId: env:R"),
+                        "kms.vault.auth.secretId: required"),
+                Arguments.of(VAULT_KMS.replace("method: token", "method: token\n      roleId: env:R"),
+                        "kms.vault.auth.roleId: not allowed with kms.vault.auth.method token"),
+                Arguments.of(VAULT_KMS.replace("method: token\n      token: env:VAULT_TOKEN",
+                        "method: approle\n      path: bad path!\n      roleId: env:R\n      secretId: env:S"),
+                        "kms.vault.auth.path"),
+                Arguments.of(VAULT_KMS.replace("keyName: imap-mcp", "keyName: imap-mcp\n    bogus: 1"),
+                        "kms.vault.bogus: unknown key"),
+                Arguments.of(VAULT_KMS.replace("method: token", "method: token\n      bogus: 1"),
+                        "kms.vault.auth.bogus: unknown key"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("vaultFailures")
+    void vaultStartupFailuresNameTheKeyPath(String kms, String expected) {
+        assertThatThrownBy(() -> bind(withVault(kms))).isInstanceOf(ConfigException.class)
+                .hasMessageContaining(expected);
+    }
+
+    @Test
+    void vaultConfigurationMessagesNeverEchoValues() {
+        for (String bad : new String[] {"https://user:HUNTER2@vault.example.com", "https://vault.example.com/path?x=HUNTER2",
+                "ht!tp://HUNTER2", "https://va ult.example.com/HUNTER2"}) {
+            assertThatThrownBy(() -> bind(withVault(VAULT_KMS.replace("https://vault.example.com:8200", bad))))
+                    .isInstanceOf(ConfigException.class).hasMessageContaining("kms.vault.address")
+                    .hasMessageNotContaining("HUNTER2");
+        }
+    }
+
+    @Test
+    void vaultTimeoutCaCertAndInsecureHttpAreChecked() {
+        assertThat(bind(withVault(VAULT_KMS.replace("keyName: imap-mcp", "keyName: imap-mcp\n    requestTimeout: 10s\n"
+                + "    transitMount: secrets/transit"))).kms().vault().requestTimeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThatThrownBy(() -> bind(withVault(VAULT_KMS.replace("keyName: imap-mcp",
+                "keyName: imap-mcp\n    requestTimeout: 31s")))).hasMessageContaining("kms.vault.requestTimeout");
+        assertThatThrownBy(() -> bind(withVault(VAULT_KMS.replace("keyName: imap-mcp",
+                "keyName: imap-mcp\n    caCert: relative/ca.pem")))).hasMessageContaining("kms.vault.caCert");
+        assertThat(bind(withVault(VAULT_KMS.replace("https://vault", "http://vault").replace("keyName: imap-mcp",
+                "keyName: imap-mcp\n    allowInsecureHttp: true"))).kms().vault().allowInsecureHttp()).isTrue();
+    }
+
+    @Test
+    void localKeysAreNotAllowedWithVaultAndTheVaultSectionIsRequired() {
         assertThatThrownBy(() -> bind(VALID.replace("provider: local", "provider: vault")))
-                .isInstanceOf(ConfigException.class).hasMessageContaining("kms.");
+                .isInstanceOf(ConfigException.class).hasMessageContaining("kms.local: not allowed with kms.provider vault");
+        assertThatThrownBy(() -> bind(withVault("kms:\n  provider: vault\n")))
+                .hasMessageContaining("kms.vault: required");
     }
 
     @Test

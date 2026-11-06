@@ -139,6 +139,59 @@ class VaultTransitKeyWrapperTest {
         return new VaultAuth.Token(new SecretRef("env:VAULT_TOKEN"));
     }
 
+    // ---- startup key check ----
+
+    private static final Reply KEY_OK = new Reply(200, "{\"data\":{\"name\":\"imap-mcp\",\"type\":\"aes256-gcm96\"}}");
+
+    @Test
+    void checkKeyReadsTheKeyEndpointWithTheTokenAndNoBody() throws Exception {
+        script.add(KEY_OK);
+        wrapper(config(startHttp(), token()), refs("t-1")).checkKey();
+        Seen s = seen.get(0);
+        assertThat(s.method()).isEqualTo("GET");
+        assertThat(s.path()).isEqualTo("/v1/transit/keys/imap-mcp");
+        assertThat(s.token()).isEqualTo("t-1");
+        assertThat(s.body()).isEmpty();
+        assertThat(seen).hasSize(1);
+    }
+
+    @Test
+    void checkKeyRefusesAKeyOfAnotherTypeAndAMissingKey() throws Exception {
+        script.add(new Reply(200, "{\"data\":{\"type\":\"rsa-4096\"}}"));
+        VaultTransitKeyWrapper w = wrapper(config(startHttp(), token()), refs("t"));
+        assertThatThrownBy(w::checkKey).isInstanceOf(IllegalStateException.class).hasMessageContaining("type")
+                .hasMessageNotContaining("rsa-4096");
+        script.clear();
+        calls.set(0);
+        script.add(new Reply(404, "{\"errors\":[]}"));
+        assertThatThrownBy(w::checkKey).isInstanceOf(IllegalStateException.class).hasMessageContaining("not found");
+    }
+
+    @Test
+    void checkKeyReauthenticatesOnceAndThenIsUnavailable() throws Exception {
+        script.add(new Reply(403, "{\"errors\":[\"denied\"]}"));
+        script.add(KEY_OK);
+        wrapper(config(startHttp(), token()), refs("old", "new")).checkKey();
+        assertThat(seen).extracting(Seen::token).containsExactly("old", "new");
+
+        seen.clear();
+        calls.set(0);
+        script.clear();
+        script.add(new Reply(403, "{\"errors\":[\"denied\"]}"));
+        assertThatThrownBy(() -> wrapper(config(URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                token()), refs("a", "b")).checkKey()).isInstanceOf(KeyServiceUnavailableException.class);
+    }
+
+    @Test
+    void checkKeyOnAnUnreachableVaultOrAMalformedAnswerIsUnavailableWithoutResponseText() throws Exception {
+        script.add(new Reply(200, "{\"data\":{}}"));
+        VaultTransitKeyWrapper w = wrapper(config(startHttp(), token()), refs("t"));
+        assertThatThrownBy(w::checkKey).isInstanceOf(KeyServiceUnavailableException.class);
+        server.stop(0);
+        assertThatThrownBy(w::checkKey).isInstanceOf(KeyServiceUnavailableException.class)
+                .hasMessageNotContaining("127.0.0.1");
+    }
+
     // ---- request shape ----
 
     @Test

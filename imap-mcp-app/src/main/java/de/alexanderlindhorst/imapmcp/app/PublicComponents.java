@@ -47,7 +47,10 @@ import de.alexanderlindhorst.imapmcp.core.tools.write.MoveMessagesTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.SetFlagsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.write.WritePreflight;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialCipher;
+import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceUnavailableException;
+import de.alexanderlindhorst.imapmcp.store.crypto.KeyWrapper;
 import de.alexanderlindhorst.imapmcp.store.crypto.LocalKeyWrapper;
+import de.alexanderlindhorst.imapmcp.store.crypto.VaultTransitKeyWrapper;
 import de.alexanderlindhorst.imapmcp.store.jdbc.AuditRetention;
 import de.alexanderlindhorst.imapmcp.store.jdbc.Database;
 import de.alexanderlindhorst.imapmcp.store.jdbc.DbConfig;
@@ -168,7 +171,7 @@ public final class PublicComponents implements AutoCloseable {
                 probe, config.secrets().keyringTimeout());
         KeyRing keys = buildKeyRing(config.security(), refs, paths);
         LogIds logIds = new LogIds(keys);
-        LocalKeyWrapper wrapper = buildLocalKeyWrapper(config.kms(), refs, paths);
+        KeyWrapper wrapper = buildKeyWrapper(config.kms(), refs, clock, paths);
         SsrfPolicy ssrf;
         try {
             ssrf = SsrfPolicy.of(config.ssrf().allowedHosts(), config.ssrf().allowAnyPublicHost(),
@@ -311,6 +314,35 @@ public final class PublicComponents implements AutoCloseable {
         } finally {
             masters.values().forEach(k -> Arrays.fill(k, (byte) 0));
         }
+    }
+
+    /** SPEC 5.7 (D6): the configured provider; the Vault key is checked before anything else starts. */
+    private static KeyWrapper buildKeyWrapper(PublicConfig.Kms kms, RefCredentialStore refs, Clock clock,
+            AppPaths paths) {
+        if (!"vault".equals(kms.provider())) {
+            return buildLocalKeyWrapper(kms, refs, paths);
+        }
+        if (kms.vault().allowInsecureHttp() && "http".equals(kms.vault().address().getScheme())) {
+            LOG.warn("kms.vault.allowInsecureHttp is true: the Vault token and the wrapped keys travel unencrypted. "
+                    + "For tests only.");
+        }
+        VaultTransitKeyWrapper wrapper;
+        try {
+            wrapper = new VaultTransitKeyWrapper(kms.vault(), refs::resolve, clock);
+        } catch (IllegalArgumentException e) { // the CA bundle (fixed text without a path or content)
+            throw new AppStartupException("kms.vault.caCert in " + paths.configFile()
+                    + ": cannot be read as a PEM certificate bundle", e);
+        }
+        try {
+            wrapper.checkKey();
+        } catch (IllegalStateException e) { // missing key or wrong type: fixed texts
+            throw new AppStartupException("kms.vault.keyName in " + paths.configFile() + ": " + e.getMessage(), e);
+        } catch (KeyServiceUnavailableException e) { // the failure class only: no response text, no token
+            throw new AppStartupException("kms.vault in " + paths.configFile() + ": Vault is not available ("
+                    + e.failureClass() + ")", e);
+        }
+        LOG.info("Vault Transit key '{}' checked (aes256-gcm96)", kms.vault().keyName());
+        return wrapper;
     }
 
     /** The {@code local} provider (D6): every KEK is resolved once; a WARN is logged; fingerprints per id. */
