@@ -306,12 +306,16 @@ class VaultTransitIT {
         ListAppender<ILoggingEvent> logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
+        // the test classpath configures root OFF (core's logback-test.xml): do not rely on another test's level
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.DEBUG);
         try {
             assertThatThrownBy(() -> s.resolve(t, a)).isInstanceOf(CredentialDecryptException.class);
             assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.ERROR).hasSize(1);
             assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).isEmpty();
         } finally {
             logger.detachAppender(logs);
+            logger.setLevel(previous);
         }
     }
 
@@ -328,6 +332,8 @@ class VaultTransitIT {
         ListAppender<ILoggingEvent> logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.DEBUG); // the test classpath configures root OFF
         AtomicInteger connections = new AtomicInteger();
         try (ServerSocket mailServer = new ServerSocket(0, 5, java.net.InetAddress.getLoopbackAddress());
                 ImapSessionFactory sessions = new ImapSessionFactory(new ImapTimeouts(Duration.ofSeconds(2),
@@ -360,6 +366,7 @@ class VaultTransitIT {
             acceptor.join(2000);
         } finally {
             logger.detachAppender(logs);
+            logger.setLevel(previous);
         }
 
         assertThat(connections).hasValue(0);

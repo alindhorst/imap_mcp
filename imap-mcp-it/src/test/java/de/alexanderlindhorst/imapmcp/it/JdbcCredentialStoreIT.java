@@ -68,6 +68,7 @@ class JdbcCredentialStoreIT {
     };
     private ListAppender<ILoggingEvent> logs;
     private Logger logger;
+    private Level previousLevel;
     private JdbcCredentialStore store;
     private LogIds logIds;
     private CredentialCipher cipher;
@@ -101,12 +102,14 @@ class JdbcCredentialStoreIT {
         logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
-        logger.setLevel(Level.DEBUG);
+        previousLevel = logger.getLevel();
+        logger.setLevel(Level.DEBUG); // the test classpath configures root OFF
     }
 
     @AfterEach
     void detach() {
         logger.detachAppender(logs);
+        logger.setLevel(previousLevel); // leaves nothing behind for the ITs that run after this one
     }
 
     private static TenantId newTenant() throws SQLException {
