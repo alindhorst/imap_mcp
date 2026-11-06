@@ -171,6 +171,9 @@ public final class PublicComponents implements AutoCloseable {
                 probe, config.secrets().keyringTimeout());
         KeyRing keys = buildKeyRing(config.security(), refs, paths);
         LogIds logIds = new LogIds(keys);
+        // the linking surface's web client secret must resolve at startup (fail fast); it is read again per use
+        AppComponents.wipe(AppComponents.resolveChars(refs, config.oauth().webClientSecret(), "oauth.webClientSecret",
+                paths));
         KeyWrapper wrapper = buildKeyWrapper(config.kms(), refs, clock, paths);
         SsrfPolicy ssrf;
         try {
