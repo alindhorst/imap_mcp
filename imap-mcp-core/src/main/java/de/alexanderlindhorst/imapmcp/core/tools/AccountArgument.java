@@ -30,6 +30,11 @@ public final class AccountArgument {
     private final AccountRepository accounts;
 
     public AccountArgument(AccountRepository accounts) {
+        this(accounts, null);
+    }
+
+    /** {@code linkUrl}: the linking surface's account page for re-link errors (null in the single-tenant modes). */
+    public AccountArgument(AccountRepository accounts, String linkUrl) {
         this.accounts = Objects.requireNonNull(accounts, "accounts");
     }
 

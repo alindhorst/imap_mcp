@@ -85,6 +85,12 @@ public final class ListAccountsTool implements ToolHandler {
 
     public ListAccountsTool(AccountRepository accounts, CapabilityCache capabilities, StoreLeases leases,
             int parallelism) {
+        this(accounts, capabilities, leases, parallelism, null);
+    }
+
+    /** {@code linkUrl}: the linking surface's account page (http-public), null in the single-tenant modes. */
+    public ListAccountsTool(AccountRepository accounts, CapabilityCache capabilities, StoreLeases leases,
+            int parallelism, String linkUrl) {
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.leases = Objects.requireNonNull(leases, "leases");

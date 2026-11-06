@@ -32,7 +32,8 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         PURGE_DISABLED("purge_disabled"),
         PURGE_SCOPE("purge_scope"),
         CONFIRMATION_UNAVAILABLE("confirmation_unavailable"),
-        NOT_CONFIRMED("not_confirmed");
+        NOT_CONFIRMED("not_confirmed"),
+        INSUFFICIENT_SCOPE("insufficient_scope");
 
         private final String wire;
 
@@ -274,6 +275,16 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
         return of(ErrorCode.PERMISSION_DENIED, "The change is not permitted. Do not retry.",
                 "The change was refused by configuration or by the server; do not retry. See details.reason.",
                 detail("reason", reason.wire), requestId);
+    }
+
+    /** The token lacks the write scope (SPEC 4, 5.3, D3); {@code scope} is the missing one. Not retryable. */
+    public static ToolError insufficientScope(String scope, String requestId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** The account needs a re-link (SPEC 5.3); {@code linkUrl} may be null. No connection was attempted. */
+    public static ToolError relinkRequired(String linkUrl, String requestId) {
+        throw new UnsupportedOperationException();
     }
 
     /** purge_messages on an account without {@code allowPurge} (SPEC 4 check order step 3). */
