@@ -122,6 +122,8 @@ class LocalKeyWrapperTest {
         ListAppender<ILoggingEvent> logs = new ListAppender<>();
         logs.start();
         logger.addAppender(logs);
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.DEBUG);
         Map<String, String> material = Map.of("env:K1", b64(key(1)), "env:K2", b64(key(2)));
         try {
             LocalKeyWrapper old = LocalKeyWrapper.fromReference("local-1", new SecretRef("env:K1"),
@@ -139,6 +141,7 @@ class LocalKeyWrapperTest {
             assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).hasSize(1);
         } finally {
             logger.detachAppender(logs);
+            logger.setLevel(previous);
         }
     }
 

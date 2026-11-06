@@ -88,7 +88,8 @@ public final class CredentialCipher {
         }
     }
 
-    /** Decrypts into a {@link Secret} that the caller closes (wipes); {@link CredentialDecryptException} on any failure. */
+    /** Decrypts into a {@link Secret} that the caller closes (wipes); {@link CredentialDecryptException} on any integrity failure,
+     * {@link KeyServiceUnavailableException} when the key service is down. */
     public Secret open(String tenantId, String accountId, int version, Sealed sealed) {
         byte[] dek = null;
         byte[] plain = null;
@@ -99,6 +100,8 @@ public final class CredentialCipher {
             c.updateAAD(aad(tenantId, accountId, version));
             plain = c.doFinal(sealed.ciphertext());
             return new Secret(toChars(plain));
+        } catch (KeyServiceUnavailableException e) {
+            throw e; // availability, not integrity
         } catch (GeneralSecurityException | RuntimeException e) {
             throw new CredentialDecryptException();
         } finally {

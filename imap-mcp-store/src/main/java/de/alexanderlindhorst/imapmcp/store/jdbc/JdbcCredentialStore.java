@@ -73,8 +73,8 @@ public final class JdbcCredentialStore implements CredentialStore {
             throw new IllegalStateException("credential lookup failed");
         }
         try {
-            return Optional.of(cipher.open(tenant.value(), account.value(), version, sealed));
-        } catch (CredentialDecryptException e) {
+            return Optional.of(cipher.open(tenantUuid.toString(), account.value(), version, sealed));
+        } catch (CredentialDecryptException e) { // KeyServiceUnavailableException passes: availability, not integrity
             LOG.error("credential decrypt failed tenant={} account={}", logIds.tenant(tenant.value()),
                     logIds.account(account.value()));
             metrics.operation(tenant, METRIC_TOOL, METRIC_OP_DECRYPT_FAILURE, Duration.ZERO);
@@ -91,7 +91,7 @@ public final class JdbcCredentialStore implements CredentialStore {
         if (tenantUuid == null) {
             throw new IllegalArgumentException("tenant id is not a UUID");
         }
-        CredentialCipher.Sealed sealed = cipher.seal(tenant.value(), account.value(), version, secret);
+        CredentialCipher.Sealed sealed = cipher.seal(tenantUuid.toString(), account.value(), version, secret);
         try (Connection c = dataSource.getConnection();
                 PreparedStatement ps = c.prepareStatement(
                         "INSERT INTO credential (tenant_id, account_id, version, kind, kek_id, wrapped_dek, nonce,"
@@ -109,6 +109,7 @@ public final class JdbcCredentialStore implements CredentialStore {
         }
     }
 
+    /** The AAD uses the canonical (lower-case) UUID text, the same form the row's key is compared in. */
     private static UUID parse(TenantId tenant) {
         try {
             return UUID.fromString(tenant.value());

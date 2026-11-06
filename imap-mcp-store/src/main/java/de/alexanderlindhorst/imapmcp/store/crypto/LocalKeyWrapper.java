@@ -38,35 +38,68 @@ public final class LocalKeyWrapper implements KeyWrapper {
         Objects.requireNonNull(currentKekId, "currentKekId");
         Map<String, byte[]> copy = new HashMap<>();
         keks.forEach((id, key) -> {
+            if (id == null || id.isBlank()) {
+                throw new IllegalArgumentException("local KEK id must not be blank");
+            }
             if (key == null || key.length != KEK_LEN) {
                 throw new IllegalArgumentException("local KEK must be " + KEK_LEN + " bytes");
             }
+            copy.forEach((otherId, other) -> {
+                if (Arrays.equals(other, key)) {
+                    throw new IllegalArgumentException("the same local KEK is configured under two ids");
+                }
+            });
             copy.put(id, key.clone());
         });
         if (!copy.containsKey(currentKekId)) {
             throw new IllegalArgumentException("current KEK id is not among the configured KEKs");
         }
         this.currentKekId = currentKekId;
-        this.keks = copy;
+        this.keks = Map.copyOf(copy);
+    }
+
+    /** One KEK by reference; see {@link #fromReferences}. */
+    public static LocalKeyWrapper fromReference(String kekId, SecretRef ref, Function<SecretRef, Secret> resolver) {
+        return fromReferences(kekId, Map.of(kekId, ref), resolver);
     }
 
     /**
-     * Reads the KEK (base64url, no padding, 32 bytes) through {@code resolver} and logs the startup WARN. Message
-     * texts never contain the reference or the key.
+     * Reads every KEK (base64url without padding, 32 bytes) through {@code resolver}, so a rotation also works by
+     * reference, and logs one startup WARN. Resolver failures propagate unchanged; format errors say only that the
+     * KEK is malformed, never the reference or the value.
      */
-    public static LocalKeyWrapper fromReference(String kekId, SecretRef ref, Function<SecretRef, Secret> resolver) {
-        byte[] key;
-        try (Secret secret = resolver.apply(ref)) {
-            key = Base64.getUrlDecoder().decode(new String(secret.chars()));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("local KEK is not base64url");
-        }
+    public static LocalKeyWrapper fromReferences(String currentKekId, Map<String, SecretRef> refs,
+            Function<SecretRef, Secret> resolver) {
+        Map<String, byte[]> keys = new HashMap<>();
         try {
+            refs.forEach((id, ref) -> keys.put(id, readKek(ref, resolver)));
             LOG.warn("Credentials are wrapped with a local KEK read from a reference. Use it for self-hosting and"
                     + " tests; a KMS or Vault Transit is the production choice.");
-            return new LocalKeyWrapper(kekId, Map.of(kekId, key));
+            return new LocalKeyWrapper(currentKekId, keys);
         } finally {
-            Arrays.fill(key, (byte) 0);
+            keys.values().forEach(k -> Arrays.fill(k, (byte) 0));
+        }
+    }
+
+    private static byte[] readKek(SecretRef ref, Function<SecretRef, Secret> resolver) {
+        byte[] ascii;
+        try (Secret secret = resolver.apply(ref)) {
+            char[] chars = secret.chars();
+            ascii = new byte[chars.length];
+            for (int i = 0; i < chars.length; i++) {
+                if (chars[i] > 0x7e || chars[i] == '=') { // no padding, ASCII only
+                    Arrays.fill(ascii, (byte) 0);
+                    throw new IllegalArgumentException("local KEK is not base64url without padding");
+                }
+                ascii[i] = (byte) chars[i];
+            }
+        }
+        try {
+            return Base64.getUrlDecoder().decode(ascii);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("local KEK is not base64url without padding");
+        } finally {
+            Arrays.fill(ascii, (byte) 0);
         }
     }
 
