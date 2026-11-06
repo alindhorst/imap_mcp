@@ -37,6 +37,8 @@ class ImapErrorMapperTest {
     static Stream<Arguments> rows() {
         return Stream.of(
                 Arguments.of(new AuthenticationFailedException(MARKER), ErrorCode.AUTH_FAILED, true),
+                Arguments.of(new de.alexanderlindhorst.imapmcp.core.imap.pool.AccountNeedsRelinkException(),
+                        ErrorCode.AUTH_FAILED, false),
                 Arguments.of(new FolderClosedException(null, MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),
                 Arguments.of(new StoreClosedException(null, MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),
                 Arguments.of(new ConnectException(MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),

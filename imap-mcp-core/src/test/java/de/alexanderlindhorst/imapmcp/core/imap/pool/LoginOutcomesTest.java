@@ -115,9 +115,23 @@ class LoginOutcomesTest {
     void anAccountThatNeedsARelinkIsNeverConnectedNorReported() throws Exception {
         MailAccount a = account(greenMail.getImaps().getPort(), "u", MailAccount.Status.NEEDS_RELINK, 2);
         PoolKey key = borrowWith(a, "right");
-        assertThatThrownBy(() -> pool.borrow(key)).isInstanceOf(MessagingException.class);
+        assertThatThrownBy(() -> pool.borrow(key)).isInstanceOf(AccountNeedsRelinkException.class);
         assertThat(events).isEmpty();
-        assertThat(greenMail.getManagers().getImapHostManager()).isNotNull();
+    }
+
+    @Test
+    void anAccountFlippedBetweenResolveAndBorrowIsTheRelinkExceptionNotAnInternalError() throws Exception {
+        MailAccount active = account(greenMail.getImaps().getPort(), "u", MailAccount.Status.ACTIVE, 2);
+        MailAccount flipped = account(greenMail.getImaps().getPort(), "u", MailAccount.Status.NEEDS_RELINK, 3);
+        PoolKey key = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, active, "acc_x"));
+        assertThat(key.active()).isTrue(); // the call resolved an active account
+        pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("right".toCharArray())),
+                new CapabilityCache(), k -> flipped, PoolSettings.DEFAULTS,
+                de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder.NOOP, outcomes);
+        assertThatThrownBy(() -> pool.borrow(key)).satisfies(e -> assertThat(
+                de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper.map(e, "r1").error().details())
+                .containsEntry("reason", "relink_required"));
+        assertThat(events).isEmpty();
     }
 
     @Test
@@ -151,6 +165,11 @@ class LoginOutcomesTest {
                 new AuthenticationFailedException("[UNAVAILABLE] Temporary authentication failure"))).isFalse();
         assertThat(StorePoolFactory.isCountedRefusal(
                 new AuthenticationFailedException("[unavailable] try later"))).isFalse();
+        assertThat(StorePoolFactory.isCountedRefusal(
+                new AuthenticationFailedException("  [Unavailable] try later"))).isFalse();
+        // only a response code at the start counts as [UNAVAILABLE]; the words elsewhere in the text do not
+        assertThat(StorePoolFactory.isCountedRefusal(
+                new AuthenticationFailedException("Invalid credentials, [UNAVAILABLE] is not a code here"))).isTrue();
         assertThat(StorePoolFactory.isCountedRefusal(
                 new MessagingException("wrapped", new AuthenticationFailedException("NO bad")))).isTrue();
         assertThat(StorePoolFactory.isCountedRefusal(new MessagingException("connection failure"))).isFalse();

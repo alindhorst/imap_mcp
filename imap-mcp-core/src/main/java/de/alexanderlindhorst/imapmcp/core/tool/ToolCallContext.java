@@ -28,6 +28,7 @@ public final class ToolCallContext {
     private volatile boolean mutationStarted; // written under this lock only
     private volatile boolean authFailureCounted;
     private volatile ElicitationChannel elicitation;
+    private volatile String linkUrl;
 
     public ToolCallContext(AccountContext accountContext, String requestId) {
         this.accountContext = Objects.requireNonNull(accountContext, "accountContext");
@@ -38,6 +39,15 @@ public final class ToolCallContext {
     public ToolCallContext(AccountContext accountContext, String requestId, Instant deadline) {
         this(accountContext, requestId);
         this.deadline = Objects.requireNonNull(deadline, "deadline");
+    }
+
+    /** The linking surface's page for re-link errors, set by the account resolution (http-public). */
+    public void bindLinkUrl(String linkUrl) {
+    }
+
+    /** The bound link URL, or null. */
+    public String linkUrl() {
+        return linkUrl;
     }
 
     /** Set once by the stateful adapter before the handler runs; the stateless one leaves it empty. */
