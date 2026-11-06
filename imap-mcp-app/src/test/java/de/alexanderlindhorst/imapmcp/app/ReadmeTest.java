@@ -62,6 +62,19 @@ class ReadmeTest {
         }
     }
 
+    /** B3: the http-public example (a block tagged {@code yaml http-public}) loads with the real http-public loader. */
+    @Test
+    void theHttpPublicExampleLoadsWithThePublicConfigLoader(@TempDir Path dir) throws IOException {
+        Matcher m = Pattern.compile("(?s)```yaml http-public\\R(.*?)```").matcher(readme);
+        assertThat(m.find()).as("README has an http-public YAML example").isTrue();
+        Path f = dir.resolve("public.yaml");
+        Files.writeString(f, m.group(1));
+        var c = de.alexanderlindhorst.imapmcp.app.config.PublicConfigLoader.load(f, Map.of());
+        assertThat(c.kms().provider()).isEqualTo("local");
+        assertThat(readme).contains("--mode stdio|http-local|http-public").contains("Mcp-Session-Id")
+                .doesNotContain("Not implemented; planned for phase v3");
+    }
+
     /**
      * #143 / #62: every {@code keyring:} reference in the README passes the store's own validation (form, length,
      * control characters) and is looked up under exactly the service and account the README's storing commands use.
