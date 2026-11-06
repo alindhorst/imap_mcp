@@ -84,7 +84,7 @@ class AuditLogIT {
     }
 
     private record Row(long id, String tenantId, String accountId, String requestId, String eventType, String tool,
-            byte[] refHash, Short refKeyId, String itemStatus, String errorCode, String confirmation, String result,
+            byte[] refHash, Integer refKeyId, String itemStatus, String errorCode, String confirmation, String result,
             Instant completedAt, Instant occurredAt) {
     }
 
@@ -97,7 +97,7 @@ class AuditLogIT {
                 ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 out.add(new Row(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
-                        rs.getString(6), rs.getBytes(7), (Short) rs.getObject(8), rs.getString(9), rs.getString(10),
+                        rs.getString(6), rs.getBytes(7), (Integer) rs.getObject(8), rs.getString(9), rs.getString(10),
                         rs.getString(11), rs.getString(12),
                         rs.getTimestamp(13) == null ? null : rs.getTimestamp(13).toInstant(),
                         rs.getTimestamp(14).toInstant()));
@@ -125,7 +125,7 @@ class AuditLogIT {
             assertThat(r.completedAt()).isNull();
             AuditReferences.Ref expected = refs.ref(tenant, account, items.get(i));
             assertThat(r.refHash()).isEqualTo(expected.hash());
-            assertThat(r.refKeyId().intValue()).isEqualTo(2);
+            assertThat(r.refKeyId()).isEqualTo(2);
         }
     }
 
