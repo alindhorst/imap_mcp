@@ -68,28 +68,28 @@ public final class AccountsServlet extends HttpServlet {
                 if (read) {
                     home(req, res);
                 } else {
-                    methodNotAllowed(res);
+                    methodNotAllowed(res, "GET, HEAD");
                 }
             }
             case WebSessionFilter.LOGIN_PATH -> {
                 if ("GET".equals(req.getMethod())) { // HEAD must not start a login
                     login(req, res);
                 } else {
-                    methodNotAllowed(res);
+                    methodNotAllowed(res, "GET");
                 }
             }
             case WebSessionFilter.CALLBACK_PATH -> {
                 if ("GET".equals(req.getMethod())) {
                     callback(req, res);
                 } else {
-                    methodNotAllowed(res);
+                    methodNotAllowed(res, "GET");
                 }
             }
             case WebConfig.BASE_PATH + "/logout" -> {
                 if ("POST".equals(req.getMethod())) {
                     logout(req, res);
                 } else {
-                    methodNotAllowed(res);
+                    methodNotAllowed(res, "POST");
                 }
             }
             case WebConfig.BASE_PATH + "/link" -> accountPage(req, res, (s) -> pages.linkForm(s, res),
@@ -123,12 +123,12 @@ public final class AccountsServlet extends HttpServlet {
         } else if ("POST".equals(req.getMethod())) {
             post.run(session);
         } else {
-            methodNotAllowed(res);
+            methodNotAllowed(res, "GET, POST");
         }
     }
 
-    private static void methodNotAllowed(HttpServletResponse res) throws IOException {
-        res.setHeader("Allow", "GET");
+    private static void methodNotAllowed(HttpServletResponse res, String allow) throws IOException {
+        res.setHeader("Allow", allow);
         writePage(res, HttpServletResponse.SC_METHOD_NOT_ALLOWED, "Method not allowed", "<p>Method not allowed.</p>");
     }
 

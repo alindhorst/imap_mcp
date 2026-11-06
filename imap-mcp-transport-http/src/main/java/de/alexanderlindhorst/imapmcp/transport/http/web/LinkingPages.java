@@ -198,9 +198,11 @@ final class LinkingPages {
         int status;
         String message;
         switch (o) {
-            case OK -> {
-                status = HttpServletResponse.SC_OK;
-                message = success;
+            case OK -> { // post/redirect/get: a reload of the result page cannot repeat the action
+                res.setStatus(HttpServletResponse.SC_SEE_OTHER);
+                res.setHeader("Location", ACCOUNTS);
+                res.setContentLength(0);
+                return;
             }
             case INVALID_INPUT -> {
                 status = HttpServletResponse.SC_BAD_REQUEST;
@@ -245,7 +247,7 @@ final class LinkingPages {
                 message = "This did not work right now. Nothing was changed; try again later.";
             }
         }
-        AccountsServlet.writePage(res, status, o == LinkOutcome.OK ? "Done" : "Not done",
+        AccountsServlet.writePage(res, status, "Not done",
                 "<p>" + Html.escape(message) + "</p><p><a href=\"" + ACCOUNTS + "\">Back to your accounts</a></p>");
     }
 

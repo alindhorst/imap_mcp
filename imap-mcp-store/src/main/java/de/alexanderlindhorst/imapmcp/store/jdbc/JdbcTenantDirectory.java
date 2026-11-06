@@ -99,29 +99,15 @@ public final class JdbcTenantDirectory {
 
     /**
      * Creates the tenant row if absent and returns it (first login with the required role, D2). Idempotent and
-     * safe against concurrent callers.
+     * safe against concurrent callers. Every creation is audited: this is {@link #create(String, String, String)}
+     * with a fresh request id.
      */
     public TenantInfo create(String issuer, String subject) {
-        if (!withinBounds(issuer, subject)) {
-            throw new IllegalArgumentException("issuer or subject out of bounds");
-        }
-        try (Connection c = dataSource.getConnection();
-                PreparedStatement ps = c.prepareStatement(
-                        "INSERT INTO tenant (id, issuer, subject) VALUES (?, ?, ?)"
-                                + " ON CONFLICT (issuer, subject) DO NOTHING")) {
-            ps.setObject(1, UUID.randomUUID());
-            ps.setString(2, issuer);
-            ps.setString(3, subject);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("tenant insert failed (sqlstate " + e.getSQLState() + ")");
-        }
-        invalidate(issuer, subject);
-        return load(issuer, subject).orElseThrow();
+        return create(issuer, subject, UUID.randomUUID().toString());
     }
 
     /**
-     * As {@link #create(String, String)}, and when this call inserts the row it also writes the
+     * Creates the tenant row if absent; when this call inserts the row it also writes the
      * {@code tenant_created} audit row in the same transaction; if that write fails nothing is created and
      * {@link AuditWriteException} is thrown.
      */

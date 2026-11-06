@@ -23,6 +23,9 @@ public final class ImapLoginProbe implements LoginProbe {
 
     public ImapLoginProbe(ImapSessionFactory sessions) {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
+        if (!sessions.pinsSockets()) { // fail closed: a probe is an outgoing connection to a user-chosen host
+            throw new IllegalArgumentException("the link probe needs a session factory with the pinned socket factory");
+        }
     }
 
     @Override

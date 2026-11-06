@@ -90,7 +90,7 @@ public final class AccountLinking implements AccountLinker {
         String username = username(request.username());
         if (label == null || username == null || !validPassword(password) || request.security() == null
                 || request.host() == null || request.host().isBlank()
-                || request.port() < 1 || request.port() > 65535 || (request.readOnly() && request.allowPurge())) {
+                || request.port() < 1 || request.port() > 65535 || (request.readOnly() && request.allowPurge())) { // SPEC 4 (v3b tools): allow_purge needs read_only false
             return refuse("link", tenant, null, requestId, LinkOutcome.INVALID_INPUT, "invalid_input");
         }
         LinkOutcome purge = purgeGate(request.allowPurge(), authTime);
@@ -137,11 +137,17 @@ public final class AccountLinking implements AccountLinker {
         if (!validPassword(password)) {
             return refuse("relink", tenant, id, requestId, LinkOutcome.INVALID_INPUT, "invalid_input");
         }
+        MailAccount a = account.get().account();
+        String host;
+        try { // the policy may have changed since the account was linked: check again before spending a probe
+            host = policy.checkEndpoint(a.host(), a.port(), a.security());
+        } catch (HostRejectedException e) {
+            return refuse("relink", tenant, id, requestId, LinkOutcome.HOST_REFUSED, "refused_host");
+        }
         if (!limiter.tryAcquire(tenant)) {
             return refuse("relink", tenant, id, requestId, LinkOutcome.RATE_LIMITED, "refused_rate_limit");
         }
-        MailAccount a = account.get().account();
-        LinkOutcome probed = probe(a.host(), a.port(), a.security(), a.username(), password);
+        LinkOutcome probed = probe(host, a.port(), a.security(), a.username(), password);
         if (probed != LinkOutcome.OK) {
             return refuse("relink", tenant, id, requestId, probed, probeResult(probed));
         }
