@@ -228,8 +228,11 @@ public final class HttpLocalServer {
         }
 
         /**
-         * The validated principal of a request (stateful mode): sessions are bound to it. {@code http-local}: the
-         * fixed principal (the default); {@code http-public}: issuer and subject. Null means "none": 404.
+         * The validated principal of a request (stateful mode): sessions are bound to it. It must identify the
+         * authenticated principal, never the tenant: {@code http-local} has the one fixed principal (the default,
+         * present only for an authenticated request); {@code http-public} must return issuer and subject of the
+         * validated JWT principal ({@code JwtTokenFilter.PRINCIPAL_ATTRIBUTE}), because unknown principals share one
+         * sentinel tenant and would otherwise share sessions and the caps. Null means "none": 404.
          */
         public Builder sessionPrincipal(Function<HttpServletRequest, String> principal) {
             this.sessionPrincipal = Objects.requireNonNull(principal, "principal");
