@@ -102,10 +102,10 @@ public final class DownloadAttachmentTool implements ToolHandler {
                     + "so.",
             INPUT_SCHEMA, OUTPUT_SCHEMA, new ToolHints(true, false, true, true));
 
-    /** @param maxBytes {@code tools.download.inlineMaxBytes}; @param concurrency {@code tools.download.inlineConcurrency} */
-    public record InlineSettings(long maxBytes, int concurrency) {
+    /** @param maxBytes {@code tools.download.inlineMaxBytes}, 1 byte to 10 MiB */
+    public record InlineSettings(long maxBytes) {
         public InlineSettings {
-            if (maxBytes < 1 || concurrency < 1) {
+            if (maxBytes < 1) {
                 throw new IllegalArgumentException("inline settings");
             }
         }
@@ -113,12 +113,12 @@ public final class DownloadAttachmentTool implements ToolHandler {
 
     /** The {@code http-public} form: no directory, no file, no mutation mark (SPEC 4 v3b). */
     public static DownloadAttachmentTool embedded(AccountArgument accounts, MessageLocator locator, StoreLeases leases,
-            InlineSettings settings) {
-        return embedded(accounts, locator, leases, settings, (step, ctx) -> { });
+            InlineSettings settings, InlineLimiter limiter) {
+        return embedded(accounts, locator, leases, settings, limiter, (step, ctx) -> { });
     }
 
     static DownloadAttachmentTool embedded(AccountArgument accounts, MessageLocator locator, StoreLeases leases,
-            InlineSettings settings, StepHook hook) {
+            InlineSettings settings, InlineLimiter limiter, StepHook hook) {
         return new DownloadAttachmentTool(accounts, locator, leases, null, Objects.requireNonNull(settings, "settings"),
                 hook);
     }
@@ -157,7 +157,7 @@ public final class DownloadAttachmentTool implements ToolHandler {
         this.leases = Objects.requireNonNull(leases, "leases");
         this.directory = directory;
         this.inline = inline;
-        this.limiter = inline == null ? null : new InlineLimiter(inline.concurrency());
+        this.limiter = inline == null ? null : new InlineLimiter(4);
         this.hook = Objects.requireNonNull(hook, "hook");
     }
 
@@ -251,7 +251,7 @@ public final class DownloadAttachmentTool implements ToolHandler {
             return fail(ToolError.tooLarge(estimate, cap, rid), start);
         }
         if (inline != null) {
-            return embed(ctx, folder, seq, accountHandle, messageHandle, part, leaf, encoding, start);
+            return embed(ctx, folder, seq, accountHandle, messageHandle, part, leaf, encoding, estimate, start);
         }
         try {
             if (directory.usableSpace() < estimate) {
@@ -287,11 +287,11 @@ public final class DownloadAttachmentTool implements ToolHandler {
 
     /** Embedded form: decode into memory, then answer with the structure and one resource block; nothing is mutated. */
     private ToolOutcome embed(ToolCallContext ctx, org.eclipse.angus.mail.imap.IMAPFolder folder, int seq,
-            String accountHandle, String messageHandle, String part, PartResolver.Leaf leaf, String encoding, long start)
+            String accountHandle, String messageHandle, String part, PartResolver.Leaf leaf, String encoding, long estimate, long start)
             throws MessagingException {
         String rid = ctx.requestId();
         hook.at(Step.AFTER_SIZE_CHECK, ctx);
-        MemorySink sink = new MemorySink(inline.maxBytes());
+        MemorySink sink = new MemorySink(inline.maxBytes(), estimate);
         try {
             PartFetcher.stream(folder, seq, part, encoding, sink);
         } catch (PartFetcher.BlockMissingException e) {
@@ -320,7 +320,7 @@ public final class DownloadAttachmentTool implements ToolHandler {
         out.put("untrusted", untrusted);
         WriteCallLog.download(NAME, sink.size(), false, elapsed(start));
         return new ToolOutcome.Success(out, List.of(new ToolOutcome.EmbeddedResource(
-                "imap-mcp://attachment/" + sha, EmbeddedMime.of(leaf.contentType()), sink.bytes())));
+                "imap-mcp://attachment/" + sha, EmbeddedMime.of(leaf.contentType()), sink.base64())));
     }
 
     private static ToolError storage(DownloadStorageException e, String rid) {

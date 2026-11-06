@@ -19,6 +19,8 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
+import de.alexanderlindhorst.imapmcp.core.download.InlineLimiter;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageRef;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
@@ -33,6 +35,7 @@ import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
@@ -76,7 +79,7 @@ class EmbeddedDownloadAttachmentToolTest {
     DownloadAttachmentTool tool;
     String acctHandle;
     long maxBytes = 5 * 1024 * 1024;
-    int concurrency = 4;
+    InlineLimiter limiter = new InlineLimiter(4);
 
     @BeforeEach
     void setUp() throws Exception {
@@ -106,9 +109,9 @@ class EmbeddedDownloadAttachmentToolTest {
         StoreLeases leases = new StoreLeases(pool, Duration.ofSeconds(10));
         AccountArgument accounts = new AccountArgument(repo);
         MessageLocator locator = new MessageLocator(handles);
-        DownloadAttachmentTool.InlineSettings settings = new DownloadAttachmentTool.InlineSettings(maxBytes, concurrency);
-        tool = hook == null ? DownloadAttachmentTool.embedded(accounts, locator, leases, settings)
-                : DownloadAttachmentTool.embedded(accounts, locator, leases, settings, hook);
+        DownloadAttachmentTool.InlineSettings settings = new DownloadAttachmentTool.InlineSettings(maxBytes);
+        tool = hook == null ? DownloadAttachmentTool.embedded(accounts, locator, leases, settings, limiter)
+                : DownloadAttachmentTool.embedded(accounts, locator, leases, settings, limiter, hook);
         acctHandle = InMemoryAccountRepository.handle(A, ACCT);
     }
 
@@ -187,7 +190,7 @@ class EmbeddedDownloadAttachmentToolTest {
         ToolOutcome.EmbeddedResource res = (ToolOutcome.EmbeddedResource) extra.get(0);
         assertThat(res.uri()).isEqualTo("imap-mcp://attachment/" + sha(data));
         assertThat(res.mimeType()).isEqualTo("application/pdf");
-        assertThat(res.data()).isEqualTo(data);
+        assertThat(java.util.Base64.getDecoder().decode(res.base64())).isEqualTo(data);
         assertThat(ctx.mutationStarted()).as("nothing is written, so no mutation mark").isFalse();
     }
 
@@ -244,7 +247,7 @@ class EmbeddedDownloadAttachmentToolTest {
 
     @Test
     void moreThanTheConcurrencyCapIsServerBusyAndThePermitIsFreedAfterwards() throws Exception {
-        concurrency = 1;
+        limiter = new InlineLimiter(1);
         CountDownLatch inside = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         build((step, ctx) -> {
@@ -277,7 +280,7 @@ class EmbeddedDownloadAttachmentToolTest {
 
     @Test
     void thePermitIsFreedAlsoWhenTheCallFails() throws Exception {
-        concurrency = 1;
+        limiter = new InlineLimiter(1);
         build(null);
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
         for (int i = 0; i < 3; i++) {
@@ -351,18 +354,113 @@ class EmbeddedDownloadAttachmentToolTest {
     }
 
     @Test
-    void noContentIsLogged() throws Exception {
+    void noContentIsLoggedAtDebugEither() throws Exception {
         Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        Level before = root.getLevel();
         ListAppender<ILoggingEvent> all = new ListAppender<>();
         all.start();
+        root.setLevel(Level.DEBUG);
         root.addAppender(all);
+        byte[] data = random(100);
+        String b64 = java.util.Base64.getEncoder().encodeToString(data);
+        String digest = sha(data);
         try {
-            String h = deliver(mixed(attachment("application/pdf", "SECRET-NAME.pdf", random(100))));
+            String h = deliver(mixed(attachment("application/x-canary-type", "SECRET-NAME.bin", data)));
             ok(call(h, "2"));
+            error(call(h, "9"));
         } finally {
             root.detachAppender(all);
+            root.setLevel(before);
         }
         assertThat(all.list.stream().filter(e -> !e.getLoggerName().equals("imapmcp.imap.trace"))
-                .map(ILoggingEvent::getFormattedMessage)).noneMatch(m -> m.contains("SECRET-NAME"));
+                .map(ILoggingEvent::getFormattedMessage)).isNotEmpty()
+                .noneMatch(m -> m.contains("SECRET-NAME") || m.contains("x-canary-type") || m.contains(digest)
+                        || m.contains(b64.substring(0, 24)) || m.contains("imap-mcp://attachment/"));
+    }
+
+    @Test
+    void oneLimiterIsSharedByEveryToolInstanceOfTheReplica() throws Exception {
+        limiter = new InlineLimiter(1);
+        build(null);
+        DownloadAttachmentTool first = tool;
+        build(null); // a second tool instance, same limiter
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        assertThat(limiter.tryAcquire()).isTrue(); // the replica-wide permit is taken elsewhere
+        try {
+            assertThat(error(call(h, "2"))).containsEntry("code", "SERVER_BUSY");
+            assertThat(error(first.handle(new ToolCallContext(new AccountContext(A), "rid"),
+                    Map.of("account", acctHandle, "message", h, "part", "2")))).containsEntry("code", "SERVER_BUSY");
+        } finally {
+            limiter.release();
+        }
+        assertThat(ok(call(h, "2"))).containsEntry("delivery", "embedded");
+    }
+
+    @Test
+    void theInlineCapIsOneByteToTenMebibytes() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> new DownloadAttachmentTool.InlineSettings(1));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> new DownloadAttachmentTool.InlineSettings(10L * 1024 * 1024));
+        for (long bad : new long[] {0, -1, 10L * 1024 * 1024 + 1, Long.MAX_VALUE}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new DownloadAttachmentTool.InlineSettings(bad))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    /** A deadline between the size check and the fetch is a plain TIMEOUT (nothing was written, no mutation mark). */
+    @Test
+    void aDeadlineAtTheSizeCheckIsAPlainTimeoutAndTheCallFreesItsPermit() throws Exception {
+        limiter = new InlineLimiter(1);
+        CountDownLatch inside = new CountDownLatch(1);
+        build((step, ctx) -> {
+            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
+                inside.countDown();
+                try {
+                    Thread.sleep(30_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        ToolExecutor executor = new ToolExecutor(Duration.ofMillis(800), new LogIds(KEYS));
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(A), "rid");
+
+        ToolOutcome o = executor.wrap(DownloadAttachmentTool.EMBEDDED_DEFINITION, tool)
+                .handle(ctx, Map.of("account", acctHandle, "message", h, "part", "2"));
+
+        assertThat(inside.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(error(o)).containsEntry("code", "TIMEOUT");
+        assertThat(ctx.mutationStarted()).isFalse();
+        long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        boolean free = false;
+        while (!free && System.nanoTime() < end) {
+            free = limiter.tryAcquire();
+            if (free) {
+                limiter.release();
+            } else {
+                Thread.sleep(25);
+            }
+        }
+        assertThat(free).as("the permit is released when the abandoned worker unwinds").isTrue();
+    }
+
+    @Test
+    void aCancelAtTheSizeCheckIsAPlainTimeout() throws Exception {
+        limiter = new InlineLimiter(1);
+        build((step, ctx) -> {
+            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
+                ctx.cancel();
+            }
+        });
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        ToolExecutor executor = new ToolExecutor(Duration.ofSeconds(20), new LogIds(KEYS));
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(A), "rid");
+
+        ToolOutcome o = executor.wrap(DownloadAttachmentTool.EMBEDDED_DEFINITION, tool)
+                .handle(ctx, Map.of("account", acctHandle, "message", h, "part", "2"));
+
+        assertThat(error(o)).containsEntry("code", "TIMEOUT");
+        assertThat(ctx.mutationStarted()).isFalse();
     }
 }

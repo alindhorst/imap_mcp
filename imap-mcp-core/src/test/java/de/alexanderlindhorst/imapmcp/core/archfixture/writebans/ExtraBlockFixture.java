@@ -8,7 +8,7 @@ import java.util.Map;
 public final class ExtraBlockFixture {
 
     public ToolOutcome produce() {
-        ToolOutcome.ContentBlock block = new ToolOutcome.EmbeddedResource("u", "text/plain", new byte[0]);
+        ToolOutcome.ContentBlock block = new ToolOutcome.EmbeddedResource("u", "text/plain", "");
         return new ToolOutcome.Success(Map.of(), List.of(block));
     }
 }
