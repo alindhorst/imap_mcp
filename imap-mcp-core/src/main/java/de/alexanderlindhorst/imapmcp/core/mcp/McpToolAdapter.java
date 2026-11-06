@@ -19,6 +19,8 @@ import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.IOException;
 import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -36,6 +38,9 @@ import org.slf4j.LoggerFactory;
  * {@code structuredContent} plus exactly one text block with the same JSON, as MCP clients that ignore
  * structured output still need the text. The SDK validates a success result's structuredContent against
  * the tool's outputSchema and turns a mismatch into an error result.
+ *
+ * <p>A success may carry extra content blocks ({@link ToolOutcome.Success#extraBlocks()}, only from
+ * {@code download_attachment}) after that text block.
  *
  * <p>Error results ({@code isError} true) carry the {@code {"error":{...}}} object only in that one text
  * block and no {@code structuredContent}: the outputSchema describes the success shape, and MCP clients that
@@ -126,20 +131,31 @@ public final class McpToolAdapter {
             outcome = new ToolOutcome.Failure(ToolError.internalError(requestId));
         }
         return switch (outcome) {
-            case ToolOutcome.Success s -> result(s.structured(), false, requestId);
-            case ToolOutcome.Failure f -> result(f.error().toMap(), true, requestId);
+            case ToolOutcome.Success s -> result(s.structured(), s.extraBlocks(), false, requestId);
+            case ToolOutcome.Failure f -> result(f.error().toMap(), List.of(), true, requestId);
         };
     }
 
-    private McpSchema.CallToolResult result(Object structured, boolean isError, String requestId) {
+    private McpSchema.CallToolResult result(Object structured, List<ToolOutcome.ContentBlock> extra, boolean isError,
+            String requestId) {
         String json;
         try {
             json = mapper.writeValueAsString(structured);
         } catch (IOException | RuntimeException e) {
             LOG.error("result serialisation failed, request_id={}, cause={}", requestId, e.getClass().getName());
-            return result(ToolError.internalError(requestId).toMap(), true, requestId);
+            return result(ToolError.internalError(requestId).toMap(), List.of(), true, requestId);
         }
         McpSchema.CallToolResult.Builder b = McpSchema.CallToolResult.builder().addTextContent(json).isError(isError);
-        return isError ? b.build() : b.structuredContent(structured).build();
+        if (isError) {
+            return b.build();
+        }
+        for (ToolOutcome.ContentBlock block : extra) { // after the text block, which stays exactly the structuredContent
+            b.addContent(switch (block) {
+                case ToolOutcome.EmbeddedResource r -> new McpSchema.EmbeddedResource(null,
+                        new McpSchema.BlobResourceContents(r.uri(), r.mimeType(),
+                                Base64.getEncoder().encodeToString(r.data()), null));
+            });
+        }
+        return b.structuredContent(structured).build();
     }
 }
