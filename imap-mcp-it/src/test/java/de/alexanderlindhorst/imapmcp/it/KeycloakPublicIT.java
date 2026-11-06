@@ -61,9 +61,9 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class KeycloakPublicIT {
 
-    private static final String REALM = KeycloakResourceFixture.REALM;
-    private static final String ISSUER = KeycloakResourceFixture.issuer(REALM);
-    private static final String RESOURCE = KeycloakResourceFixture.RESOURCE;
+    private static final String REALM = KeycloakFixture.PUBLIC_REALM;
+    private static final String ISSUER = KeycloakFixture.publicIssuer(REALM);
+    private static final String RESOURCE = KeycloakFixture.RESOURCE;
     private static final String METADATA_URL = "https://mail.example.com/.well-known/oauth-protected-resource/mcp";
     private static final String MISSING = "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA_URL + "\"";
     private static final String INVALID = "Bearer realm=\"imap-mcp\", error=\"invalid_token\", resource_metadata=\""
@@ -75,7 +75,7 @@ class KeycloakPublicIT {
     @TempDir
     static Path dir;
 
-    private static KeycloakResourceFixture keycloak;
+    private static KeycloakFixture keycloak;
     private static PostgresFixture postgres;
     private static GreenMailFixture mail;
     private static PublicComponents components;
@@ -93,7 +93,7 @@ class KeycloakPublicIT {
 
     @BeforeAll
     static void start() throws Exception {
-        keycloak = new KeycloakResourceFixture();
+        keycloak = new KeycloakFixture();
         postgres = new PostgresFixture();
         // Both at once: Keycloak needs a long time to start, and a container created after that wait used to hit a
         // Docker socket connection that the engine had closed meanwhile ("broken pipe").
@@ -279,7 +279,7 @@ class KeycloakPublicIT {
     @Test
     void aTokenForAnotherAudienceIsRejected() throws Exception {
         String wrong = tokenFor(REALM, "connector-wrong-aud", "alice", READ_SCOPE);
-        assertThat(claimsOf(wrong).get("aud").toString()).contains(KeycloakResourceFixture.WRONG_AUDIENCE)
+        assertThat(claimsOf(wrong).get("aud").toString()).contains(KeycloakFixture.WRONG_AUDIENCE)
                 .doesNotContain(RESOURCE);
         HttpResponse<String> r = rpc(wrong, LIST_ACCOUNTS);
         assertThat(r.statusCode()).isEqualTo(401);
@@ -288,8 +288,8 @@ class KeycloakPublicIT {
 
     @Test
     void aTokenOfAnotherIssuerIsRejectedEvenForTheSameUserNameAndAudience() throws Exception {
-        String other = tokenFor(KeycloakResourceFixture.OTHER_REALM, "connector", "alice", READ_SCOPE);
-        assertThat(claimsOf(other).get("iss")).isEqualTo(KeycloakResourceFixture.issuer("imap-other"));
+        String other = tokenFor(KeycloakFixture.OTHER_REALM, "connector", "alice", READ_SCOPE);
+        assertThat(claimsOf(other).get("iss")).isEqualTo(KeycloakFixture.publicIssuer("imap-other"));
         assertThat(claimsOf(other).get("aud").toString()).contains(RESOURCE);
         HttpResponse<String> r = rpc(other, LIST_ACCOUNTS);
         assertThat(r.statusCode()).isEqualTo(401);
