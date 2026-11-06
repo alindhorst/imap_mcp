@@ -25,6 +25,7 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.Admission;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.PoolSettings;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -200,7 +201,7 @@ class ListAccountsToolTest {
         ListAccountsTool t = withLinkUrl("https://mail.example.com/accounts");
         List<Map<String, Object>> accounts = list(A, t);
         assertThat(accounts).singleElement().satisfies(m -> assertThat(m).containsEntry("status", "needs_relink"));
-        assertThat(trace.list).isEmpty();
+        assertThat(WireTrace.lines(trace)).isEmpty();
     }
 
     @SuppressWarnings("unchecked")

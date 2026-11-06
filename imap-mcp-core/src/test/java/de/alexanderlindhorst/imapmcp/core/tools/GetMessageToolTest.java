@@ -27,6 +27,7 @@ import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import de.alexanderlindhorst.imapmcp.core.tool.ValidatingToolHandler;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
+import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -223,7 +224,7 @@ class GetMessageToolTest {
     }
 
     List<String> traceLines() {
-        return new ArrayList<>(trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+        return new ArrayList<>(WireTrace.lines(trace));
     }
 
     // AC1
@@ -543,6 +544,24 @@ class GetMessageToolTest {
         Map<String, Object> props = (Map<String, Object>) GetMessageTool.definition(100000).inputSchema()
                 .get("properties");
         assertThat(((Map<String, Object>) props.get("offset")).get("maximum")).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    /**
+     * The trace logger is global: a Store of another test (an abandoned worker unwinding, a leaked Store) that is
+     * cleaned up while this test's appender is attached logs "DEBUG IMAPS: IMAPStore cleanup, not connected" into
+     * it. Such session chatter is not IMAP traffic and must not count as I/O of this test.
+     */
+    @Test
+    void debugChatterOfAnotherStoreIsNotWireTraffic() throws Exception {
+        try (ImapSessionFactory other = new ImapSessionFactory(ImapTimeouts.DEFAULTS, true)) {
+            Session session = other.sessionFor(
+                    de.alexanderlindhorst.imapmcp.core.account.PoolKey.of(new AccountContext(B),
+                            new de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount(B, account(ACCT), "acc_x")),
+                    account(ACCT));
+            session.getStore("imaps").close(); // an unconnected Store: "IMAPStore cleanup, not connected"
+        }
+        assertThat(trace.list).as("the stray line did reach the shared trace logger").isNotEmpty();
+        assertThat(traceLines()).isEmpty();
     }
 
     @Test
