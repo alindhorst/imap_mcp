@@ -55,6 +55,7 @@ public final class HttpLocalServer {
     private final Filter hostFilter;
     private final Filter originFilter;
     private final Filter bearerFilter;
+    private final Filter principalFilter;
     private final HttpServlet healthServlet;
     private final Map<String, HttpServlet> openServlets;
 
@@ -75,6 +76,7 @@ public final class HttpLocalServer {
         this.hostFilter = b.hostFilter;
         this.originFilter = b.originFilter;
         this.bearerFilter = b.bearerFilter;
+        this.principalFilter = b.principalFilter;
         this.healthServlet = b.healthServlet;
         this.openServlets = Map.copyOf(b.openServlets);
     }
@@ -96,6 +98,7 @@ public final class HttpLocalServer {
         private Filter hostFilter;
         private Filter originFilter;
         private Filter bearerFilter;
+        private Filter principalFilter;
         private HttpServlet healthServlet;
         private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
 
@@ -161,6 +164,12 @@ public final class HttpLocalServer {
             return this;
         }
 
+        /** http-public: runs after the token check, maps the validated principal to the AccountContext. */
+        public Builder principalFilter(Filter filter) {
+            this.principalFilter = filter;
+            return this;
+        }
+
         public Builder healthServlet(HttpServlet servlet) {
             this.healthServlet = servlet;
             return this;
@@ -212,6 +221,7 @@ public final class HttpLocalServer {
         addFilter(ctx, originFilter, MCP_PATH);
         addFilter(ctx, new PostOnlyFilter(), MCP_PATH);
         addFilter(ctx, bearerFilter, MCP_PATH);
+        addFilter(ctx, principalFilter, MCP_PATH);
         ctx.addServlet(new ServletHolder(transport), MCP_PATH);
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
