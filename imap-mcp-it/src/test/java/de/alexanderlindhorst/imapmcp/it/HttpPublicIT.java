@@ -237,6 +237,39 @@ class HttpPublicIT {
     }
 
     @Test
+    void anAccountThatNeedsARelinkIsRefusedBeforeAnyIoWithTheLinkUrl() throws Exception {
+        ResolvedAccount stale = accounts.create(tenantAlice, new NewAccount("Stale", null, "127.0.0.1", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "alice", false, false));
+        try (var c = components.database().dataSource().getConnection();
+                var ps = c.prepareStatement("UPDATE mailbox_account SET status = 'needs_relink', revision = revision + 1"
+                        + " WHERE tenant_id = ?::uuid AND id = ?")) {
+            ps.setString(1, tenantAlice.value());
+            ps.setString(2, stale.account().id().value());
+            ps.executeUpdate();
+        }
+        HttpResponse<String> r = callTool(token("alice", "imap-mcp:read"), "list_folders",
+                "{\"account\":\"" + stale.handle() + "\"}");
+        assertThat(r.body()).contains("relink_required").contains("https://mail.example.com/accounts");
+        HttpResponse<String> list = callTool(token("alice", "imap-mcp:read"), "list_accounts", "{}");
+        assertThat(list.body()).contains("needs_relink");
+    }
+
+    @Test
+    void aWriteCallOfAResolvedAccountLeavesAnItemLessAuditRowWithoutContent() throws Exception {
+        String args = "{\"account\":\"" + aliceAccount.handle() + "\",\"name\":\"CanaryFolderName\"}";
+        HttpResponse<String> r = callTool(token("alice", "imap-mcp:read imap-mcp:write"), "create_folder", args);
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tool = 'create_folder' AND ref_hash IS NULL"
+                + " AND result = 'failed' AND tenant_id = '" + tenantAlice.value() + "'::uuid")).isPositive();
+        try (var c = components.database().dataSource().getConnection();
+                var st = c.createStatement();
+                var rs = st.executeQuery("SELECT string_agg(row_to_json(a)::text, '') FROM audit_event a")) {
+            rs.next();
+            assertThat(rs.getString(1)).doesNotContain("CanaryFolderName").doesNotContain(aliceAccount.handle());
+        }
+    }
+
+    @Test
     void metadataAndHealthAreServedWithoutAToken() throws Exception {
         for (String path : List.of("/.well-known/oauth-protected-resource",
                 "/.well-known/oauth-protected-resource/mcp", "/health")) {
