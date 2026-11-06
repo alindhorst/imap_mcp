@@ -35,6 +35,12 @@ final class McpElicitationChannel implements ElicitationChannel {
     }
 
     @Override
+    public String sessionId() {
+        String id = exchange.sessionId();
+        return id == null ? STDIO_SESSION : id;
+    }
+
+    @Override
     public Answer ask(String message, Map<String, Object> requestedSchema, Duration window)
             throws InterruptedException {
         McpSchema.ElicitRequest request = McpSchema.ElicitFormRequest.builder(message, requestedSchema).build();
