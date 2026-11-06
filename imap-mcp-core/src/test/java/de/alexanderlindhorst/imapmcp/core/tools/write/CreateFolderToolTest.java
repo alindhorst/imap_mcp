@@ -26,6 +26,8 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
+import de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolOutcome;
 import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
@@ -51,16 +53,24 @@ class CreateFolderToolTest {
     /** The real command class, with a record of what was sent. */
     static final class CountingCommands implements CreateFolderTool.Commands {
         final List<String> sent = new ArrayList<>();
+        /** When set, every command is also appended here (to interleave with the audit log's events). */
+        List<String> order;
 
         @Override
         public UidCommands.Result create(ImapLease lease, String name) throws MessagingException {
             sent.add("CREATE");
+            if (order != null) {
+                order.add("CREATE");
+            }
             return UidCommands.create(lease, name);
         }
 
         @Override
         public UidCommands.Result subscribe(ImapLease lease, String name) throws MessagingException {
             sent.add("SUBSCRIBE");
+            if (order != null) {
+                order.add("SUBSCRIBE");
+            }
             return UidCommands.subscribe(lease, name);
         }
     }
@@ -130,6 +140,14 @@ class CreateFolderToolTest {
         return tool.handle(new ToolCallContext(new AccountContext(tenant), "rid"), args);
     }
 
+    ToolOutcome callAudited(RecordingAuditLog audit, String name) {
+        commands.order = audit.order;
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(A), "rid-audit");
+        ctx.attachAudit(audit, "create_folder");
+        return new CreateFolderTool(new AccountArgument(repo), leases, CreateFolderTool.angusDirectory(), commands)
+                .handle(ctx, Map.of("account", handleA(), "name", name));
+    }
+
     @SuppressWarnings("unchecked")
     Map<String, Object> ok(String parent, String name) {
         ToolOutcome o = call(A, handleA(), parent, name);
@@ -152,6 +170,35 @@ class CreateFolderToolTest {
         var user = greenMail.getUserManager().getUserByEmail("alpha@localhost");
         return greenMail.getManagers().getImapHostManager().listSubscribedMailboxes(user, "*").stream()
                 .map(f -> f.getFullName()).toList();
+    }
+
+    @Test
+    void auditRowIsWrittenBeforeCreateAndCompletedAfterSubscribe() {
+        RecordingAuditLog audit = new RecordingAuditLog();
+        assertThat(callAudited(audit, "Audited")).isInstanceOf(ToolOutcome.Success.class);
+        assertThat(audit.order).containsExactly("begin", "CREATE", "SUBSCRIBE", "complete");
+        assertThat(audit.begun.get(0)).isEmpty();
+        assertThat(audit.calls.get(0).tool()).isEqualTo("create_folder");
+        assertThat(audit.calls.get(0).account()).isEqualTo(repo.findByTenant(A).get(0).account().id());
+        assertThat(audit.completions.get(0).result()).isEqualTo("complete");
+    }
+
+    @Test
+    void anExistingFolderIsAuditedBeforeItsSubscribe() {
+        ok(null, "Twice");
+        RecordingAuditLog audit = new RecordingAuditLog();
+        assertThat(callAudited(audit, "Twice")).isInstanceOf(ToolOutcome.Success.class);
+        assertThat(audit.order).containsExactly("begin", "SUBSCRIBE", "complete");
+    }
+
+    @Test
+    void aFailedAuditWriteCreatesNothing() {
+        RecordingAuditLog audit = new RecordingAuditLog();
+        audit.failBegin = true;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> callAudited(audit, "Blocked"))
+                .isInstanceOf(AuditWriteException.class);
+        assertThat(commands.sent).isEmpty();
+        assertThat(listedNames()).doesNotContain("Blocked");
     }
 
     @Test
