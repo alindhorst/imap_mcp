@@ -1,19 +1,313 @@
 package de.alexanderlindhorst.imapmcp.app.config;
 
+import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader.Section;
+import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
-/** Stub. */
+/**
+ * Loads the YAML config of {@code http-public} (SPEC 5.7, v0.20) into {@link PublicConfig}: the same tree-binding
+ * discipline as {@link ConfigLoader} (every error names the key path and never a value; unknown keys are rejected
+ * at every level), with the multi-tenant rules: no accounts (a configured {@code accounts} list is ignored, the rows
+ * are in the database), no static token, an explicit shared key ring, an SSRF allowlist, a key-wrapping provider, and
+ * OAuth settings. Secret references are checked syntactically only.
+ */
 public final class PublicConfigLoader {
+
+    private static final YAMLMapper YAML = YAMLMapper.builder().build();
+    private static final Pattern KEK_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    private static final Duration MIN_DEADLINE = Duration.ofSeconds(30);
+    private static final Duration PURGE_MIN_DEADLINE = Duration.ofSeconds(60);
+    private static final long INLINE_DEFAULT = 5L * 1024 * 1024;
+    private static final long INLINE_MAX = 10L * 1024 * 1024;
 
     private PublicConfigLoader() {
     }
 
     public static PublicConfig load(Path file, Map<String, String> env) {
-        throw new UnsupportedOperationException();
+        String text;
+        try {
+            text = Files.readString(file);
+        } catch (NoSuchFileException e) {
+            throw new ConfigException("config file not found: " + file);
+        } catch (IOException e) {
+            throw new ConfigException("config file cannot be read: " + file);
+        }
+        try {
+            return bindYaml(text, env);
+        } catch (ConfigException e) {
+            throw e;
+        }
     }
 
     static PublicConfig bindYaml(String yaml, Map<String, String> env) {
-        throw new UnsupportedOperationException();
+        JsonNode root;
+        try {
+            root = YAML.readTree(yaml);
+        } catch (JacksonException e) {
+            var loc = e.getLocation();
+            throw new ConfigException("config: invalid YAML syntax" + (loc == null ? "" : " near line " + loc.getLineNr()));
+        }
+        Section top = new Section(root, "config");
+        top.take("accounts"); // ignored: in http-public the accounts are rows of the database
+        AppConfig.Imap imap = ConfigLoader.imap(top.section("imap"));
+        AppConfig.Pool pool = ConfigLoader.pool(top.section("pool"));
+        AppConfig.Secrets secrets = new AppConfig.Secrets(
+                top.section("secrets").duration("keyringTimeout", Duration.ofSeconds(5)));
+        PublicConfig.Db db = db(top.section("db"));
+        PublicConfig.Oauth oauth = oauth(top.section("oauth"));
+        PublicConfig.Public pub = pub(top.section("public"));
+        AppConfig.Security security = security(top.section("security"));
+        PublicConfig.Ssrf ssrf = ssrf(top.section("ssrf"));
+        PublicConfig.Kms kms = kms(top.section("kms"));
+        Section purge = top.section("purge");
+        boolean purgeEnabled = purge.bool("enabled", false);
+        purge.finish();
+        PublicConfig.Http http = http(top.section("http"), pub);
+        PublicConfig.Tools tools = tools(top.section("tools"));
+        top.finish();
+
+        if (purgeEnabled && !http.stateful()) {
+            throw new ConfigException("purge.enabled: requires http.stateful (confirmation needs server-to-client requests)");
+        }
+        if (tools.deadline().compareTo(MIN_DEADLINE) < 0) {
+            throw new ConfigException("tools.deadline: must be at least 30s in http-public (the write tools are always registered)");
+        }
+        if (purgeEnabled && tools.deadline().compareTo(PURGE_MIN_DEADLINE) < 0) {
+            throw new ConfigException("tools.deadline: must be at least 60s while purge.enabled is true");
+        }
+        http = envHttp(http, env);
+        return new PublicConfig(imap, pool, secrets, tools, http, db, oauth, pub, ssrf, kms, purgeEnabled, security,
+                ConfigLoader.envLogLevel(env));
+    }
+
+    // ---- sections ----
+
+    private static PublicConfig.Db db(Section s) {
+        String url = s.string("url", null);
+        if (!url.startsWith("jdbc:postgresql:")) {
+            throw new ConfigException(s.path("url") + ": must be a jdbc:postgresql: URL");
+        }
+        String username = s.string("username", null);
+        SecretRef password = s.requiredRef("password");
+        int max = s.integer("maxPoolSize", 10, 1, 1000);
+        s.finish();
+        return new PublicConfig.Db(url, username, password, max);
+    }
+
+    private static PublicConfig.Oauth oauth(Section s) {
+        String issuer = httpsUri(s, "issuer", true);
+        String resource = httpsUri(s, "resource", false);
+        String subjectClaim = s.string("subjectClaim", "sub");
+        String requiredRole = s.optionalString("requiredRole");
+        if (requiredRole != null && requiredRole.isBlank()) {
+            throw new ConfigException(s.path("requiredRole") + ": must not be blank");
+        }
+        String roleClaim = s.string("roleClaim", "realm_access.roles");
+        boolean allowWithoutRole = s.bool("allowWithoutRole", false);
+        String webClientId = s.optionalString("webClientId");
+        SecretRef webClientSecret = s.optionalRef("webClientSecret");
+        s.finish();
+        if (requiredRole == null && !allowWithoutRole) {
+            throw new ConfigException(s.path("requiredRole")
+                    + ": required unless oauth.allowWithoutRole is true (development)");
+        }
+        return new PublicConfig.Oauth(issuer, resource, subjectClaim, requiredRole, roleClaim, allowWithoutRole,
+                webClientId, webClientSecret);
+    }
+
+    private static PublicConfig.Public pub(Section s) {
+        String baseUrl = httpsUri(s, "baseUrl", true);
+        int max = s.integer("maxAccountsPerTenant", 10, 1, 1000);
+        s.finish();
+        return new PublicConfig.Public(baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl,
+                max);
+    }
+
+    /** A required {@code https} URI with a host and without user info, query or fragment; the value is not echoed. */
+    private static String httpsUri(Section s, String key, boolean pathAllowed) {
+        String v = s.string(key, null);
+        try {
+            URI u = new URI(v);
+            if ("https".equals(u.getScheme()) && u.getHost() != null && u.getRawUserInfo() == null
+                    && u.getRawQuery() == null && u.getRawFragment() == null) {
+                return v;
+            }
+        } catch (URISyntaxException ignored) {
+            // reported below
+        }
+        throw new ConfigException(s.path(key) + ": must be an https URI without user info, query or fragment");
+    }
+
+    private static AppConfig.Security security(Section s) {
+        if (s.take("handleKey") != null) {
+            throw new ConfigException(s.path("handleKey")
+                    + ": not available in http-public (use security.handleKeys; the state file is not used)");
+        }
+        JsonNode list = s.take("handleKeys");
+        if (list == null || !list.isArray() || list.isEmpty()) {
+            throw new ConfigException(s.path("handleKeys") + ": required, a non-empty list of {id, key}");
+        }
+        List<AppConfig.HandleKey> keys = new ArrayList<>();
+        Set<Integer> ids = new HashSet<>();
+        for (int i = 0; i < list.size(); i++) {
+            Section e = new Section(list.get(i), s.path("handleKeys") + "[" + i + "]");
+            int id = e.integer("id", null, 0, 255);
+            if (!ids.add(id)) {
+                throw new ConfigException(e.path("id") + ": duplicate key id");
+            }
+            SecretRef key = e.requiredRef("key");
+            e.finish();
+            keys.add(new AppConfig.HandleKey(id, key));
+        }
+        int signing = s.integer("signingKeyId", null, 0, 255);
+        s.finish();
+        if (!ids.contains(signing)) {
+            throw new ConfigException(s.path("signingKeyId") + ": no key with this id in security.handleKeys");
+        }
+        return new AppConfig.Security(null, List.copyOf(keys), signing);
+    }
+
+    private static PublicConfig.Ssrf ssrf(Section s) {
+        List<String> hosts = s.stringList("allowedHosts", List.of());
+        boolean any = s.bool("allowAnyPublicHost", false);
+        List<String> cidrs = s.stringList("extraBlockedCidrs", List.of());
+        s.finish();
+        if (hosts.isEmpty() && !any) {
+            throw new ConfigException(s.path("allowedHosts") + ": required unless ssrf.allowAnyPublicHost is true");
+        }
+        return new PublicConfig.Ssrf(hosts, any, cidrs);
+    }
+
+    private static PublicConfig.Kms kms(Section s) {
+        String provider = s.string("provider", null);
+        if (!Set.of("local", "vault").contains(provider)) {
+            throw new ConfigException(s.path("provider") + ": must be one of local, vault");
+        }
+        JsonNode vault = s.take("vault");
+        JsonNode local = s.take("local");
+        if ("local".equals(provider)) {
+            if (vault != null) {
+                throw new ConfigException(s.path("vault") + ": not allowed with kms.provider local");
+            }
+            PublicConfig.Kms kms = localKeks(new Section(local, s.path("local")));
+            s.finish();
+            return kms;
+        }
+        if (local != null) {
+            throw new ConfigException(s.path("local") + ": not allowed with kms.provider vault");
+        }
+        throw new ConfigException(s.path("provider") + ": vault is not available in this build");
+    }
+
+    private static PublicConfig.Kms localKeks(Section s) {
+        String current = s.string("currentKekId", null);
+        JsonNode list = s.take("keks");
+        if (list == null || !list.isArray() || list.isEmpty()) {
+            throw new ConfigException(s.path("keks") + ": required, a non-empty list of {id, key}");
+        }
+        List<PublicConfig.Kek> keks = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (int i = 0; i < list.size(); i++) {
+            Section e = new Section(list.get(i), s.path("keks") + "[" + i + "]");
+            String id = e.string("id", null);
+            if (!KEK_ID.matcher(id).matches()) {
+                throw new ConfigException(e.path("id") + ": must match [A-Za-z0-9._-]{1,64}");
+            }
+            if (!ids.add(id)) {
+                throw new ConfigException(e.path("id") + ": duplicate id");
+            }
+            SecretRef key = e.requiredRef("key");
+            e.finish();
+            keks.add(new PublicConfig.Kek(id, key));
+        }
+        s.finish();
+        if (!ids.contains(current)) {
+            throw new ConfigException(s.path("currentKekId") + ": not one of kms.local.keks");
+        }
+        return new PublicConfig.Kms("local", current, List.copyOf(keks));
+    }
+
+    private static PublicConfig.Http http(Section s, PublicConfig.Public pub) {
+        if (s.take("token") != null) {
+            throw new ConfigException(s.path("token") + ": not available in http-public (the static token does not exist there)");
+        }
+        String bind = s.string("bind", "127.0.0.1");
+        int port = s.integer("port", 8080, 1, 65535);
+        boolean nonLoopback = s.bool("allowNonLoopbackBind", false);
+        String publicHost = URI.create(pub.baseUrl()).getHost().toLowerCase(Locale.ROOT);
+        List<String> hosts = s.stringList("allowedHosts", List.of(publicHost + ":*"));
+        List<String> origins = s.stringList("allowedOrigins", List.of());
+        long maxBytes = s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE);
+        boolean stateful = s.bool("stateful", false);
+        s.finish();
+        return new PublicConfig.Http(bind, port, nonLoopback, hosts, origins, maxBytes, stateful);
+    }
+
+    private static PublicConfig.Tools tools(Section s) {
+        Duration deadline = s.duration("deadline", Duration.ofSeconds(90), Duration.ofMinutes(10));
+        int maxChars = s.integer("maxCharsCap", 100000, 1, 100000);
+        long maxBody = s.size("maxBodyPartBytes", 4L * 1024 * 1024,
+                de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader.MAX_BODY_PART_BYTES);
+        int maxFolders = s.integer("maxFolders", 100, 1, 100000);
+        int since = s.integer("sinceMaxCandidates", 10000, 1, 10_000_000);
+        Section d = s.section("download");
+        for (String local : new String[] {"dir", "maxBytes", "displayDir"}) {
+            if (d.take(local) != null) {
+                throw new ConfigException(d.path(local) + ": not available in http-public (the download is embedded, see inlineMaxBytes)");
+            }
+        }
+        long inlineMax = d.size("inlineMaxBytes", INLINE_DEFAULT, INLINE_MAX);
+        int inlineConcurrency = d.integer("inlineConcurrency", 4, 1, 1000);
+        d.finish();
+        s.finish();
+        return new PublicConfig.Tools(deadline, maxChars, maxBody, maxFolders, since, inlineMax, inlineConcurrency);
+    }
+
+    // ---- named env overrides (the same names as the single-tenant modes) ----
+
+    private static PublicConfig.Http envHttp(PublicConfig.Http h, Map<String, String> env) {
+        String bind = h.bind();
+        int port = h.port();
+        boolean nonLoopback = h.allowNonLoopbackBind();
+        String v = ConfigLoader.set(env, ConfigLoader.ENV_HTTP_BIND);
+        if (v != null) {
+            bind = v;
+        }
+        v = ConfigLoader.set(env, ConfigLoader.ENV_HTTP_PORT);
+        if (v != null) {
+            try {
+                port = Integer.parseInt(v.trim());
+            } catch (NumberFormatException e) {
+                throw new ConfigException(ConfigLoader.ENV_HTTP_PORT + ": must be an integer from 1 to 65535");
+            }
+            if (port < 1 || port > 65535) {
+                throw new ConfigException(ConfigLoader.ENV_HTTP_PORT + ": must be an integer from 1 to 65535");
+            }
+        }
+        v = ConfigLoader.set(env, ConfigLoader.ENV_HTTP_ALLOW_NON_LOOPBACK_BIND);
+        if (v != null) {
+            if (!v.equalsIgnoreCase("true") && !v.equalsIgnoreCase("false")) {
+                throw new ConfigException(ConfigLoader.ENV_HTTP_ALLOW_NON_LOOPBACK_BIND + ": must be true or false");
+            }
+            nonLoopback = Boolean.parseBoolean(v);
+        }
+        return new PublicConfig.Http(bind, port, nonLoopback, h.allowedHosts(), h.allowedOrigins(),
+                h.maxRequestBytes(), h.stateful());
     }
 }
