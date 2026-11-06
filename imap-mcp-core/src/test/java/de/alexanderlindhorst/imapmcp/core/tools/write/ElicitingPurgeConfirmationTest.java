@@ -45,6 +45,12 @@ class ElicitingPurgeConfirmationTest {
         final List<Map<String, Object>> schemas = new ArrayList<>();
         final List<Answer> answers = new ArrayList<>();
         boolean interrupt;
+        String session = "s1";
+
+        @Override
+        public String sessionId() {
+            return session;
+        }
 
         @Override
         public boolean supportsFormMode() {
@@ -511,5 +517,51 @@ class ElicitingPurgeConfirmationTest {
         String m = logs.list.get(0).getFormattedMessage();
         assertThat(m).contains("purge approval created").contains("budget=500")
                 .contains("expires_at=" + NOW.plus(Duration.ofMinutes(15))).doesNotContain("Trash");
+    }
+
+    // ---- approvals per session (SPEC 4 v3b "Purge over HTTP") ----
+
+    @Test
+    void anApprovalBelongsToTheSessionThatGaveItAndNotToAnotherSessionOfTheSameAccount() throws Exception {
+        script.answers.add(ALLOW);
+        ToolCallContext c = ctx(T1, null);
+        confirm(c, request("a1", "L", "Trash", 1));
+        c.tryBeginMutation();
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval"));
+        script.session = "s2";
+        script.answers.add(new ElicitationChannel.Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited")); // asked again
+        assertThat(script.messages).hasSize(2);
+        script.session = "s1";
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval")); // s1 still has its own
+    }
+
+    @Test
+    void sessionEndedDropsExactlyThatSessionsApprovals() throws Exception {
+        for (String s : new String[] {"s1", "s2"}) {
+            script.session = s;
+            script.answers.add(ALLOW);
+            ToolCallContext c = ctx(T1, null);
+            confirm(c, request("a1", "L", "Trash", 1));
+            c.tryBeginMutation();
+        }
+        assertThat(confirmation.approvalCount()).isEqualTo(2);
+        confirmation.sessionEnded("s1");
+        assertThat(confirmation.approvalCount()).isEqualTo(1);
+        script.session = "s1";
+        script.answers.add(new ElicitationChannel.Answer.Accepted(null));
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("elicited"));
+        script.session = "s2";
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Confirmed("session_approval"));
+        confirmation.sessionEnded("unknown"); // harmless
+        confirmation.sessionEnded(null);
+    }
+
+    @Test
+    void theDeclineCooldownStaysKeyedByTenantAndAccountAcrossSessions() throws Exception {
+        script.answers.add(new ElicitationChannel.Answer.Declined());
+        confirm(ctx(T1, null), request("a1", "L", "Trash", 1));
+        script.session = "s2";
+        assertThat(covered("a1", 1)).isEqualTo(new Decision.Refused(ElicitationReason.RECENTLY_DECLINED));
     }
 }
