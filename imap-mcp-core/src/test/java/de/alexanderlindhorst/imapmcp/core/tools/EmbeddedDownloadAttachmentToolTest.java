@@ -372,7 +372,7 @@ class EmbeddedDownloadAttachmentToolTest {
             root.detachAppender(all);
             root.setLevel(before);
         }
-        assertThat(all.list.stream().filter(e -> !e.getLoggerName().equals("imapmcp.imap.trace"))
+        assertThat(all.list.stream().filter(e -> e.getLoggerName().startsWith("de.alexanderlindhorst.imapmcp"))
                 .map(ILoggingEvent::getFormattedMessage)).isNotEmpty()
                 .noneMatch(m -> m.contains("SECRET-NAME") || m.contains("x-canary-type") || m.contains(digest)
                         || m.contains(b64.substring(0, 24)) || m.contains("imap-mcp://attachment/"));

@@ -104,8 +104,11 @@ public final class DownloadAttachmentTool implements ToolHandler {
 
     /** @param maxBytes {@code tools.download.inlineMaxBytes}, 1 byte to 10 MiB */
     public record InlineSettings(long maxBytes) {
+
+        public static final long MAX_ALLOWED = 10L * 1024 * 1024;
+
         public InlineSettings {
-            if (maxBytes < 1) {
+            if (maxBytes < 1 || maxBytes > MAX_ALLOWED) {
                 throw new IllegalArgumentException("inline settings");
             }
         }
@@ -120,10 +123,13 @@ public final class DownloadAttachmentTool implements ToolHandler {
     static DownloadAttachmentTool embedded(AccountArgument accounts, MessageLocator locator, StoreLeases leases,
             InlineSettings settings, InlineLimiter limiter, StepHook hook) {
         return new DownloadAttachmentTool(accounts, locator, leases, null, Objects.requireNonNull(settings, "settings"),
-                hook);
+                Objects.requireNonNull(limiter, "limiter"), hook);
     }
 
-    /** Points at which tests inject a deadline or cancel; the production hook does nothing. */
+    /**
+     * Points at which tests inject a deadline or cancel; the production hook does nothing. Shared by the file form
+     * and the embedded form ({@code BEFORE_PUBLISH} and {@code AFTER_BEGIN_MUTATION} only occur in the file form).
+     */
     enum Step { AFTER_SIZE_CHECK, BEFORE_PUBLISH, AFTER_BEGIN_MUTATION }
 
     /** Test seam (like the write tools' step hooks). */
@@ -147,17 +153,17 @@ public final class DownloadAttachmentTool implements ToolHandler {
 
     DownloadAttachmentTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases,
             DownloadDirectory directory, StepHook hook) {
-        this(accounts, locator, leases, Objects.requireNonNull(directory, "directory"), null, hook);
+        this(accounts, locator, leases, Objects.requireNonNull(directory, "directory"), null, null, hook);
     }
 
     private DownloadAttachmentTool(AccountArgument accounts, MessageLocator locator, StoreLeases leases,
-            DownloadDirectory directory, InlineSettings inline, StepHook hook) {
+            DownloadDirectory directory, InlineSettings inline, InlineLimiter limiter, StepHook hook) {
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.locator = Objects.requireNonNull(locator, "locator");
         this.leases = Objects.requireNonNull(leases, "leases");
         this.directory = directory;
         this.inline = inline;
-        this.limiter = inline == null ? null : new InlineLimiter(4);
+        this.limiter = limiter;
         this.hook = Objects.requireNonNull(hook, "hook");
     }
 
