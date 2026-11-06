@@ -144,9 +144,9 @@ class InMemoryMetricsRecorderTest {
         rec.operation(T1, "search_messages", "search", Duration.ofMillis(5));
         rec.leaseAcquired(key(T1, "old"), Duration.ofMillis(1));
         rec.leaseAcquired(key(T2, "live"), Duration.ofMillis(1));
-        clock.now = clock.now.plus(TWO_PERIODS_PLUS.minusMinutes(1));
+        clock.now = clock.now.plus(TWO_PERIODS_PLUS.minusSeconds(60));
         rec.leaseAcquired(key(T2, "live"), Duration.ofMillis(1)); // refreshed
-        clock.now = clock.now.plusMinutes(1);
+        clock.now = clock.now.plusSeconds(60);
         MetricsSnapshot s = rec.snapshot();
         assertThat(s.tenants()).isEmpty();
         assertThat(s.operations()).isEmpty();

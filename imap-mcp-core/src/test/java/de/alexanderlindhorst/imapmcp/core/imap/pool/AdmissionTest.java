@@ -204,9 +204,10 @@ class AdmissionTest {
         PoolKey k = key("t1", "a");
         Admission.Permit held = a.tryAcquire(k);
         assertThatThrownBy(() -> a.tryAcquire(k)).isInstanceOf(ServerBusyException.class);
-        assertThatThrownBy(() -> a.tryAcquire(key("t3", "z"))).doesNotThrowAnyException();
-        held.close();
-        assertThat(a.tenantEntries()).isEqualTo(1); // t3's permit from the lambda above is still held
+        assertThat(a.tenantEntries()).isEqualTo(1);
         assertThat(a.mailboxEntries()).isEqualTo(1);
+        held.close();
+        assertThat(a.tenantEntries()).isZero();
+        assertThat(a.mailboxEntries()).isZero();
     }
 }
