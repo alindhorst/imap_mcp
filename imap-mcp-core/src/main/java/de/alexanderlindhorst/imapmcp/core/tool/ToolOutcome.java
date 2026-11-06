@@ -32,18 +32,21 @@ public sealed interface ToolOutcome {
     sealed interface ContentBlock {
     }
 
-    /** A {@code resource} block with a base64 {@code blob} (the adapter encodes {@code data}). */
-    record EmbeddedResource(String uri, String mimeType, byte[] data) implements ContentBlock {
+    /**
+     * A {@code resource} block whose {@code blob} is the finished base64 text ({@code base64}, ASCII). The adapter
+     * passes it through unchanged, so a large attachment is not copied again at the SDK boundary.
+     */
+    record EmbeddedResource(String uri, String mimeType, String base64) implements ContentBlock {
         public EmbeddedResource {
             Objects.requireNonNull(uri, "uri");
             Objects.requireNonNull(mimeType, "mimeType");
-            Objects.requireNonNull(data, "data");
+            Objects.requireNonNull(base64, "base64");
         }
 
-        /** Size only: the bytes are mail content and must never reach a log. */
+        /** Size only: the blob is mail content and must never reach a log. */
         @Override
         public String toString() {
-            return "EmbeddedResource[" + data.length + " bytes]";
+            return "EmbeddedResource[" + base64.length() + " chars]";
         }
     }
 }
