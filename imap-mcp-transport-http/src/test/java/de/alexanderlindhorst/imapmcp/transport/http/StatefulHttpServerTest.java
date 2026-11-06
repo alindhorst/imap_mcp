@@ -49,7 +49,8 @@ class StatefulHttpServerTest {
                 .description("Echo. Read-only; does not change flags or mark messages as read.")
                 .inputSchema(new McpSchema.JsonSchema("object", Map.of(), List.of(), false, null, null)).build();
         return McpServerFeatures.SyncToolSpecification.builder().tool(tool)
-                .callHandler((exchange, request) -> McpSchema.CallToolResult.builder().addTextContent("ok").build())
+                .callHandler((exchange, request) -> McpSchema.CallToolResult.builder()
+                        .addTextContent("session=" + exchange.sessionId()).build())
                 .build();
     }
 
@@ -255,5 +256,90 @@ class StatefulHttpServerTest {
         }
         assertThat(asked).containsExactly("Continue?");
         assertThat(sessionSeenByTool.get()).isNotBlank();
+    }
+
+    static final String CALL_ECHO = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":"
+            + "{\"name\":\"echo\",\"arguments\":{}}}";
+
+    @Test
+    void theToolSeesTheSessionIdOfTheMcpSessionIdHeader() throws Exception {
+        start(builder());
+        String id = initialize("alice");
+        HttpResponse<String> r = send("POST", CALL_ECHO, "alice", id);
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.body()).contains("session=" + id);
+    }
+
+    @Test
+    void anInitializeWithAValidSessionIdRegistersTheSessionTheSdkCreatesForIt() throws Exception {
+        start(builder().sessionLimits(2, 100, Duration.ofMinutes(30)));
+        String first = initialize("alice");
+        HttpResponse<String> again = send("POST", INIT, "alice", first);
+        assertThat(again.statusCode()).isEqualTo(200);
+        String second = again.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        assertThat(second).isNotEqualTo(first);
+        assertThat(send("POST", INITIALIZED, "alice", second).statusCode()).isEqualTo(202);
+        assertThat(send("POST", LIST, "alice", second).statusCode()).isEqualTo(200); // bound, not an orphan
+        assertThat(send("POST", LIST, "bob", second).statusCode()).isEqualTo(404);
+        send("POST", INIT, "alice", first); // a third session of alice: the least recently used one goes
+        assertThat(ended).hasSize(1);
+        assertThat(server.sessionCount()).isEqualTo(2);
+    }
+
+    @Test
+    void anEvictedSessionsOpenStreamIsClosed() throws Exception {
+        start(builder().sessionLimits(1, 100, Duration.ofMinutes(30)));
+        String first = initialize("alice");
+        java.io.InputStream stream = openStream("alice", first);
+        String second = initialize("alice"); // evicts the first session
+        assertThat(second).isNotEqualTo(first);
+        assertStreamEnds(stream);
+    }
+
+    @Test
+    void deleteClosesTheSessionsOpenStream() throws Exception {
+        start(builder());
+        String id = initialize("alice");
+        java.io.InputStream stream = openStream("alice", id);
+        assertThat(send("DELETE", null, "alice", id).statusCode()).isIn(200, 204);
+        assertStreamEnds(stream);
+    }
+
+    private java.io.InputStream openStream(String principal, String session) throws Exception {
+        HttpRequest r = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
+                .header("Accept", "text/event-stream").header("MCP-Protocol-Version", "2025-06-18")
+                .header("X-Test-Principal", principal).header("Mcp-Session-Id", session).GET().build();
+        HttpResponse<java.io.InputStream> resp = http.send(r, HttpResponse.BodyHandlers.ofInputStream());
+        assertThat(resp.statusCode()).isEqualTo(200);
+        return resp.body();
+    }
+
+    private static void assertStreamEnds(java.io.InputStream stream) throws Exception {
+        var done = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            try {
+                while (stream.read() != -1) {
+                    // drain until the server closes the stream
+                }
+                return true;
+            } catch (java.io.IOException e) {
+                return true; // a reset is a closed stream too
+            }
+        });
+        assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    void withoutASessionPrincipalConfiguredOnlyAnAuthenticatedRequestHasOne() throws Exception {
+        HttpLocalServer.Builder b = HttpLocalServer.builder().port(0).stateful(true).statefulTool(echo())
+                .bearerFilter(new BearerTokenFilter(TOKEN.toCharArray(), new AccountContext(new TenantId("t"))));
+        start(b);
+        HttpResponse<String> init = send("POST", INIT, null, null, "Authorization", "Bearer " + TOKEN);
+        assertThat(init.statusCode()).isEqualTo(200);
+        String id = init.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        assertThat(send("POST", LIST, null, id, "Authorization", "Bearer " + TOKEN).statusCode()).isEqualTo(200);
+        server.stop();
+        // no bearer filter: nothing sets the account attribute, so there is no principal and nothing is served
+        start(HttpLocalServer.builder().port(0).stateful(true).statefulTool(echo()));
+        assertThat(send("POST", INIT, null, null).statusCode()).isEqualTo(404);
     }
 }
