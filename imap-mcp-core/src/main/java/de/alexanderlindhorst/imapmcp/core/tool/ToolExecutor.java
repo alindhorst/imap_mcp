@@ -239,7 +239,7 @@ public final class ToolExecutor {
     private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx,
             CallState state) {
         state.executorProduced.set(true);
-        ctx.audit().completeAborted(ctx.sealMutation()); // rows begun but not completed by the handler
+        ctx.audit().completeAborted(ctx.sealMutation(), null); // rows begun but not completed by the handler
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
         return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
@@ -247,7 +247,7 @@ public final class ToolExecutor {
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
         // decide under the context lock; a later tryBeginMutation() returns false
-        ctx.audit().completeAborted(ctx.sealMutation());
+        ctx.audit().completeAborted(ctx.sealMutation(), null);
         return new ToolOutcome.Failure(afterMutation(toolName, ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }

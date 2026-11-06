@@ -77,12 +77,20 @@ public final class CallAudit {
     }
 
     /** The call ended without a result (failure or cancel): all items {@code unknown} if a mutation began, else {@code not_attempted}. */
-    public synchronized void completeAborted(boolean mutationStarted) {
+    public synchronized void completeAborted(boolean mutationStarted, String errorCode) {
         if (entry == null || completed) {
             return;
         }
         String status = mutationStarted ? "unknown" : "not_attempted";
         complete(java.util.Collections.nCopies(itemCount, new ItemResult(status, null)),
                 mutationStarted ? "unknown" : "failed", null);
+    }
+
+    /** Stub. */
+    public synchronized void recordFailure(String errorCode) {
+    }
+
+    /** Stub. */
+    public synchronized void recordRefusal(List<ItemRef> items, String errorCode, String confirmation) {
     }
 }

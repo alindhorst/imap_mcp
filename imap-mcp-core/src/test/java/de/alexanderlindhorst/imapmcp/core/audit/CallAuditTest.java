@@ -94,7 +94,7 @@ class CallAuditTest {
     void completeRunsOnlyOnce() {
         ctx.audit().begin(List.of());
         ctx.audit().complete(List.of(), "complete", null);
-        ctx.audit().completeAborted(true);
+        ctx.audit().completeAborted(true, "TIMEOUT");
         assertThat(log.order).containsExactly("begin", "complete");
     }
 
@@ -116,8 +116,9 @@ class CallAuditTest {
     @Test
     void abortedBeforeTheMutationMarksItemsNotAttempted() {
         ctx.audit().begin(List.of(new ItemRef("INBOX", 7, 1), new ItemRef("INBOX", 7, 2)));
-        ctx.audit().completeAborted(false);
+        ctx.audit().completeAborted(false, "UPSTREAM_ERROR");
         assertThat(log.completions).singleElement().satisfies(c -> {
+            assertThat(c.errorCode()).isEqualTo("UPSTREAM_ERROR");
             assertThat(c.result()).isEqualTo("failed");
             assertThat(c.items()).containsOnly(new ItemResult("not_attempted", null));
             assertThat(c.items()).hasSize(2);
@@ -127,10 +128,78 @@ class CallAuditTest {
     @Test
     void abortedAfterTheMutationMarksItemsUnknown() {
         ctx.audit().begin(List.of(new ItemRef("INBOX", 7, 1)));
-        ctx.audit().completeAborted(true);
+        ctx.audit().completeAborted(true, "OUTCOME_UNKNOWN");
         assertThat(log.completions).singleElement().satisfies(c -> {
+            assertThat(c.errorCode()).isEqualTo("OUTCOME_UNKNOWN");
             assertThat(c.result()).isEqualTo("unknown");
             assertThat(c.items()).containsExactly(new ItemResult("unknown", null));
         });
+    }
+
+    @Test
+    void theConfirmationIsWrittenWithTheRowsAtBegin() {
+        ctx.audit().confirmation("session_approval");
+        ctx.audit().begin(List.of(new ItemRef("Trash", 7, 1)));
+        assertThat(log.calls.get(0).confirmation()).isEqualTo("session_approval");
+    }
+
+    @Test
+    void recordFailureWritesOneItemLessFailedRow() {
+        ctx.audit().recordFailure("INVALID_HANDLE");
+        assertThat(log.order).containsExactly("begin", "complete");
+        assertThat(log.begun.get(0)).isEmpty();
+        assertThat(log.completions.get(0).result()).isEqualTo("failed");
+        assertThat(log.completions.get(0).errorCode()).isEqualTo("INVALID_HANDLE");
+        assertThat(log.completions.get(0).items()).isEmpty();
+    }
+
+    @Test
+    void recordFailureDoesNothingOnceRowsWereBegunOrAttempted() {
+        ctx.audit().begin(List.of(new ItemRef("INBOX", 7, 1)));
+        ctx.audit().recordFailure("INVALID_HANDLE");
+        assertThat(log.order).containsExactly("begin");
+
+        ToolCallContext other = new ToolCallContext(new AccountContext(new TenantId("t1")), "req-2");
+        RecordingAuditLog failing = new RecordingAuditLog();
+        failing.failBegin = true;
+        other.attachAudit(failing, "move_messages");
+        assertThatThrownBy(() -> other.audit().begin(List.of())).isInstanceOf(AuditWriteException.class);
+        failing.failBegin = false;
+        other.audit().recordFailure("INTERNAL_ERROR");
+        assertThat(failing.order).isEmpty();
+    }
+
+    @Test
+    void recordFailureNeverThrowsAndLogsOneErrorLineWithoutRowData() {
+        log.failBegin = true;
+        ctx.audit().recordFailure("INVALID_HANDLE");
+        assertThat(logs.list).singleElement().satisfies(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("move_messages").contains("req-1")
+                    .doesNotContain("acc-1").doesNotContain("t1");
+            assertThat(e.getThrowableProxy()).isNull();
+        });
+    }
+
+    @Test
+    void recordRefusalWritesOneRowPerItemWithTheCodeAndConfirmation() {
+        ctx.audit().recordRefusal(List.of(new ItemRef("Trash", 7, 1), new ItemRef("Trash", 7, 2)),
+                "PERMISSION_DENIED", "declined");
+        assertThat(log.order).containsExactly("begin", "complete");
+        assertThat(log.begun.get(0)).hasSize(2);
+        assertThat(log.calls.get(0).confirmation()).isEqualTo("declined");
+        assertThat(log.completions.get(0)).satisfies(c -> {
+            assertThat(c.items()).containsExactly(new ItemResult("not_attempted", null),
+                    new ItemResult("not_attempted", null));
+            assertThat(c.result()).isEqualTo("failed");
+            assertThat(c.errorCode()).isEqualTo("PERMISSION_DENIED");
+        });
+    }
+
+    @Test
+    void recordRefusalIsNotFailClosed() {
+        log.failBegin = true;
+        ctx.audit().recordRefusal(List.of(new ItemRef("Trash", 7, 1)), "PERMISSION_DENIED", "declined");
+        assertThat(logs.list).singleElement().satisfies(e -> assertThat(e.getLevel()).isEqualTo(Level.ERROR));
     }
 }

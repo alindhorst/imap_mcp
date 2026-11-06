@@ -291,7 +291,7 @@ public final class CreateFolderTool implements ToolHandler {
 
     /** The call was cancelled or its deadline decided before a mutating command: nothing sent; the executor's result wins. */
     private static ToolOutcome cancelled(ToolCallContext ctx, String rid, long start) {
-        ctx.audit().completeAborted(ctx.mutationStarted());
+        ctx.audit().completeAborted(ctx.mutationStarted(), ErrorCode.TIMEOUT.name());
         return fail(ctx, ToolError.timeout(rid), start);
     }
 

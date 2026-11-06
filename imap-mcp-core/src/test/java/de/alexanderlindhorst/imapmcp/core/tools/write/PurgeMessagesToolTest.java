@@ -323,11 +323,35 @@ class PurgeMessagesToolTest {
     }
 
     @Test
-    void aRefusedConfirmationWritesNoAuditRow() throws Exception {
+    void theConfirmationIsWrittenWithTheRowsAtBegin() throws Exception {
+        RecordingAuditLog recorded = auditedCall(List.of(handle(T1, "Trash", uids("Trash").get(0))));
+        assertThat(recorded.calls.get(0).confirmation()).isEqualTo(BulkResult.ELICITED);
+    }
+
+    @Test
+    void aRefusedConfirmationIsAuditedPerVerifiedItemWithPermissionDeniedAndTheElicitationValue() throws Exception {
         confirmation = refusing(ToolError.ElicitationReason.DECLINED);
         rebuild();
-        RecordingAuditLog recorded = auditedCall(List.of(handle(T1, "Trash", uids("Trash").get(0))));
-        assertThat(recorded.order).isEmpty();
+        List<Long> t = uids("Trash");
+        RecordingAuditLog recorded = auditedCall(List.of(handle(T1, "Trash", t.get(0)), handle(T1, "Trash", t.get(1))));
+        assertThat(recorded.order).containsExactly("begin", "complete");
+        assertThat(recorded.begun.get(0)).hasSize(2);
+        assertThat(recorded.calls.get(0).confirmation()).isEqualTo("declined");
+        assertThat(recorded.completions.get(0).errorCode()).isEqualTo("PERMISSION_DENIED");
+        assertThat(recorded.completions.get(0).result()).isEqualTo("failed");
+        assertThat(uids("Trash")).containsAll(t);
+    }
+
+    @Test
+    void aFailingAuditWriteDoesNotChangeTheRefusal() throws Exception {
+        confirmation = refusing(ToolError.ElicitationReason.DECLINED);
+        rebuild();
+        RecordingAuditLog recorded = new RecordingAuditLog();
+        recorded.failBegin = true;
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-aud2");
+        ctx.attachAudit(recorded, "purge_messages");
+        ToolOutcome out = handler.handle(ctx, args(T1, List.of(handle(T1, "Trash", uids("Trash").get(0)))));
+        assertThat(((ToolOutcome.Failure) out).error().code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
     }
 
     // ---- contract ----

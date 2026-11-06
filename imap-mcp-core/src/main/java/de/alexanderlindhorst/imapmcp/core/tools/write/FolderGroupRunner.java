@@ -123,6 +123,16 @@ public final class FolderGroupRunner {
      */
     public List<BulkResult.Item> run(ImapLease lease, ToolCallContext ctx, List<WritePreflight.Group> groups,
             AbsentStatus absent, MutationStep step) throws MessagingException {
+        return run(lease, ctx, groups, absent, step, List.of());
+    }
+
+    /** An item the tool settled itself (no IMAP command), still audited with its status. */
+    public record Settled(WritePreflight.Item item, BulkResult.Item result) {
+    }
+
+    /** As above; {@code settled} items are audited in the same batch (after the grouped ones). Stub. */
+    public List<BulkResult.Item> run(ImapLease lease, ToolCallContext ctx, List<WritePreflight.Group> groups,
+            AbsentStatus absent, MutationStep step, List<Settled> settled) throws MessagingException {
         Objects.requireNonNull(lease, "lease");
         Objects.requireNonNull(ctx, "ctx");
         CallAudit audit = ctx.audit();
@@ -136,7 +146,7 @@ public final class FolderGroupRunner {
         try {
             out = runGroups(lease, ctx, groups, absent, step);
         } catch (MessagingException | RuntimeException e) {
-            audit.completeAborted(ctx.mutationStarted());
+            audit.completeAborted(ctx.mutationStarted(), null);
             throw e;
         }
         if (!flat.isEmpty()) {

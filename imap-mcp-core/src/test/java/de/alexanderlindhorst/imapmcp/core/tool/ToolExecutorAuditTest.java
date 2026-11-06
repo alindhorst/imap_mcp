@@ -84,6 +84,77 @@ class ToolExecutorAuditTest {
             throw new IllegalStateException("boom");
         }).handle(ctx(), Map.of());
         assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
-        assertThat(audit.completions).singleElement().satisfies(c -> assertThat(c.result()).isEqualTo("unknown"));
+        assertThat(audit.completions).singleElement().satisfies(c -> {
+            assertThat(c.result()).isEqualTo("unknown");
+            assertThat(c.errorCode()).isEqualTo("INTERNAL_ERROR");
+        });
+    }
+
+    @Test
+    void aNonIdempotentToolCompletesAbortedRowsWithOutcomeUnknown() {
+        executor.wrap(def("copy_messages", ToolHints.WRITE_ADDITIVE), (cx, a) -> {
+            cx.audit().begin(List.of(new ItemRef("INBOX", 1, 1)));
+            cx.tryBeginMutation();
+            throw new IllegalStateException("boom");
+        }).handle(ctx(), Map.of());
+        assertThat(audit.completions.get(0).errorCode()).isEqualTo("OUTCOME_UNKNOWN");
+    }
+
+    @Test
+    void aFailureOutcomeAfterBeginCompletesTheRowsWithTheMappedCode() {
+        executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.audit().begin(List.of(new ItemRef("INBOX", 1, 1)));
+            return new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.timeout("r1"));
+        }).handle(ctx(), Map.of());
+        assertThat(audit.completions).singleElement().satisfies(c -> {
+            assertThat(c.errorCode()).isEqualTo("TIMEOUT");
+            assertThat(c.items()).containsExactly(new de.alexanderlindhorst.imapmcp.core.audit.ItemResult(
+                    "not_attempted", "TIMEOUT"));
+        });
+    }
+
+    @Test
+    void aWholeCallErrorBeforeAnyRowGetsOneItemLessCallRow() {
+        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
+                new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
+                        "handles[0]", "r1"))).handle(ctx(), Map.of());
+        assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(audit.order).containsExactly("begin", "complete");
+        assertThat(audit.begun.get(0)).isEmpty();
+        assertThat(audit.calls.get(0).tool()).isEqualTo("move_messages");
+        assertThat(audit.calls.get(0).account()).isNull();
+        assertThat(audit.completions.get(0).result()).isEqualTo("failed");
+        assertThat(audit.completions.get(0).errorCode()).isEqualTo("INVALID_HANDLE");
+    }
+
+    @Test
+    void thatRowIsNotFailClosedAndTheOriginalErrorStays() {
+        audit.failBegin = true;
+        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
+                new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
+                        "handles[0]", "r1"))).handle(ctx(), Map.of());
+        assertThat(out).isInstanceOfSatisfying(ToolOutcome.Failure.class,
+                f -> assertThat(f.error().code()).isEqualTo(ErrorCode.INVALID_HANDLE));
+    }
+
+    @Test
+    void successesAndReadToolFailuresWriteNoCallRow() {
+        executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
+                new ToolOutcome.Success(Map.of())).handle(ctx(), Map.of());
+        executor.wrap(def("get_message", ToolHints.READ_ONLY_OPEN_WORLD), (cx, a) ->
+                new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
+                        "handles[0]", "r1"))).handle(ctx(), Map.of());
+        assertThat(audit.order).isEmpty();
+    }
+
+    @Test
+    void aFailedBeginIsNotRetriedAsACallRow() {
+        audit.failBegin = true;
+        executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.audit().begin(List.of(new ItemRef("INBOX", 1, 1)));
+            return new ToolOutcome.Success(Map.of());
+        }).handle(ctx(), Map.of());
+        audit.failBegin = false;
+        assertThat(audit.order).isEmpty();
     }
 }

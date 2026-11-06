@@ -186,16 +186,38 @@ class FolderGroupRunnerAuditTest {
     }
 
     @Test
-    void connectionFailureBeforeTheMarkIsRethrownAndTheRowsAreCompletedAsNotAttempted() throws Exception {
+    void connectionFailureBeforeTheMarkIsRethrownAndLeavesTheCompletionToTheExecutor() throws Exception {
         init();
         IMAPFolder a = folder("A", VALIDITY, 1);
         when(a.getUIDValidity()).thenThrow(new MessagingException("io", new IOException("reset")));
         assertThatThrownBy(() -> new FolderGroupRunner(clock).run(lease, ctx, List.of(group("A", 1)),
                 AbsentStatus.ALREADY_GONE, okStep(new ArrayList<>()))).isInstanceOf(MessagingException.class);
-        assertThat(audit.completions).singleElement().satisfies(c -> {
-            assertThat(c.items()).containsExactly(new ItemResult("not_attempted", null));
-            assertThat(c.result()).isEqualTo("failed");
-        });
+        // the mapped whole-call code is only known to the executor, which completes the rows with it
+        assertThat(audit.order).containsExactly("begin");
+    }
+
+    @Test
+    void settledItemsAreAuditedInTheSameBatchWithTheirStatus() throws Exception {
+        init();
+        folder("A", VALIDITY, 1);
+        WritePreflight.Item inTarget = new WritePreflight.Item(1, "h-T-9", new MessageRef("T", VALIDITY, 9));
+        new FolderGroupRunner(clock).run(lease, ctx, List.of(group("A", 1)), AbsentStatus.ALREADY_GONE,
+                okStep(new ArrayList<>()),
+                List.of(new FolderGroupRunner.Settled(inTarget, BulkResult.Item.alreadyInTarget("h-T-9"))));
+        assertThat(audit.begun).hasSize(1);
+        assertThat(audit.begun.get(0)).containsExactly(new ItemRef("A", VALIDITY, 1), new ItemRef("T", VALIDITY, 9));
+        assertThat(audit.completions.get(0).items()).containsExactly(new ItemResult("ok", null),
+                new ItemResult("already_in_target", null));
+    }
+
+    @Test
+    void onlySettledItemsStillWriteTheirRows() throws Exception {
+        init();
+        WritePreflight.Item inTarget = new WritePreflight.Item(0, "h-T-9", new MessageRef("T", VALIDITY, 9));
+        new FolderGroupRunner(clock).run(lease, ctx, List.of(), AbsentStatus.ALREADY_GONE, okStep(new ArrayList<>()),
+                List.of(new FolderGroupRunner.Settled(inTarget, BulkResult.Item.alreadyInTarget("h-T-9"))));
+        assertThat(audit.order).containsExactly("begin", "complete");
+        assertThat(audit.completions.get(0).result()).isEqualTo("complete");
     }
 
     @Test
