@@ -58,6 +58,7 @@ class HttpPublicIT {
     static Path dir;
 
     private static PostgresFixture postgres;
+    private static GreenMailFixture mail;
     private static PublicComponents components;
     private static HttpLocalServer server;
     private static RSAKey signing;
@@ -113,7 +114,16 @@ class HttpPublicIT {
         PublicConfig config = PublicConfigLoader.load(file, env);
         AppPaths paths = AppPaths.resolve(new String[] {"--config", file.toString()},
                 Map.of(AppPaths.ENV_STATE_DIR, dir.resolve("state").toString()), dir, dir);
-        components = PublicComponents.create(config, paths, Clock.systemUTC(), env);
+        mail = GreenMailFixture.start();
+        mail.createUser("carol@localhost", "carol", "right");
+        // the SSRF-checked connect is pointed at the loopback GreenMail server for host names of the allowlist; IP
+        // literals (alice's account) are still refused by the policy itself
+        components = PublicComponents.createForTest(config, paths, Clock.systemUTC(), env, p -> {
+            p.put("mail.imaps.ssl.trust", "*");
+            p.put("mail.imaps.ssl.checkserveridentity", "false");
+            return p;
+        }, policy -> new de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory(policy,
+                host -> new java.net.InetAddress[] {java.net.InetAddress.getLoopbackAddress()}, a -> false, p -> true));
         directory = components.tenantDirectory();
         accounts = new JdbcAccountRepository(components.database().dataSource());
         tenantAlice = directory.create(ISSUER, "alice").tenantId();
@@ -132,6 +142,9 @@ class HttpPublicIT {
         }
         if (components != null) {
             components.close();
+        }
+        if (mail != null) {
+            mail.close();
         }
         postgres.stop();
     }
@@ -269,6 +282,26 @@ class HttpPublicIT {
             rs.next();
             assertThat(rs.getString(1)).doesNotContain("CanaryFolderName").doesNotContain(aliceAccount.handle());
         }
+    }
+
+    @Test
+    void threeRefusedLoginsThroughTheWiredPoolFlipTheAccountAndTheNextCallIsRelinkRequired() throws Exception {
+        TenantId carol = directory.create(ISSUER, "carol").tenantId();
+        ResolvedAccount box = accounts.create(carol, new NewAccount("Carol box", null, "imap.example.com",
+                mail.imapsPort(), MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "carol", true, false));
+        components.credentials().insert(carol, box.account().id(), 1, "wrong".toCharArray());
+        String args = "{\"account\":\"" + box.handle() + "\"}";
+        String carolToken = token("carol", "imap-mcp:read");
+        for (int i = 0; i < 3; i++) {
+            HttpResponse<String> r = callTool(carolToken, "list_folders", args);
+            assertThat(r.body()).as("refusal " + (i + 1)).contains("AUTH_FAILED").doesNotContain("relink_required");
+        }
+        assertThat(count("SELECT count(*) FROM mailbox_account WHERE status = 'needs_relink' AND id = '"
+                + box.account().id().value() + "'")).isEqualTo(1);
+        HttpResponse<String> fourth = callTool(carolToken, "list_folders", args);
+        assertThat(fourth.body()).contains("relink_required").contains("https://mail.example.com/accounts");
+        HttpResponse<String> list = callTool(carolToken, "list_accounts", "{}");
+        assertThat(list.body()).contains("needs_relink").contains("\"link_url\":\"https://mail.example.com/accounts\"");
     }
 
     @Test

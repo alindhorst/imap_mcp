@@ -8,6 +8,7 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.crypto.Macs;
+import de.alexanderlindhorst.imapmcp.core.download.InlineLimiter;
 import de.alexanderlindhorst.imapmcp.core.handle.MessageHandles;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
@@ -29,6 +30,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
 import de.alexanderlindhorst.imapmcp.core.tools.AccountArgument;
+import de.alexanderlindhorst.imapmcp.core.tools.DownloadAttachmentTool;
 import de.alexanderlindhorst.imapmcp.core.tools.GetMessageTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAccountsTool;
 import de.alexanderlindhorst.imapmcp.core.tools.ListAttachmentsTool;
@@ -132,9 +134,26 @@ public final class PublicComponents implements AutoCloseable {
                 BinaryProbe.system(env));
     }
 
-    /** Test seam: JavaMail property hook (GreenMail trust) and keyring fakes. Not reachable from config. */
+    /**
+     * Test seam for integration tests against a local IMAP server: a JavaMail property hook (trust) and the factory of
+     * the socket factory (so that a test can point the SSRF-checked connect at a loopback server). Never reachable from
+     * configuration; production code uses {@link #create(PublicConfig, AppPaths, Clock, Map)}.
+     */
+    public static PublicComponents createForTest(PublicConfig config, AppPaths paths, Clock clock,
+            Map<String, String> env, UnaryOperator<Properties> sessionHook,
+            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
+        return create(config, paths, clock, env, sessionHook, Platform.current(), new ProcessCommandRunner(),
+                BinaryProbe.system(env), socketFactory);
+    }
+
     static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe) {
+        return create(config, paths, clock, env, sessionHook, platform, runner, probe, PinnedSocketFactory::new);
+    }
+
+    private static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
+            UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
+            Function<SsrfPolicy, javax.net.SocketFactory> socketFactory) {
         if (config.http().stateful()) {
             throw new AppStartupException("http.stateful in " + paths.configFile()
                     + ": the stateful transport is not available in this build");
@@ -164,7 +183,7 @@ public final class PublicComponents implements AutoCloseable {
                     PoolSettings.DEFAULTS.evictionInterval(), AppComponents.abandonedTimeout(config.tools().deadline()));
             sessions = new ImapSessionFactory(
                     new ImapTimeouts(imap.connectTimeout(), imap.readTimeout(), imap.writeTimeout()), sessionHook,
-                    imap.trace(), new PinnedSocketFactory(ssrf));
+                    imap.trace(), socketFactory.apply(ssrf));
             var ds = database.dataSource();
             JdbcAccountRepository repository = new JdbcAccountRepository(ds);
             metrics = new InMemoryMetricsRecorder(logIds, clock);
@@ -195,6 +214,10 @@ public final class PublicComponents implements AutoCloseable {
             tools.put(GetMessageTool.definition(t.maxCharsCap()), new GetMessageTool(account, locator, leases,
                     new BodyWindowReader(t.maxBodyPartBytes()), t.maxCharsCap()));
             tools.put(ListAttachmentsTool.DEFINITION, new ListAttachmentsTool(account, locator, leases));
+            // one limiter per replica (not per session or call): at most inlineConcurrency downloads run at once
+            tools.put(DownloadAttachmentTool.EMBEDDED_DEFINITION, DownloadAttachmentTool.embedded(account, locator,
+                    leases, new DownloadAttachmentTool.InlineSettings(t.inlineMaxBytes()),
+                    new InlineLimiter(t.inlineConcurrency())));
             // the five write tools are always registered; each call is gated by the account (read_only) and the token
             tools.put(SetFlagsTool.DEFINITION, new SetFlagsTool(account, locator, leases, clock));
             tools.put(MoveMessagesTool.DEFINITION, new MoveMessagesTool(preflight, leases, handles, clock));
@@ -203,7 +226,7 @@ public final class PublicComponents implements AutoCloseable {
             tools.put(DeleteMessagesTool.DEFINITION, new DeleteMessagesTool(preflight, leases, handles, clock));
             tools.put(CreateFolderTool.DEFINITION, new CreateFolderTool(account, leases));
             LOG.info("http-public tools registered={}, purge_messages registered=false, download_attachment "
-                    + "registered=false", tools.size());
+                    + "registered=true (embedded)", tools.size());
 
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread th = new Thread(r, "imap-mcp-cleanup");
