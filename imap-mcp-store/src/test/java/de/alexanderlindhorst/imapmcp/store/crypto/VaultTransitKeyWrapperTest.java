@@ -21,7 +21,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -318,10 +317,8 @@ class VaultTransitKeyWrapperTest {
     }
 
     @Test
-    void approleLogsInAgainBeforeTheClientTokenExpires() throws Exception {
+    void approleKeepsTheTokenWithinEightyPercentOfTheLease() throws Exception {
         script.add(new Reply(200, "{\"auth\":{\"client_token\":\"c-1\",\"lease_duration\":100}}"));
-        script.add(ENCRYPT_OK);
-        script.add(new Reply(200, "{\"auth\":{\"client_token\":\"c-2\",\"lease_duration\":100}}"));
         script.add(ENCRYPT_OK);
         VaultAuth.AppRole role = new VaultAuth.AppRole("approle", new SecretRef("env:ROLE"), new SecretRef("env:SEC"));
         MutableClock clock = new MutableClock();
@@ -329,8 +326,9 @@ class VaultTransitKeyWrapperTest {
                 ref -> new Secret("x".toCharArray()), clock);
 
         w.wrap(DEK, TENANT, ACCOUNT);
-        clock.advance(Duration.ofSeconds(70)); // within 80 percent of the lease
+        clock.advance(Duration.ofSeconds(70));
         w.wrap(DEK, TENANT, ACCOUNT);
+
         assertThat(seen).extracting(Seen::path).containsExactly("/v1/auth/approle/login",
                 "/v1/transit/encrypt/imap-mcp", "/v1/transit/encrypt/imap-mcp");
     }
@@ -483,10 +481,5 @@ class VaultTransitKeyWrapperTest {
         static byte[] of(String tenant, String account) {
             return VaultTransitKeyWrapper.associatedData(tenant, account);
         }
-    }
-
-    @SuppressWarnings("unused")
-    private static List<String> unused() {
-        return new ArrayList<>();
     }
 }
