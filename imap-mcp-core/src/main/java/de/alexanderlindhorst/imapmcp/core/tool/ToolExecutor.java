@@ -126,7 +126,7 @@ public final class ToolExecutor {
             ToolCallContext ctx, Map<String, Object> args) {
         Instant start = metrics.now();
         CallState state = new CallState();
-        ToolOutcome outcome = run(toolName, idempotent, delegate, ctx, args, state);
+        ToolOutcome outcome = run(toolName, idempotent, write, delegate, ctx, args, state);
         TenantId tenant = ctx.accountContext().tenantId();
         Duration elapsed = Duration.between(start, metrics.now());
         metrics.operation(tenant, toolName, "call", elapsed);
@@ -172,7 +172,7 @@ public final class ToolExecutor {
         }
     }
 
-    private ToolOutcome run(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
+    private ToolOutcome run(String toolName, boolean idempotent, boolean write, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
             CallState state) {
         Instant callDeadline = Instant.now().plus(deadline);
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
@@ -182,6 +182,9 @@ public final class ToolExecutor {
                 MDC.put("tool", toolName);
                 MDC.put("tenant", logIds.tenant(ctx.accountContext().tenantId().value()));
                 ctx.attach(logIds, callDeadline);
+                if (write) {
+                    ctx.attachAudit(auditLog, toolName);
+                }
                 future.complete(delegate.handle(ctx, args));
             } catch (Throwable t) {
                 future.completeExceptionally(t);
@@ -236,14 +239,15 @@ public final class ToolExecutor {
     private ToolOutcome failed(Throwable cause, String toolName, boolean idempotent, ToolCallContext ctx,
             CallState state) {
         state.executorProduced.set(true);
-        ctx.sealMutation();
+        ctx.audit().completeAborted(ctx.sealMutation()); // rows begun but not completed by the handler
         // Class only: exception messages may carry mail content or credentials.
         LOG.error("tool {} failed, request_id={}, cause={}", toolName, ctx.requestId(), cause.getClass().getName());
         return new ToolOutcome.Failure(afterMutation(toolName, ImapErrorMapper.map(cause, ctx.requestId()).error(), idempotent, ctx));
     }
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
-        ctx.sealMutation(); // decide under the context lock; a later tryBeginMutation() returns false
+        // decide under the context lock; a later tryBeginMutation() returns false
+        ctx.audit().completeAborted(ctx.sealMutation());
         return new ToolOutcome.Failure(afterMutation(toolName, ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }

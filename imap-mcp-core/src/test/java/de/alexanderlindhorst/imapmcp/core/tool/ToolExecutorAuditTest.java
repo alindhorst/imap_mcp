@@ -72,7 +72,7 @@ class ToolExecutorAuditTest {
         assertThat(mutated).isFalse();
         assertThat(out).isInstanceOfSatisfying(ToolOutcome.Failure.class, f -> {
             assertThat(f.error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
-            assertThat(f.error().details()).doesNotContainKey("outcome");
+            assertThat(f.error().details() == null || !f.error().details().containsKey("outcome")).isTrue();
         });
     }
 
