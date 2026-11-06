@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
@@ -43,7 +42,17 @@ class AccountsFlowTest {
     int port;
     String origin;
     final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
-    ListAppender<ILoggingEvent> logs;
+    /** Collects events from the server threads without a concurrent-modification risk. */
+    static final class CollectingAppender extends ch.qos.logback.core.AppenderBase<ILoggingEvent> {
+        final java.util.List<ILoggingEvent> list = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        protected void append(ILoggingEvent event) {
+            list.add(event);
+        }
+    }
+
+    CollectingAppender logs;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -52,7 +61,7 @@ class AccountsFlowTest {
         pending = new InMemoryStores.Pending();
         tenants = new InMemoryStores.Tenants();
         Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-        logs = new ListAppender<>();
+        logs = new CollectingAppender();
         logs.start();
         root.addAppender(logs);
         root.setLevel(Level.DEBUG);
@@ -545,7 +554,9 @@ class AccountsFlowTest {
         String sessionCookie = "__Host-session=" + "Q".repeat(43);
         get("/accounts", sessionCookie);
 
-        String all = String.join("\n", logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+        // our own loggers; DEBUG of the JDK and Jetty internals is not ours (and off outside this test)
+        String all = String.join("\n", logs.list.stream().filter(e -> e.getLoggerName().startsWith("de.alexanderlindhorst"))
+                .map(ILoggingEvent::getFormattedMessage).toList());
         assertThat(all).doesNotContain(FakeIdp.CLIENT_SECRET).doesNotContain("code-canary").doesNotContain(s.state())
                 .doesNotContain(s.query().get("nonce")).doesNotContain("at-canary").doesNotContain("rt-canary")
                 .doesNotContain("alice").doesNotContain("idp-detail-canary").doesNotContain("Q".repeat(43));
