@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
  * D3). Order: the read scope {@code imap-mcp:read} first (missing: {@code 403} with
  * {@code WWW-Authenticate: Bearer error="insufficient_scope", scope="imap-mcp:read"}, no lookup), then the tenant
  * row by (issuer, subject claim): a disabled tenant gets {@code 403}; a principal without a row gets the context of
- * {@link #NO_TENANT}, which owns nothing (so {@code list_accounts} is empty and every other tool says
+ * {@link TenantId#NONE}, which owns nothing (so {@code list_accounts} is empty and every other tool says
  * {@code ACCOUNT_NOT_FOUND}); no MCP request creates a row. The token's scopes travel in the context for the
  * per-call write-scope check. Nothing from the request other than the validated token selects the tenant, and
  * neither token nor identifiers are logged. A failing lookup is {@code 503} (fail closed).
@@ -33,8 +33,6 @@ public final class PrincipalContextFilter implements Filter {
 
     public static final String READ_SCOPE = "imap-mcp:read";
     public static final String WRITE_SCOPE = "imap-mcp:write";
-    /** Owns nothing: no tenant row can have the nil UUID (ids are random UUIDs). */
-    public static final TenantId NO_TENANT = new TenantId("00000000-0000-0000-0000-000000000000");
 
     static final String INSUFFICIENT_SCOPE = "Bearer error=\"insufficient_scope\", scope=\"" + READ_SCOPE + "\"";
     static final String UNAVAILABLE_BODY =
@@ -84,7 +82,7 @@ public final class PrincipalContextFilter implements Filter {
             Forbidden.send(response);
             return;
         }
-        TenantId id = tenant.map(PrincipalTenants.Tenant::id).orElse(NO_TENANT);
+        TenantId id = tenant.map(PrincipalTenants.Tenant::id).orElse(TenantId.NONE);
         request.setAttribute(BearerTokenFilter.ACCOUNT_ATTRIBUTE, new AccountContext(id, scopes));
         chain.doFilter(req, res);
     }

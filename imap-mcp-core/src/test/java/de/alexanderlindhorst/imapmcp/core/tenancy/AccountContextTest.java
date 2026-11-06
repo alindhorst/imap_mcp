@@ -39,4 +39,15 @@ class AccountContextTest {
         mutable.add("imap-mcp:write");
         assertThat(ctx.hasScope("imap-mcp:write")).isFalse();
     }
+
+    @Test
+    void theNamedFactoryIsNotScopeLimited() {
+        assertThat(AccountContext.unrestricted(tenant).scopeLimited()).isFalse();
+        assertThat(AccountContext.unrestricted(tenant)).isEqualTo(new AccountContext(tenant));
+    }
+
+    @Test
+    void theNoTenantIsTheNilUuid() {
+        assertThat(TenantId.NONE.value()).isEqualTo("00000000-0000-0000-0000-000000000000");
+    }
 }

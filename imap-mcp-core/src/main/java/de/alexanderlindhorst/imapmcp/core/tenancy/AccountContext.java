@@ -18,7 +18,12 @@ public record AccountContext(TenantId tenantId, Set<String> scopes) {
         scopes = scopes == null ? null : Set.copyOf(scopes);
     }
 
-    /** Not scope-limited: stdio and http-local. */
+    /** Not scope-limited: stdio and http-local, which have no token scopes. */
+    public static AccountContext unrestricted(TenantId tenantId) {
+        return new AccountContext(tenantId, null);
+    }
+
+    /** Same as {@link #unrestricted}. */
     public AccountContext(TenantId tenantId) {
         this(tenantId, null);
     }
