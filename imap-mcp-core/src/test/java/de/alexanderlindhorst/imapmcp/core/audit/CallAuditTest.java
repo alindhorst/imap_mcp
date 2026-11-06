@@ -154,6 +154,14 @@ class CallAuditTest {
     }
 
     @Test
+    void recordFailureWritesNothingWithoutAResolvedAccount() {
+        ToolCallContext noAccount = new ToolCallContext(new AccountContext(new TenantId("t1")), "req-3");
+        noAccount.attachAudit(log, "move_messages");
+        noAccount.audit().recordFailure("ACCOUNT_NOT_FOUND");
+        assertThat(log.order).isEmpty();
+    }
+
+    @Test
     void recordFailureDoesNothingOnceRowsWereBegunOrAttempted() {
         ctx.audit().begin(List.of(new ItemRef("INBOX", 7, 1)));
         ctx.audit().recordFailure("INVALID_HANDLE");
@@ -189,8 +197,7 @@ class CallAuditTest {
         assertThat(log.begun.get(0)).hasSize(2);
         assertThat(log.calls.get(0).confirmation()).isEqualTo("declined");
         assertThat(log.completions.get(0)).satisfies(c -> {
-            assertThat(c.items()).containsExactly(new ItemResult("not_attempted", null),
-                    new ItemResult("not_attempted", null));
+            assertThat(c.items()).containsExactly(new ItemResult(null, null), new ItemResult(null, null));
             assertThat(c.result()).isEqualTo("failed");
             assertThat(c.errorCode()).isEqualTo("PERMISSION_DENIED");
         });

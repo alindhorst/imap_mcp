@@ -226,7 +226,7 @@ class AuditLogIT {
         assertThat(rows).hasSize(2).allSatisfy(r -> {
             assertThat(r.errorCode()).isEqualTo("PERMISSION_DENIED");
             assertThat(r.confirmation()).isEqualTo("declined");
-            assertThat(r.itemStatus()).isEqualTo("not_attempted");
+            assertThat(r.itemStatus()).isNull();
             assertThat(r.result()).isEqualTo("failed");
             assertThat(r.refHash()).hasSize(16);
         });
@@ -243,20 +243,23 @@ class AuditLogIT {
     }
 
     @Test
-    void aWholeCallErrorWithoutRowsBecomesOneItemLessCallRowThroughTheExecutor() throws Exception {
+    void aWholeCallErrorOfAResolvedAccountBecomesOneItemLessCallRowThroughTheExecutor() throws Exception {
         ToolExecutor executor = new ToolExecutor(Duration.ofSeconds(5), new LogIds(RING), MetricsRecorder.NOOP,
                 (t, r, c, d) -> { }, log);
         Map<String, Object> schema = Map.of("type", "object");
         ToolDefinition def = new ToolDefinition("move_messages", "M", "d", schema, schema,
                 ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT);
-        ToolOutcome out = executor.wrap(def, (ctx, a) -> new ToolOutcome.Failure(
-                de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle("handles[0]", "req-w")))
-                .handle(new ToolCallContext(new AccountContext(tenant), "req-w"), Map.of());
+        ToolOutcome out = executor.wrap(def, (ctx, a) -> {
+            ctx.bindAccount(account);
+            return new ToolOutcome.Failure(
+                    de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle("handles[0]", "req-w"));
+        }).handle(new ToolCallContext(new AccountContext(tenant), "req-w"), Map.of());
         assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
         assertThat(rows()).singleElement().satisfies(r -> {
             assertThat(r.tool()).isEqualTo("move_messages");
             assertThat(r.requestId()).isEqualTo("req-w");
-            assertThat(r.accountId()).isNull();
+            assertThat(r.accountId()).isEqualTo(account.value());
+            assertThat(r.itemStatus()).isNull();
             assertThat(r.refHash()).isNull();
             assertThat(r.errorCode()).isEqualTo("INVALID_HANDLE");
             assertThat(r.result()).isEqualTo("failed");

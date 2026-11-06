@@ -115,24 +115,36 @@ class ToolExecutorAuditTest {
 
     @Test
     void aWholeCallErrorBeforeAnyRowGetsOneItemLessCallRow() {
-        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
-                new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
-                        "handles[0]", "r1"))).handle(ctx(), Map.of());
+        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("acc-1"));
+            return new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
+                    "handles[0]", "r1"));
+        }).handle(ctx(), Map.of());
         assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
         assertThat(audit.order).containsExactly("begin", "complete");
         assertThat(audit.begun.get(0)).isEmpty();
         assertThat(audit.calls.get(0).tool()).isEqualTo("move_messages");
-        assertThat(audit.calls.get(0).account()).isNull();
+        assertThat(audit.calls.get(0).account()).isEqualTo(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("acc-1"));
         assertThat(audit.completions.get(0).result()).isEqualTo("failed");
         assertThat(audit.completions.get(0).errorCode()).isEqualTo("INVALID_HANDLE");
     }
 
     @Test
-    void thatRowIsNotFailClosedAndTheOriginalErrorStays() {
-        audit.failBegin = true;
-        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
+    void aCallWithoutAResolvedAccountWritesNoCallRow() {
+        executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
                 new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
                         "handles[0]", "r1"))).handle(ctx(), Map.of());
+        assertThat(audit.order).isEmpty();
+    }
+
+    @Test
+    void thatRowIsNotFailClosedAndTheOriginalErrorStays() {
+        audit.failBegin = true;
+        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("acc-1"));
+            return new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidHandle(
+                    "handles[0]", "r1"));
+        }).handle(ctx(), Map.of());
         assertThat(out).isInstanceOfSatisfying(ToolOutcome.Failure.class,
                 f -> assertThat(f.error().code()).isEqualTo(ErrorCode.INVALID_HANDLE));
     }

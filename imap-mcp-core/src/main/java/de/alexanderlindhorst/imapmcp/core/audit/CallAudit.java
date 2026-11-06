@@ -92,7 +92,7 @@ public final class CallAudit {
     }
 
     /**
-     * A whole-call error that ended the call before any row was begun (read-only account, invalid argument or
+     * A whole-call error of a call with a resolved account that ended before any row was begun (read-only account, invalid argument or
      * handle, ...): one item-less call row with the error code. Not fail-closed: nothing was changed, so a failed
      * write is one ERROR line and the original error stays. No-op once rows were begun or a begin was attempted.
      */
@@ -100,8 +100,11 @@ public final class CallAudit {
         if (!enabled() || attempted) {
             return;
         }
-        attempted = true;
         CallInfo info = call.get().withConfirmation(confirmation);
+        if (info.account() == null) {
+            return; // no resolved account: not covered (SPEC 5.3, open decisions D10, D11)
+        }
+        attempted = true;
         try {
             log.begin(info, List.of()).complete(new Completion(List.of(), "failed", errorCode, confirmation));
         } catch (RuntimeException e) {
@@ -111,8 +114,8 @@ public final class CallAudit {
     }
 
     /**
-     * A refusal after the items were verified (a purge that was not confirmed): one row per item with the code and
-     * the confirmation value. Not fail-closed, like {@link #recordFailure}.
+     * A refusal after the items were verified (a purge that was not confirmed): one row per item with the code, no
+     * item status and the confirmation value. Not fail-closed, like {@link #recordFailure}.
      */
     public synchronized void recordRefusal(List<ItemRef> items, String errorCode, String confirmation) {
         if (!enabled() || attempted) {
@@ -127,7 +130,7 @@ public final class CallAudit {
                     errorCode);
             return;
         }
-        complete(java.util.Collections.nCopies(items.size(), new ItemResult("not_attempted", null)), "failed",
+        complete(java.util.Collections.nCopies(items.size(), new ItemResult(null, null)), "failed",
                 errorCode);
     }
 }
