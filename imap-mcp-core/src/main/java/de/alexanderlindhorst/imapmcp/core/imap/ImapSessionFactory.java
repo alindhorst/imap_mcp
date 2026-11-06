@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
+import javax.net.SocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +27,7 @@ public final class ImapSessionFactory implements AutoCloseable {
 
     private final ImapTimeouts timeouts;
     private final boolean trace;
+    private final SocketFactory socketFactory;
     private final AtomicBoolean traceWarned = new AtomicBoolean();
     private final UnaryOperator<Properties> propertiesHook;
     private final Map<PoolKey, Session> sessions = new ConcurrentHashMap<>();
@@ -46,7 +48,17 @@ public final class ImapSessionFactory implements AutoCloseable {
 
     /** {@code propertiesHook} is a test seam (for example to trust test certificates); never fed from config. */
     public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace) {
+        this(timeouts, propertiesHook, trace, null);
+    }
+
+    /**
+     * {@code socketFactory} (nullable) is the SSRF-pinning socket factory of {@code http-public} (SPEC 5.3); when set
+     * it is installed on every session.
+     */
+    public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace,
+            SocketFactory socketFactory) {
         this.trace = trace;
+        this.socketFactory = socketFactory;
         this.timeouts = Objects.requireNonNull(timeouts, "timeouts");
         this.propertiesHook = Objects.requireNonNull(propertiesHook, "propertiesHook");
         this.writeTimeoutExecutor = new ScheduledThreadPoolExecutor(1, r -> {

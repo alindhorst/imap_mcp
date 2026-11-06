@@ -156,4 +156,19 @@ class ImapErrorMapperTest {
         b.setNextException(a);
         assertThat(ImapErrorMapper.map(a, RID).error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
     }
+
+    @Test
+    void addressBlockedWinsOverTheConnectExceptionThatWrapsIt() {
+        MailConnectException wrapped = new MailConnectException(new org.eclipse.angus.mail.util.SocketConnectException(
+                MARKER, new de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException(), MARKER, 993, 1000));
+        for (Throwable t : List.of(wrapped, new MessagingException(MARKER, wrapped),
+                new de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException())) {
+            ImapErrorMapper.MappedError m = ImapErrorMapper.map(t, RID);
+            assertThat(m.error().code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
+            assertThat(m.error().code().retryable()).isFalse();
+            assertThat(m.error().details()).containsEntry("reason", "address_blocked");
+            assertThat(m.discardConnection()).isTrue();
+            assertThat(m.error().toMap().toString()).doesNotContain(MARKER);
+        }
+    }
 }
