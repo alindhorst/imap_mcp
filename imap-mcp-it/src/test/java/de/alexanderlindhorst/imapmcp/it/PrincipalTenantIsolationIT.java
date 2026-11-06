@@ -29,7 +29,6 @@ import de.alexanderlindhorst.imapmcp.store.jdbc.Database;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcAccountRepository;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcAccountRepository.NewAccount;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory;
-import de.alexanderlindhorst.imapmcp.transport.http.PrincipalContextFilter;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
@@ -128,7 +127,7 @@ class PrincipalTenantIsolationIT {
 
     @Test
     void aPrincipalWithoutARowSeesNoAccountsAndEveryAccountHandleIsUnknown() {
-        TenantId none = PrincipalContextFilter.NO_TENANT;
+        TenantId none = TenantId.NONE;
         assertThat(repo.findByTenant(none)).isEmpty();
         assertThat(repo.findByTenantAndHandle(none, accountA.handle())).isEmpty();
         Map<String, Object> out = structured(listAccounts.handle(ctx(none), Map.of()));

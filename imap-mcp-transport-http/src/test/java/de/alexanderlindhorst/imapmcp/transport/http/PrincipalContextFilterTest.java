@@ -35,7 +35,7 @@ class PrincipalContextFilterTest {
 
     static final String INSUFFICIENT =
             "Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"";
-    static final TenantId NO_TENANT = new TenantId("00000000-0000-0000-0000-000000000000");
+    static final TenantId NO_TENANT = TenantId.NONE;
     static final TenantId TENANT_A = new TenantId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     static final TenantId TENANT_B = new TenantId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     static final ToolDefinition WHO = new ToolDefinition("who_am_i", "Who am I",
@@ -217,6 +217,15 @@ class PrincipalContextFilterTest {
     }
 
     @Test
+    void scpArrayElementsAreMatchedWholeAndNotSplit() throws Exception {
+        start();
+        String spaced = token(b -> b.subject("alice").claim("scp", List.of("imap-mcp:read imap-mcp:write")));
+        assertThat(post(spaced).statusCode()).isEqualTo(403);
+        String ok = token(b -> b.subject("alice").claim("scp", List.of("imap-mcp:read", "other thing")));
+        assertThat(post(ok).statusCode()).isEqualTo(200);
+    }
+
+    @Test
     void aNonStringScopeClaimGrantsNothing() throws Exception {
         start();
         String t = token(b -> b.subject("alice").claim("scope", List.of("imap-mcp:read")));
@@ -237,13 +246,65 @@ class PrincipalContextFilterTest {
     }
 
     @Test
-    void withoutAValidatedPrincipalTheFilterFailsClosed() throws Exception {
+    void withoutAValidatedPrincipalTheMisconfigurationIs500NotAChallenge() throws Exception {
         PrincipalTenants tenants = (i, s) -> Optional.of(new PrincipalTenants.Tenant(TENANT_A, false));
-        server = HttpLocalServer.builder().port(0).principalFilter(new PrincipalContextFilter(tenants)).build();
+        server = HttpLocalServer.builder().port(0).bearerFilter((rq, rs, ch) -> ch.doFilter(rq, rs))
+                .principalFilter(new PrincipalContextFilter(tenants)).build();
         server.start();
         HttpResponse<String> r = post(null);
-        assertThat(r.statusCode()).isEqualTo(401);
+        assertThat(r.statusCode()).isEqualTo(500);
+        assertThat(r.headers().firstValue("WWW-Authenticate")).isEmpty();
         assertThat(toolCalls.get()).isZero();
+    }
+
+    @Test
+    void aTenantRowWithTheNilIdIsRefusedFailClosedWithAClassOnlyWarning() throws Exception {
+        start();
+        rows.put(TestTokens.ISSUER + "|nil", new PrincipalTenants.Tenant(TenantId.NONE, false));
+        HttpResponse<String> r = post(token("nil", "imap-mcp:read"));
+        assertThat(r.statusCode()).isEqualTo(503);
+        assertThat(toolCalls.get()).isZero();
+        assertThat(logs.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.WARN);
+            assertThat(e.getFormattedMessage()).doesNotContain("nil").doesNotContain(TestTokens.ISSUER);
+        });
+    }
+
+    @Test
+    void aJwtFilterWithoutAPrincipalFilterDoesNotBuild() {
+        OAuthResourceConfig cfg = TestTokens.config();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().port(0)
+                .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
+                .build()).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aPrincipalFilterWithoutAnyTokenFilterDoesNotBuild() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().port(0)
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty())).build())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void everyHttpPublicContextIsScopeLimited() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext> seen =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        OAuthResourceConfig cfg = TestTokens.config();
+        McpToolAdapter adapter = new McpToolAdapter(ctx -> {
+            var c = BearerTokenFilter.accountResolver().apply(ctx);
+            seen.set(c);
+            return c;
+        });
+        server = HttpLocalServer.builder().port(0)
+                .tool(adapter.stateless(WHO, (c, a) -> new ToolOutcome.Success(Map.of("tenant",
+                        c.accountContext().tenantId().value(), "write", false))))
+                .contextExtractor(BearerTokenFilter.contextExtractor())
+                .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty())).build();
+        server.start();
+        post(token("stranger", "imap-mcp:read"));
+        assertThat(seen.get().scopeLimited()).isTrue(); // also for a principal without a row
+        assertThat(seen.get().hasScope("imap-mcp:write")).isFalse();
     }
 
     @Test
