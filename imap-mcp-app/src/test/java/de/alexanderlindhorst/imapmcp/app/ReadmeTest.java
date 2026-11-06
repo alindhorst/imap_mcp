@@ -284,7 +284,8 @@ class ReadmeTest {
                 .matcher(readme);
         assertThat(m.find()).as("README has a '### Permanent deletion (purge_messages)' section").isTrue();
         assertThat(m.group(1)).contains("`delete_messages`").contains("Trash").contains("only from the Trash")
-                .contains("`allowPurge: true`").contains("registered in `stdio` and, in `http-public`, only with `purge.enabled` and `http.stateful`").contains("not available in `http-local`")
+                .contains("`allowPurge: true`").contains("registered in `stdio` and over the stateful HTTP transport")
+                .contains("`http-public` only with `purge.enabled` and `http.stateful`").contains("not available in `http-local`")
                 .contains("elicitation").contains("Allow for this session").contains("15 minutes")
                 .contains("500 messages").contains("`recently_declined`").contains("60 s")
                 .contains("`tools.deadline`").contains("at least 60 s").contains("a late acceptance still deletes")
