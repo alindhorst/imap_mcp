@@ -164,4 +164,23 @@ class PinnedSocketFactoryTest {
         assertThatThrownBy(() -> f.createSocket(NAME, port)).isInstanceOf(IOException.class);
         assertThatThrownBy(() -> f.createSocket(InetAddress.getLoopbackAddress(), port)).isInstanceOf(IOException.class);
     }
+
+    @Test
+    void resolveCheckedDoesNotMarkTheThread() throws Exception {
+        PinnedSocketFactory f = factory(h -> new InetAddress[] {named(NAME, 10, 0, 0, 5)}, ALLOW_LOOPBACK);
+        RefusalMarker.takeRecent();
+        assertThatThrownBy(() -> f.resolveChecked(NAME, port)).isInstanceOf(AddressBlockedException.class);
+        assertThat(RefusalMarker.takeRecent()).as("link-time checks run on pooled threads").isFalse();
+    }
+
+    @Test
+    void aRefusedConnectMarksTheThread() throws Exception {
+        PinnedSocketFactory f = factory(h -> new InetAddress[] {named(NAME, 10, 0, 0, 5)}, ALLOW_LOOPBACK);
+        RefusalMarker.takeRecent();
+        try (Socket s = f.createSocket()) {
+            assertThatThrownBy(() -> s.connect(InetSocketAddress.createUnresolved(NAME, port), 1000))
+                    .isInstanceOf(AddressBlockedException.class);
+        }
+        assertThat(RefusalMarker.takeRecent()).isTrue();
+    }
 }

@@ -426,4 +426,13 @@ class ToolExecutorTest {
         assertThat(e.code()).isEqualTo(ErrorCode.UPSTREAM_ERROR);
         assertThat(e.details()).containsEntry("reason", "address_blocked");
     }
+
+    @Test
+    void aRefusalMarkerDoesNotRelabelAnUnrelatedFailureFromTheWorker() {
+        ToolOutcome o = executor.wrap("t", (cx, a) -> {
+            de.alexanderlindhorst.imapmcp.core.net.RefusalMarker.mark();
+            throw new IllegalStateException("x", new java.net.SocketTimeoutException("read"));
+        }).handle(ctx("r"), Map.of());
+        assertThat(((ToolOutcome.Failure) o).error().code()).isEqualTo(ErrorCode.TIMEOUT);
+    }
 }
