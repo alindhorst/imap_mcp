@@ -14,6 +14,9 @@ public final class ItImages {
     public static final String KEYCLOAK =
             "quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007";
 
+    public static final String VAULT =
+            "hashicorp/vault:1.20@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10";
+
     private ItImages() {
     }
 }
