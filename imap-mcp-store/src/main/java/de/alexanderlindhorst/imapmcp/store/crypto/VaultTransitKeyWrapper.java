@@ -115,6 +115,17 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         }
     }
 
+    /**
+     * Startup check (SPEC 5.7): the configured Transit key exists and has type {@code aes256-gcm96}
+     * ({@code GET <transitMount>/keys/<keyName>}); encrypt would otherwise create a missing key silently.
+     *
+     * @throws IllegalStateException with a fixed text if the key is missing or of another type
+     * @throws KeyServiceUnavailableException if Vault cannot be asked
+     */
+    public void checkKey() {
+        throw new UnsupportedOperationException();
+    }
+
     // ---- HTTP ----
 
     private JsonNode post(String path, String body) {
