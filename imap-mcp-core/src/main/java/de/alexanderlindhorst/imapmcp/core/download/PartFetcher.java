@@ -14,7 +14,7 @@ import org.eclipse.angus.mail.util.QPDecoderStream;
  * The raw reads of {@code download_attachment} on an EXAMINEd folder (SPEC 5.4 "Downloads"): one
  * {@code FETCH (BODYSTRUCTURE)} and the part as {@code BODY.PEEK[section]<offset.length>} blocks of 1 MiB, never
  * {@code BODY[...]} and never {@code BINARY}. The encoded octets are decoded while streaming into a
- * {@link DownloadSink}; memory is bounded by the block size. Errors are mapped by origin: the IMAP source throws
+ * {@link DecodedSink}; memory is bounded by the block size. Errors are mapped by origin: the IMAP source throws
  * {@link MessagingException} (or {@link BlockMissingException}), the decoder {@link DecodeFailedException}, and the
  * sink its own unchecked exceptions, which pass through untouched. Only sequence numbers of the open folder are
  * used, as the caller resolved them from the UID inside the same call.
@@ -66,7 +66,7 @@ public final class PartFetcher {
      * Streams the part into {@code sink}, decoded by {@code encoding} (lower case; base64, quoted-printable, or
      * anything else as is). Ends at the first block shorter than requested or empty.
      */
-    public static void stream(IMAPFolder openFolder, int seq, String section, String encoding, DownloadSink sink)
+    public static void stream(IMAPFolder openFolder, int seq, String section, String encoding, DecodedSink sink)
             throws MessagingException {
         InputStream source = new Source(openFolder, seq, section);
         String enc = encoding == null ? "" : encoding.toLowerCase(Locale.ROOT);
