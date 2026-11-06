@@ -15,8 +15,9 @@ import org.junit.jupiter.api.Test;
  */
 public abstract class AccountRepositoryContract {
 
-    protected static final TenantId TENANT_A = new TenantId("tenant-a");
-    protected static final TenantId TENANT_B = new TenantId("tenant-b");
+    // UUID text so that a repository keyed by uuid (JDBC) can run the same contract.
+    protected static final TenantId TENANT_A = new TenantId("00000000-0000-4000-8000-00000000000a");
+    protected static final TenantId TENANT_B = new TenantId("00000000-0000-4000-8000-00000000000b");
 
     private AccountRepository repository;
 

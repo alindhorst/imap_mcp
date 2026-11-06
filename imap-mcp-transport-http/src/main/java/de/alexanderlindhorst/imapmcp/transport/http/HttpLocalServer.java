@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  * Embedded Jetty 12 (ee10) serving the SDK's stateless Streamable HTTP servlet at {@code /mcp} (SPEC 2, 5.1,
  * 5.3), or, with {@link Builder#stateful}, the SDK's stateful Streamable HTTP servlet with GET, POST and DELETE
  * and sessions bound to the principal (SPEC 4, v3b). Requests run on virtual threads. Filter chain order on /mcp:
- * Host -> Origin -> method guard (POST only, or GET/POST/DELETE) -> bearer -> session binding (stateful only) ->
+ * Host -> Origin -> method guard (POST only, or GET/POST/DELETE) -> token -> principal context -> session binding (stateful only) ->
  * MCP servlet (the method check precedes authentication; a 405 leaks nothing). The filters cover
  * /mcp only, not /health. The optional health servlet is mounted at /health. Everything else is 404.
  */
@@ -61,6 +61,7 @@ public final class HttpLocalServer {
     private final Filter hostFilter;
     private final Filter originFilter;
     private final Filter bearerFilter;
+    private final Filter principalFilter;
     private final HttpServlet healthServlet;
     private final Map<String, HttpServlet> openServlets;
     private final boolean stateful;
@@ -91,6 +92,7 @@ public final class HttpLocalServer {
         this.hostFilter = b.hostFilter;
         this.originFilter = b.originFilter;
         this.bearerFilter = b.bearerFilter;
+        this.principalFilter = b.principalFilter;
         this.healthServlet = b.healthServlet;
         this.openServlets = Map.copyOf(b.openServlets);
         this.stateful = b.stateful;
@@ -121,6 +123,7 @@ public final class HttpLocalServer {
         private Filter hostFilter;
         private Filter originFilter;
         private Filter bearerFilter;
+        private Filter principalFilter;
         private HttpServlet healthServlet;
         private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
         private boolean stateful;
@@ -196,6 +199,12 @@ public final class HttpLocalServer {
             return this;
         }
 
+        /** http-public: runs after the token check, maps the validated principal to the AccountContext. */
+        public Builder principalFilter(Filter filter) {
+            this.principalFilter = filter;
+            return this;
+        }
+
         public Builder healthServlet(HttpServlet servlet) {
             this.healthServlet = servlet;
             return this;
@@ -265,6 +274,14 @@ public final class HttpLocalServer {
         }
 
         public HttpLocalServer build() {
+            // http-public wiring invariant (SPEC 5.3): a token filter that validates JWTs without the filter that
+            // maps the principal to a tenant would leave the AccountContext unset, and the reverse is meaningless
+            if (bearerFilter instanceof JwtTokenFilter && principalFilter == null) {
+                throw new IllegalStateException("a JwtTokenFilter needs a principalFilter");
+            }
+            if (principalFilter != null && bearerFilter == null) {
+                throw new IllegalStateException("a principalFilter needs a token filter before it");
+            }
             return new HttpLocalServer(this);
         }
     }
@@ -316,7 +333,8 @@ public final class HttpLocalServer {
         addFilter(ctx, originFilter, MCP_PATH);
         addFilter(ctx, stateful ? AllowedMethodsFilter.STREAMABLE : AllowedMethodsFilter.POST_ONLY, MCP_PATH);
         addFilter(ctx, bearerFilter, MCP_PATH);
-        addFilter(ctx, sessionFilter, MCP_PATH);
+        addFilter(ctx, principalFilter, MCP_PATH);
+        addFilter(ctx, sessionFilter, MCP_PATH); // after the token and the principal: the session binds to the principal
         ctx.addServlet(new ServletHolder(mcpServlet), MCP_PATH);
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);

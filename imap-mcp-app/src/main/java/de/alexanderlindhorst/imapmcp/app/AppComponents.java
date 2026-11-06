@@ -83,7 +83,7 @@ public final class AppComponents implements AutoCloseable {
     public static final TenantId TENANT = new TenantId("local");
 
     private static final AccountContext LOCAL = new AccountContext(TENANT);
-    private static final int LIST_ACCOUNTS_PARALLELISM = 4;
+    static final int LIST_ACCOUNTS_PARALLELISM = 4;
     /** SPEC 5.7: the user needs time to answer the purge confirmation inside the deadline. */
     private static final Duration PURGE_MIN_DEADLINE = Duration.ofSeconds(60);
 
@@ -284,12 +284,12 @@ public final class AppComponents implements AutoCloseable {
      * The write-call INFO line (SPEC 5.6) for an outcome the executor produced (deadline, cancel, unchecked
      * failure): the handler never got to log it. The executor binds the MDC (req, tool, tenant, acct) around it.
      */
-    private static void logExecutorOutcome(String tool, String requestId,
+    static void logExecutorOutcome(String tool, String requestId,
             de.alexanderlindhorst.imapmcp.core.error.ErrorCode code, Duration duration) {
         WriteCallLog.error(tool, code, duration);
     }
 
-    private static char[] resolveChars(RefCredentialStore store, SecretRef ref, String key, AppPaths paths) {
+    static char[] resolveChars(RefCredentialStore store, SecretRef ref, String key, AppPaths paths) {
         if (ref == null) {
             return null;
         }
@@ -343,7 +343,7 @@ public final class AppComponents implements AutoCloseable {
     }
 
     /** base64url without padding of exactly 32 bytes; the value is never echoed. */
-    private static byte[] decodeKey(char[] chars, String path, AppPaths paths) {
+    static byte[] decodeKey(char[] chars, String path, AppPaths paths) {
         String text = new String(chars);
         try {
             if (text.indexOf('=') < 0) {
@@ -359,7 +359,7 @@ public final class AppComponents implements AutoCloseable {
                 + ": must be the base64url (no padding) encoding of exactly 32 bytes");
     }
 
-    private static void register(Map<Integer, byte[]> masters, Map<Integer, String> origin, int id, String path,
+    static void register(Map<Integer, byte[]> masters, Map<Integer, String> origin, int id, String path,
             byte[] key, AppPaths paths) {
         for (var e : masters.entrySet()) {
             if (java.util.Arrays.equals(e.getValue(), key)) {
@@ -371,7 +371,7 @@ public final class AppComponents implements AutoCloseable {
         origin.put(id, path);
     }
 
-    private static void wipe(char[] c) {
+    static void wipe(char[] c) {
         if (c != null) {
             java.util.Arrays.fill(c, '\0');
         }
