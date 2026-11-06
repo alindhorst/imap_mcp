@@ -43,6 +43,12 @@ public final class JdbcAccountRepository implements AccountRepository {
             Objects.requireNonNull(flavor, "flavor");
             Objects.requireNonNull(username, "username");
         }
+
+        @Override
+        public String toString() {
+            return "NewAccount[port=" + port + ", security=" + security + ", flavor=" + flavor + ", readOnly="
+                    + readOnly + ", allowPurge=" + allowPurge + "]";
+        }
     }
 
     /** Counter and status after a refused LOGIN was recorded. */
@@ -127,7 +133,7 @@ public final class JdbcAccountRepository implements AccountRepository {
                 if (UNIQUE_VIOLATION.equals(e.getSQLState()) && attempt < CREATE_ATTEMPTS) {
                     continue; // a random id or handle collided; draw again
                 }
-                throw new IllegalStateException("account insert failed");
+                throw failure("account insert failed", e);
             }
             return findByTenantAndId(tenant, new AccountId(id)).orElseThrow();
         }
@@ -136,9 +142,11 @@ public final class JdbcAccountRepository implements AccountRepository {
     /**
      * Records one LOGIN answered {@code NO} without {@code [UNAVAILABLE]} for the tenant's account. Atomic in SQL;
      * the third consecutive one sets {@code needs_relink} and raises the revision once, so pooled Stores of the old
-     * revision are dropped. Returns null when the tenant has no such account.
+     * revision are dropped. {@code revision} is the account revision the LOGIN used: a refusal for an older revision
+     * (the credential or status changed meanwhile) changes nothing. Returns null when nothing matched (no such
+     * account for the tenant, or a different revision).
      */
-    public LoginState recordRefusedLogin(TenantId tenant, AccountId id) {
+    public LoginState recordRefusedLogin(TenantId tenant, AccountId id, long revision) {
         UUID t = uuid(tenant);
         if (t == null) {
             return null;
@@ -149,20 +157,24 @@ public final class JdbcAccountRepository implements AccountRepository {
                         "UPDATE mailbox_account SET failed_logins = failed_logins + 1,"
                                 + " status = CASE WHEN " + flips + " THEN 'needs_relink' ELSE status END,"
                                 + " revision = CASE WHEN " + flips + " THEN revision + 1 ELSE revision END,"
-                                + " updated_at = now() WHERE tenant_id = ? AND id = ?"
+                                + " updated_at = now() WHERE tenant_id = ? AND id = ? AND revision = ?"
                                 + " RETURNING failed_logins, status")) {
             ps.setObject(1, t);
             ps.setString(2, id.value());
+            ps.setLong(3, revision);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? new LoginState(rs.getInt(1), status(rs.getString(2))) : null;
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("login counter update failed");
+            throw failure("login counter update failed", e);
         }
     }
 
-    /** A successful LOGIN ends the run of refusals. Link probes must not call this or {@link #recordRefusedLogin}. */
-    public void recordSuccessfulLogin(TenantId tenant, AccountId id) {
+    /**
+     * A successful LOGIN ends the run of refusals; {@code revision} as for {@link #recordRefusedLogin}. Link probes
+     * must not call this or {@code recordRefusedLogin}.
+     */
+    public void recordSuccessfulLogin(TenantId tenant, AccountId id, long revision) {
         UUID t = uuid(tenant);
         if (t == null) {
             return;
@@ -170,12 +182,13 @@ public final class JdbcAccountRepository implements AccountRepository {
         try (Connection c = dataSource.getConnection();
                 PreparedStatement ps = c.prepareStatement(
                         "UPDATE mailbox_account SET failed_logins = 0, updated_at = now()"
-                                + " WHERE tenant_id = ? AND id = ? AND failed_logins <> 0")) {
+                                + " WHERE tenant_id = ? AND id = ? AND revision = ? AND failed_logins <> 0")) {
             ps.setObject(1, t);
             ps.setString(2, id.value());
+            ps.setLong(3, revision);
             ps.executeUpdate();
         } catch (SQLException e) {
-            throw new IllegalStateException("login counter reset failed");
+            throw failure("login counter reset failed", e);
         }
     }
 
@@ -193,7 +206,7 @@ public final class JdbcAccountRepository implements AccountRepository {
             }
             return out;
         } catch (SQLException e) {
-            throw new IllegalStateException("account lookup failed");
+            throw failure("account lookup failed", e);
         }
     }
 
@@ -206,11 +219,19 @@ public final class JdbcAccountRepository implements AccountRepository {
     }
 
     private static MailAccount.Auth auth(String db) {
-        return "xoauth2".equals(db) ? MailAccount.Auth.XOAUTH2 : MailAccount.Auth.PASSWORD;
+        return switch (db) {
+            case "password" -> MailAccount.Auth.PASSWORD;
+            case "xoauth2" -> MailAccount.Auth.XOAUTH2;
+            default -> throw new IllegalStateException("unknown auth value in mailbox_account");
+        };
     }
 
     private static MailAccount.Status status(String db) {
-        return "needs_relink".equals(db) ? MailAccount.Status.NEEDS_RELINK : MailAccount.Status.ACTIVE;
+        return switch (db) {
+            case "active" -> MailAccount.Status.ACTIVE;
+            case "needs_relink" -> MailAccount.Status.NEEDS_RELINK;
+            default -> throw new IllegalStateException("unknown status value in mailbox_account");
+        };
     }
 
     private String randomBase32() {
@@ -221,9 +242,16 @@ public final class JdbcAccountRepository implements AccountRepository {
         return sb.toString();
     }
 
+    /** Only the SQLState survives: driver messages can carry host names, SQL text or values. */
+    private static IllegalStateException failure(String what, SQLException e) {
+        return new IllegalStateException(what + " (sqlstate " + e.getSQLState() + ")");
+    }
+
     private static UUID uuid(TenantId tenant) {
         try {
-            return UUID.fromString(tenant.value());
+            UUID u = UUID.fromString(tenant.value());
+            // UUID.fromString is lenient (upper case, short groups): only the canonical text owns anything
+            return u.toString().equals(tenant.value()) ? u : null;
         } catch (IllegalArgumentException e) {
             return null;
         }

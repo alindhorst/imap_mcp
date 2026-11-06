@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 
 /**
@@ -42,6 +43,8 @@ public final class JdbcTenantDirectory {
     private final DataSource dataSource;
     private final Clock clock;
     private final Map<Key, Cached> cache;
+    /** Counts invalidations; a load that started before one must not cache its (possibly stale) row. */
+    private final AtomicLong invalidations = new AtomicLong();
 
     public JdbcTenantDirectory(DataSource dataSource) {
         this(dataSource, Clock.systemUTC(), DEFAULT_MAX_ENTRIES);
@@ -76,20 +79,23 @@ public final class JdbcTenantDirectory {
                 cache.remove(key);
             }
         }
+        long generation = invalidations.get();
         Optional<TenantInfo> loaded = load(issuer, subject);
         loaded.ifPresent(info -> {
             synchronized (cache) {
-                cache.put(key, new Cached(info, now.plus(CACHE_TTL)));
+                if (invalidations.get() == generation) { // invalidate() runs under this lock too
+                    cache.put(key, new Cached(info, now.plus(CACHE_TTL)));
+                }
             }
         });
         return loaded;
     }
 
     /**
-     * Creates the tenant row if absent and returns its id (first login with the required role, D2). Idempotent and
+     * Creates the tenant row if absent and returns it (first login with the required role, D2). Idempotent and
      * safe against concurrent callers.
      */
-    public TenantId create(String issuer, String subject) {
+    public TenantInfo create(String issuer, String subject) {
         if (!withinBounds(issuer, subject)) {
             throw new IllegalArgumentException("issuer or subject out of bounds");
         }
@@ -102,14 +108,15 @@ public final class JdbcTenantDirectory {
             ps.setString(3, subject);
             ps.executeUpdate();
         } catch (SQLException e) {
-            throw new IllegalStateException("tenant insert failed");
+            throw new IllegalStateException("tenant insert failed (sqlstate " + e.getSQLState() + ")");
         }
         invalidate(issuer, subject);
-        return load(issuer, subject).orElseThrow().tenantId();
+        return load(issuer, subject).orElseThrow();
     }
 
     public void invalidate(String issuer, String subject) {
         synchronized (cache) {
+            invalidations.incrementAndGet();
             cache.remove(new Key(issuer, subject));
         }
     }
@@ -131,11 +138,11 @@ public final class JdbcTenantDirectory {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
-                return Optional.of(new TenantInfo(new TenantId(rs.getObject(1, UUID.class).toString()),
+                return Optional.of(new TenantInfo(new TenantId(UUID.fromString(rs.getString(1)).toString()),
                         "disabled".equals(rs.getString(2))));
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("tenant lookup failed");
+            throw new IllegalStateException("tenant lookup failed (sqlstate " + e.getSQLState() + ")");
         }
     }
 
