@@ -120,7 +120,7 @@ public final class JdbcCredentialStore implements CredentialStore {
         } catch (KeyServiceUnavailableException e) {
             LOG.warn("key service unavailable tenant={} account={} provider={} class={}",
                     logIds.tenant(tenant.value()), logIds.account(account.value()), e.provider(), e.failureClass());
-            metrics.operation(tenant, METRIC_TOOL, METRIC_OP_KEY_SERVICE_UNAVAILABLE, Duration.ZERO);
+            metrics.keyServiceUnavailable(tenant);
             throw e;
         }
         try (PreparedStatement ps = c.prepareStatement(
