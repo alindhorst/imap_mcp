@@ -256,6 +256,11 @@ public final class PublicComponents implements AutoCloseable {
         }
     }
 
+    /** Stub. */
+    static DbConfig dbConfig(PublicConfig.Db db, char[] password) {
+        return DbConfig.of(db.url(), db.username(), password);
+    }
+
     private static Database openDatabase(PublicConfig.Db db, RefCredentialStore refs, AppPaths paths) {
         char[] password = AppComponents.resolveChars(refs, db.password(), "db.password", paths);
         try {

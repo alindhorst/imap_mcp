@@ -6,7 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfig;
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfigLoader;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.io.IOException;
+import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -142,5 +147,55 @@ class PublicComponentsStartupTest {
         Arrays.fill(b, (byte) 1);
         assertThat(PublicComponents.fingerprint(a)).matches("[0-9a-f]{12}").isEqualTo(PublicComponents.fingerprint(a))
                 .isNotEqualTo(PublicComponents.fingerprint(b));
+    }
+
+    @Test
+    void anUnresolvableKekReferenceNamesThePath() {
+        Map<String, String> env = env();
+        env.remove("KEK_A");
+        assertThatThrownBy(() -> start(BASE, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.local.keks[0].key");
+    }
+
+    @Test
+    void aMalformedKekValueIsNeverInTheMessage() {
+        Map<String, String> env = env();
+        env.put("KEK_A", "malformed-SECRETKEK-value");
+        assertThatThrownBy(() -> start(BASE, env)).hasMessageContaining("kms.local.keks[0].key")
+                .hasMessageNotContaining("SECRETKEK");
+    }
+
+    @Test
+    void theVaultProviderIsRefusedAtStartup() {
+        String yaml = BASE.replace("provider: local", "provider: vault");
+        assertThatThrownBy(() -> start(yaml, env())).hasMessageContaining("kms.provider");
+    }
+
+    @Test
+    void allowWithoutRoleGivesAStartupWarning() {
+        Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Level old = log.getLevel();
+        log.setLevel(Level.TRACE);
+        appender.start();
+        log.addAppender(appender);
+        try {
+            String yaml = BASE.replace("  requiredRole: r\n", "  allowWithoutRole: true\n");
+            assertThatThrownBy(() -> start(yaml, env())).isInstanceOf(AppStartupException.class); // no database here
+            assertThat(appender.list).anySatisfy(e -> {
+                assertThat(e.getLevel()).isEqualTo(Level.WARN);
+                assertThat(e.getFormattedMessage()).contains("oauth.allowWithoutRole");
+            });
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(old);
+        }
+    }
+
+    @Test
+    void thePoolSizeReachesTheDatabaseConfiguration() {
+        PublicConfig.Db db = new PublicConfig.Db("jdbc:postgresql://h/d", "u",
+                new de.alexanderlindhorst.imapmcp.core.account.SecretRef("env:X"), 37);
+        assertThat(PublicComponents.dbConfig(db, "pw".toCharArray()).maxPoolSize()).isEqualTo(37);
     }
 }
