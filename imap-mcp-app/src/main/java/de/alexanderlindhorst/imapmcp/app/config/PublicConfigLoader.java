@@ -245,7 +245,13 @@ public final class PublicConfigLoader {
         } else if ("approle".equals(method)) {
             forbid(a, "token", "approle");
             String path = a.string("path", "approle");
-            auth = new VaultAuth.AppRole(path, a.requiredRef("roleId"), a.requiredRef("secretId"));
+            SecretRef roleId = a.requiredRef("roleId");
+            SecretRef secretId = a.requiredRef("secretId");
+            try {
+                auth = new VaultAuth.AppRole(path, roleId, secretId);
+            } catch (IllegalArgumentException e) { // fixed text without the value
+                throw new ConfigException(a.path("path") + ": malformed");
+            }
         } else {
             throw new ConfigException(a.path("method") + ": must be one of approle, token");
         }

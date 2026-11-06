@@ -131,7 +131,7 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
             r = send("GET", path, null, used);
         }
         if (r.status == 404) {
-            throw new IllegalStateException("the Transit key was not found");
+            throw new IllegalStateException("the Transit key was not found (check kms.vault.transitMount and kms.vault.keyName)");
         }
         if (r.status < 200 || r.status > 299) {
             throw unavailable("http_" + r.status);

@@ -322,7 +322,7 @@ public final class PublicComponents implements AutoCloseable {
         if (!"vault".equals(kms.provider())) {
             return buildLocalKeyWrapper(kms, refs, paths);
         }
-        if (kms.vault().allowInsecureHttp()) {
+        if (kms.vault().allowInsecureHttp() && "http".equals(kms.vault().address().getScheme())) {
             LOG.warn("kms.vault.allowInsecureHttp is true: the Vault token and the wrapped keys travel unencrypted. "
                     + "For tests only.");
         }
@@ -330,7 +330,8 @@ public final class PublicComponents implements AutoCloseable {
         try {
             wrapper = new VaultTransitKeyWrapper(kms.vault(), refs::resolve, clock);
         } catch (IllegalArgumentException e) { // the CA bundle (fixed text without a path or content)
-            throw new AppStartupException("kms.vault.caCert in " + paths.configFile() + ": " + e.getMessage(), e);
+            throw new AppStartupException("kms.vault.caCert in " + paths.configFile()
+                    + ": cannot be read as a PEM certificate bundle", e);
         }
         try {
             wrapper.checkKey();
