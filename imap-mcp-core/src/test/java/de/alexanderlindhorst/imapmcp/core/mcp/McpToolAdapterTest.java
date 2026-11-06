@@ -242,4 +242,49 @@ class McpToolAdapterTest {
         assertThat(r2.isError()).isTrue();
         assertThat(seen).isEmpty();
     }
+
+    @Test
+    void extraBlocksFollowTheTextBlockWhichStaysExactlyTheStructuredContent() throws Exception {
+        byte[] bytes = {0, 1, 2, (byte) 0xff};
+        ToolOutcome.EmbeddedResource res = new ToolOutcome.EmbeddedResource("imap-mcp://attachment/abc", "application/pdf", bytes);
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Success(Map.of("count", 3), List.of(res)))
+                .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
+        assertThat(r.structuredContent()).isEqualTo(Map.of("count", 3));
+        assertThat(r.content()).hasSize(2);
+        assertThat(r.content().get(0)).isInstanceOf(McpSchema.TextContent.class);
+        assertThat(((McpSchema.TextContent) r.content().get(0)).text()).isEqualTo(MAPPER.writeValueAsString(r.structuredContent()));
+        McpSchema.EmbeddedResource block = (McpSchema.EmbeddedResource) r.content().get(1);
+        McpSchema.BlobResourceContents blob = (McpSchema.BlobResourceContents) block.resource();
+        assertThat(blob.uri()).isEqualTo("imap-mcp://attachment/abc");
+        assertThat(blob.mimeType()).isEqualTo("application/pdf");
+        assertThat(java.util.Base64.getDecoder().decode(blob.blob())).isEqualTo(bytes);
+    }
+
+    @Test
+    void aSuccessWithoutExtraBlocksHasExactlyOneTextBlock() {
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, this::ok).callHandler()
+                .apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.content()).hasSize(1);
+        assertThat(new ToolOutcome.Success(Map.of()).extraBlocks()).isEmpty();
+    }
+
+    @Test
+    void extraBlocksAreCopiedAndNeverLogged() {
+        java.util.List<ToolOutcome.ContentBlock> mutable = new ArrayList<>();
+        ToolOutcome.Success s = new ToolOutcome.Success(Map.of(), mutable);
+        mutable.add(new ToolOutcome.EmbeddedResource("u", "text/plain", "secret-mail-body".getBytes()));
+        assertThat(s.extraBlocks()).isEmpty();
+        assertThat(new ToolOutcome.EmbeddedResource("u", "text/plain", "secret-mail-body".getBytes()).toString())
+                .doesNotContain("secret").doesNotContain("c2VjcmV0");
+    }
+
+    @Test
+    void errorResultsKeepOneTextBlockAndNoStructuredContent() {
+        McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Failure(ToolError.timeout(c.requestId())))
+                .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
+        assertThat(r.isError()).isTrue();
+        assertThat(r.content()).hasSize(1).first().isInstanceOf(McpSchema.TextContent.class);
+        assertThat(r.structuredContent()).isNull();
+    }
 }
