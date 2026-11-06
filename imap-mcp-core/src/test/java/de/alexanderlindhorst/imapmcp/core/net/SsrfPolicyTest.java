@@ -25,15 +25,15 @@ class SsrfPolicyTest {
 
     @Test
     void idnIsStoredAsALabel() {
-        // bücher.example (u-umlaut) and a CJK name written as escapes
-        assertThat(any.normalizeHost("bücher.example")).isEqualTo("xn--bcher-kva.example");
-        assertThat(any.normalizeHost("例え.example")).startsWith("xn--").endsWith(".example");
+        // b\u00fccher.example (u-umlaut) and a CJK name written as escapes
+        assertThat(any.normalizeHost("b\u00fccher.example")).isEqualTo("xn--bcher-kva.example");
+        assertThat(any.normalizeHost("\u4f8b\u3048.example")).startsWith("xn--").endsWith(".example");
         assertThat(any.normalizeHost("Mail.Example.ORG")).isEqualTo("mail.example.org");
     }
 
     @Test
     void ideographicFullStopSeparatesLabels() {
-        assertThat(any.normalizeHost("imap。example。org")).isEqualTo("imap.example.org");
+        assertThat(any.normalizeHost("imap\u3002example\u3002org")).isEqualTo("imap.example.org");
     }
 
     @ParameterizedTest
@@ -41,7 +41,7 @@ class SsrfPolicyTest {
             "127.0.0.1", "10.1.2.3", "8.8.8.8", "::1", "[::1]", "2001:4860:4860::8888", "::ffff:10.0.0.1",
             "2130706433", "0x7f000001", "0x7f.1", "127.1", "0177.0.0.1", "1.2.3.4.", "fe80::1%eth0",
             // full-width digits that IDN processing folds to ASCII digits
-            "１２７.0.0.1", "１２７。０。０。１"})
+            "\uff11\uff12\uff17.0.0.1", "\uff11\uff12\uff17\u3002\uff10\u3002\uff10\u3002\uff11"})
     void ipLiteralsAreRefused(String host) {
         assertThat(reasonOf(() -> any.normalizeHost(host))).as(host).isEqualTo(Reason.IP_LITERAL);
     }
@@ -51,7 +51,7 @@ class SsrfPolicyTest {
             "", " ", "localhost", "mailserver", "a..b.example", ".example.org", "-bad.example.org",
             "bad-.example.org", "under_score.example.org", "sp ace.example.org", "a/b.example.org",
             "user@example.org", "example.org:993", "example.org/path", "ex\u0000ample.org",
-            "a‮b.example.org"})
+            "a\u202eb.example.org"})
     void malformedHostsAreRefused(String host) {
         assertThat(reasonOf(() -> any.normalizeHost(host))).as(host).isEqualTo(Reason.INVALID_HOST);
     }
@@ -68,7 +68,7 @@ class SsrfPolicyTest {
 
     @Test
     void allowlistAppliesExactAndSuffixPatterns() {
-        SsrfPolicy p = SsrfPolicy.of(List.of("imap.example.org", "*.mail.example.net", "Bücher.example"),
+        SsrfPolicy p = SsrfPolicy.of(List.of("imap.example.org", "*.mail.example.net", "B\u00fccher.example"),
                 false, List.of());
         assertThat(p.normalizeHost("imap.example.org")).isEqualTo("imap.example.org");
         assertThat(p.normalizeHost("IMAP.Example.Org")).isEqualTo("imap.example.org");

@@ -194,9 +194,9 @@ class ImapSessionFactorySsrfTest {
                 t = e;
             }
             assertThat(lookups.get()).as("the second TCP connection was resolved and checked").isGreaterThan(before);
-            if (t != null) { t.printStackTrace(); }
             assertThat(t).isNotNull();
-            assertThat(chainContains(t, AddressBlockedException.class)).isTrue();
+            // Angus drops the cause of a failed folder connection; the mapper still reports the refusal
+            assertThat(ImapErrorMapper.map(t, "r1").error().details()).containsEntry("reason", "address_blocked");
             inbox.close(false);
         }
     }

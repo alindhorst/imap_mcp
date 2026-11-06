@@ -57,6 +57,15 @@ public final class PinnedSocketFactory extends SocketFactory {
      * name). Also usable at link time.
      */
     public InetSocketAddress resolveChecked(String host, int port) throws IOException {
+        try {
+            return doResolveChecked(host, port);
+        } catch (AddressBlockedException e) {
+            RefusalMarker.mark();
+            throw e;
+        }
+    }
+
+    private InetSocketAddress doResolveChecked(String host, int port) throws IOException {
         String name;
         try {
             name = policy.normalizeHost(host);

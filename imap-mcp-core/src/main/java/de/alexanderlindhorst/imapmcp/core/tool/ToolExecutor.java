@@ -5,6 +5,8 @@ import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
+import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
+import de.alexanderlindhorst.imapmcp.core.net.RefusalMarker;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.time.Duration;
 import java.time.Instant;
@@ -175,6 +177,9 @@ public final class ToolExecutor {
                 ctx.attach(logIds, callDeadline);
                 future.complete(delegate.handle(ctx, args));
             } catch (Throwable t) {
+                if (RefusalMarker.takeRecent()) { // the marker is per thread; carry it over to the mapping thread
+                    t.addSuppressed(new AddressBlockedException());
+                }
                 future.completeExceptionally(t);
             } finally {
                 MDC.clear();

@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.error;
 
 import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
+import de.alexanderlindhorst.imapmcp.core.net.RefusalMarker;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
@@ -10,6 +11,7 @@ import java.io.InterruptedIOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Locale;
@@ -40,8 +42,10 @@ public final class ImapErrorMapper {
     }
 
     public static MappedError map(Throwable t, String requestId) {
-        // Angus wraps the refusal in a MailConnectException, which would otherwise read as "unreachable".
-        if (causedBy(t, AddressBlockedException.class)) {
+        // Angus wraps the refusal in a MailConnectException, which would otherwise read as "unreachable"; on folder
+        // connections it drops the cause and throws a bare "connection failure" (see RefusalMarker).
+        boolean refused = RefusalMarker.takeRecent();
+        if (causedBy(t, AddressBlockedException.class) || (refused && hasBareConnectionFailure(t))) {
             return new MappedError(ToolError.addressBlocked(requestId), true);
         }
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -69,7 +73,16 @@ public final class ImapErrorMapper {
         return new MappedError(ToolError.internalError(requestId), true);
     }
 
+    private static boolean hasBareConnectionFailure(Throwable t) {
+        return anyInChain(t, cur -> cur instanceof MessagingException me && "connection failure".equals(me.getMessage())
+                && me.getCause() == null && me.getNextException() == null);
+    }
+
     private static boolean causedBy(Throwable t, Class<? extends Throwable> type) {
+        return anyInChain(t, type::isInstance);
+    }
+
+    private static boolean anyInChain(Throwable t, java.util.function.Predicate<Throwable> test) {
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         java.util.ArrayDeque<Throwable> queue = new java.util.ArrayDeque<>();
         queue.add(t);
@@ -78,12 +91,13 @@ public final class ImapErrorMapper {
             if (!seen.add(cur)) {
                 continue;
             }
-            if (type.isInstance(cur)) {
+            if (test.test(cur)) {
                 return true;
             }
             if (cur.getCause() != null) {
                 queue.add(cur.getCause());
             }
+            queue.addAll(Arrays.asList(cur.getSuppressed()));
             if (cur instanceof MessagingException me && me.getNextException() != null) {
                 queue.add(me.getNextException());
             }
