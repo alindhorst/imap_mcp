@@ -295,6 +295,22 @@ class MoveMessagesToolTest {
     }
 
     @Test
+    void handlesAlreadyInTheTargetAreAuditedWithTheirStatusInTheSameBatch() throws Exception {
+        deliver("Target", "t");
+        deliver("INBOX", "i");
+        long inTarget = snapshot("Target").keySet().iterator().next();
+        long inInbox = snapshot("INBOX").keySet().iterator().next();
+        var recorded = new de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog();
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-aud");
+        ctx.attachAudit(recorded, "move_messages");
+        handler.handle(ctx, args(T1, List.of(handle(T1, "Target", inTarget), handle(T1, "INBOX", inInbox)), "Target"));
+        assertThat(recorded.begun).hasSize(1);
+        assertThat(recorded.begun.get(0)).hasSize(2);
+        assertThat(recorded.completions.get(0).items()).extracting(i -> i.status())
+                .containsExactlyInAnyOrder("already_in_target", "ok");
+    }
+
+    @Test
     void handlesAlreadyInTheTargetSendNoCommandForThatGroup() throws Exception {
         deliver("Target", "t");
         long uid = snapshot("Target").keySet().iterator().next();

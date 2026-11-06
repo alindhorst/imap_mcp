@@ -246,7 +246,8 @@ class McpToolAdapterTest {
     @Test
     void extraBlocksFollowTheTextBlockWhichStaysExactlyTheStructuredContent() throws Exception {
         byte[] bytes = {0, 1, 2, (byte) 0xff};
-        ToolOutcome.EmbeddedResource res = new ToolOutcome.EmbeddedResource("imap-mcp://attachment/abc", "application/pdf", bytes);
+        ToolOutcome.EmbeddedResource res = new ToolOutcome.EmbeddedResource("imap-mcp://attachment/abc", "application/pdf",
+                java.util.Base64.getEncoder().encodeToString(bytes));
         McpSchema.CallToolResult r = adapter.stateless(SAMPLE, (c, a) -> new ToolOutcome.Success(Map.of("count", 3), List.of(res)))
                 .callHandler().apply(TCTX, new McpSchema.CallToolRequest("count_things", Map.of()));
         assertThat(r.isError()).isNotEqualTo(Boolean.TRUE);
@@ -258,6 +259,7 @@ class McpToolAdapterTest {
         McpSchema.BlobResourceContents blob = (McpSchema.BlobResourceContents) block.resource();
         assertThat(blob.uri()).isEqualTo("imap-mcp://attachment/abc");
         assertThat(blob.mimeType()).isEqualTo("application/pdf");
+        assertThat(blob.blob()).as("passed through, not re-encoded").isSameAs(res.base64());
         assertThat(java.util.Base64.getDecoder().decode(blob.blob())).isEqualTo(bytes);
     }
 
@@ -273,10 +275,10 @@ class McpToolAdapterTest {
     void extraBlocksAreCopiedAndNeverLogged() {
         java.util.List<ToolOutcome.ContentBlock> mutable = new ArrayList<>();
         ToolOutcome.Success s = new ToolOutcome.Success(Map.of(), mutable);
-        mutable.add(new ToolOutcome.EmbeddedResource("u", "text/plain", "secret-mail-body".getBytes()));
+        mutable.add(new ToolOutcome.EmbeddedResource("u", "text/plain", "c2VjcmV0LW1haWwtYm9keQ=="));
         assertThat(s.extraBlocks()).isEmpty();
-        assertThat(new ToolOutcome.EmbeddedResource("u", "text/plain", "secret-mail-body".getBytes()).toString())
-                .doesNotContain("secret").doesNotContain("c2VjcmV0");
+        assertThat(new ToolOutcome.EmbeddedResource("u", "text/plain", "c2VjcmV0LW1haWwtYm9keQ==").toString())
+                .doesNotContain("secret").doesNotContain("c2VjcmV0").contains("24");
     }
 
     @Test

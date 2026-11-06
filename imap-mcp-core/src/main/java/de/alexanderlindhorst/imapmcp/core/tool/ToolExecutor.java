@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.tool;
 
+import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
@@ -49,6 +50,7 @@ public final class ToolExecutor {
     private final LogIds logIds;
     private final MetricsRecorder metrics;
     private final OutcomeListener listener;
+    private final AuditLog auditLog;
 
     /** Told about an executor-produced failure of a write tool; {@code code} is the final code on the wire. */
     @FunctionalInterface
@@ -77,6 +79,13 @@ public final class ToolExecutor {
     }
 
     public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics, OutcomeListener listener) {
+        this(deadline, logIds, metrics, listener, AuditLog.NONE);
+    }
+
+    /** With the multi-tenant audit log (SPEC 5.3): write tools get it through {@link ToolCallContext#audit()}. */
+    public ToolExecutor(Duration deadline, LogIds logIds, MetricsRecorder metrics, OutcomeListener listener,
+            AuditLog auditLog) {
+        this.auditLog = Objects.requireNonNull(auditLog, "auditLog");
         this.listener = Objects.requireNonNull(listener, "listener");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.deadline = Objects.requireNonNull(deadline, "deadline");
@@ -119,10 +128,13 @@ public final class ToolExecutor {
             ToolCallContext ctx, Map<String, Object> args) {
         Instant start = metrics.now();
         CallState state = new CallState();
-        ToolOutcome outcome = run(toolName, idempotent, delegate, ctx, args, state);
+        ToolOutcome outcome = run(toolName, idempotent, write, delegate, ctx, args, state);
         TenantId tenant = ctx.accountContext().tenantId();
         Duration elapsed = Duration.between(start, metrics.now());
         metrics.operation(tenant, toolName, "call", elapsed);
+        if (write) {
+            auditFailure(ctx, outcome);
+        }
         if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
             reportExecutorOutcome(toolName, ctx, f.error().code(), elapsed);
         }
@@ -142,6 +154,19 @@ public final class ToolExecutor {
             }
         }
         return outcome;
+    }
+
+    /**
+     * A write tool that ended in a failure (SPEC 5.3): rows begun but not completed are completed with the code on
+     * the wire (handler failure, deadline and cancel included); a call that never began rows gets one item-less
+     * call row with that code. Both are no-ops when the tool already did it, and neither can fail the call.
+     */
+    private static void auditFailure(ToolCallContext ctx, ToolOutcome outcome) {
+        if (outcome instanceof ToolOutcome.Failure f) {
+            String code = f.error().code().name();
+            ctx.audit().completeAborted(ctx.mutationStarted(), code);
+            ctx.audit().recordFailure(code);
+        }
     }
 
     /** The listener runs on the caller thread: bind the keys the worker had (req, tool, hashed tenant and account). */
@@ -165,7 +190,7 @@ public final class ToolExecutor {
         }
     }
 
-    private ToolOutcome run(String toolName, boolean idempotent, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
+    private ToolOutcome run(String toolName, boolean idempotent, boolean write, ToolHandler delegate, ToolCallContext ctx, Map<String, Object> args,
             CallState state) {
         Instant callDeadline = Instant.now().plus(deadline);
         CompletableFuture<ToolOutcome> future = new CompletableFuture<>();
@@ -175,6 +200,9 @@ public final class ToolExecutor {
                 MDC.put("tool", toolName);
                 MDC.put("tenant", logIds.tenant(ctx.accountContext().tenantId().value()));
                 ctx.attach(logIds, callDeadline);
+                if (write) {
+                    ctx.attachAudit(auditLog, toolName);
+                }
                 future.complete(delegate.handle(ctx, args));
             } catch (Throwable t) {
                 // the marker is per thread; carry it over to the mapping thread, only for Angus' bare failure
@@ -240,7 +268,8 @@ public final class ToolExecutor {
     }
 
     private static ToolOutcome timedOut(String toolName, boolean idempotent, ToolCallContext ctx) {
-        ctx.sealMutation(); // decide under the context lock; a later tryBeginMutation() returns false
+        // decide under the context lock; a later tryBeginMutation() returns false
+        ctx.sealMutation();
         return new ToolOutcome.Failure(afterMutation(toolName, ToolError.timeout(ctx.requestId()), idempotent, ctx));
     }
 }

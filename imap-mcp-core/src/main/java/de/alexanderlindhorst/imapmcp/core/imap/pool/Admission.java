@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * taken with {@code tryAcquire()} (never waiting) in the order global, tenant, mailbox and released in reverse.
  * Refusal throws {@link ServerBusyException} (SERVER_BUSY). Semaphores only, no thread pool.
  *
- * <p>The tenant and mailbox semaphores are created on demand and never removed: acceptable in v1 where the set
- * of accounts is fixed and small.
+ * <p>The tenant and mailbox semaphores exist only while a permit is held: an entry is created by the first
+ * acquire and removed by the release that frees its last permit (SPEC 5.5, bounded maps), both atomically per key.
  */
 public final class Admission {
 
@@ -37,22 +37,18 @@ public final class Admission {
 
     /** Held for the duration of a lease; {@link #close()} releases exactly once. */
     public final class Permit implements AutoCloseable {
-        private final Semaphore global;
-        private final Semaphore tenant;
-        private final Semaphore mailbox;
+        private final PoolKey key;
         private final AtomicBoolean released = new AtomicBoolean();
 
-        private Permit(Semaphore global, Semaphore tenant, Semaphore mailbox) {
-            this.global = global;
-            this.tenant = tenant;
-            this.mailbox = mailbox;
+        private Permit(PoolKey key) {
+            this.key = key;
         }
 
         @Override
         public void close() {
             if (released.compareAndSet(false, true)) {
-                mailbox.release();
-                tenant.release();
+                release(mailboxes, key, settings.maxPerMailbox());
+                release(tenants, key.tenantId(), settings.maxPerTenant());
                 global.release();
             }
         }
@@ -77,21 +73,46 @@ public final class Admission {
     /** @throws ServerBusyException if any scope is exhausted; nothing stays acquired in that case */
     public Permit tryAcquire(PoolKey key) {
         Objects.requireNonNull(key, "key");
-        Semaphore tenant = tenants.computeIfAbsent(key.tenantId(), k -> new Semaphore(settings.maxPerTenant()));
-        Semaphore mailbox = mailboxes.computeIfAbsent(key, k -> new Semaphore(settings.maxPerMailbox()));
         if (!global.tryAcquire()) {
             throw busy(key, Scope.GLOBAL);
         }
-        if (!tenant.tryAcquire()) {
+        if (!acquire(tenants, key.tenantId(), settings.maxPerTenant())) {
             global.release();
             throw busy(key, Scope.TENANT);
         }
-        if (!mailbox.tryAcquire()) {
-            tenant.release();
+        if (!acquire(mailboxes, key, settings.maxPerMailbox())) {
+            release(tenants, key.tenantId(), settings.maxPerTenant());
             global.release();
             throw busy(key, Scope.MAILBOX);
         }
-        return new Permit(global, tenant, mailbox);
+        return new Permit(key);
+    }
+
+    /** Takes one permit of the key's semaphore, creating it if needed; an entry nobody holds is not kept. */
+    private static <K> boolean acquire(Map<K, Semaphore> map, K key, int max) {
+        boolean[] taken = new boolean[1];
+        map.compute(key, (k, s) -> {
+            Semaphore sem = s == null ? new Semaphore(max) : s;
+            taken[0] = sem.tryAcquire();
+            return sem.availablePermits() >= max ? null : sem;
+        });
+        return taken[0];
+    }
+
+    /** Returns one permit and removes the entry once all permits are back. */
+    private static <K> void release(Map<K, Semaphore> map, K key, int max) {
+        map.computeIfPresent(key, (k, sem) -> {
+            sem.release();
+            return sem.availablePermits() >= max ? null : sem;
+        });
+    }
+
+    int tenantEntries() {
+        return tenants.size();
+    }
+
+    int mailboxEntries() {
+        return mailboxes.size();
     }
 
     private ServerBusyException busy(PoolKey key, Scope scope) {
