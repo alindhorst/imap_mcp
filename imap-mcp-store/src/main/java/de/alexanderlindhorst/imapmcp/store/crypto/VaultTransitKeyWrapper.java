@@ -3,6 +3,10 @@ package de.alexanderlindhorst.imapmcp.store.crypto;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -18,6 +22,7 @@ import java.security.cert.CertificateFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Map;
@@ -46,8 +51,9 @@ import tools.jackson.databind.json.JsonMapper;
 public final class VaultTransitKeyWrapper implements KeyWrapper {
 
     private static final String PROVIDER = "vault";
-    private static final Pattern KEK_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    
     private static final Pattern CIPHERTEXT = Pattern.compile("vault:v[0-9]{1,9}:[A-Za-z0-9+/=]{1,16384}");
+    private static final int DEK_LENGTH = 32;
     private static final int MAX_RESPONSE = 1 << 20;
     /** Share of the lease after which the client token is replaced. */
     private static final double RENEW_AT = 0.8;
@@ -68,7 +74,8 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.clock = Objects.requireNonNull(clock, "clock");
         HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(config.requestTimeout())
-                .followRedirects(HttpClient.Redirect.NEVER).version(HttpClient.Version.HTTP_1_1);
+                .followRedirects(HttpClient.Redirect.NEVER).version(HttpClient.Version.HTTP_1_1)
+                .proxy(HttpClient.Builder.NO_PROXY); // Vault is reached directly, whatever the JVM proxy settings say
         if (config.caCert() != null) {
             b.sslContext(sslContext(config.caCert()));
         }
@@ -90,7 +97,7 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
     @Override
     public byte[] unwrap(String kekId, byte[] wrapped, String tenantId, String accountId) {
         String ciphertext = new String(wrapped, StandardCharsets.ISO_8859_1);
-        if (kekId == null || !KEK_ID.matcher(kekId).matches() || !CIPHERTEXT.matcher(ciphertext).matches()) {
+        if (kekId == null || !VaultConfig.KEY_NAME.matcher(kekId).matches() || !CIPHERTEXT.matcher(ciphertext).matches()) {
             throw new KeyWrapException("key unwrap failed"); // a row that is no Vault wrap: integrity, no request
         }
         String body = json(Map.of("ciphertext", ciphertext));
@@ -98,8 +105,9 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         String plaintext = data.path("plaintext").asString("");
         try {
             byte[] dek = Base64.getDecoder().decode(plaintext);
-            if (dek.length == 0) {
-                throw unavailable("bad_response");
+            if (dek.length != DEK_LENGTH) {
+                Arrays.fill(dek, (byte) 0);
+                throw new KeyWrapException("key unwrap failed"); // not a DEK of ours: integrity
             }
             return dek;
         } catch (IllegalArgumentException e) {
@@ -122,7 +130,10 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
             r = send(path, body, used);
         }
         if (r.status == 400 && badRequestIsIntegrity) {
-            throw new KeyWrapException("key unwrap failed");
+            if (r.hasVaultErrors()) {
+                throw new KeyWrapException("key unwrap failed");
+            }
+            throw unavailable("bad_response"); // a 400 that Vault did not write (proxy, wrong server)
         }
         if (r.status < 200 || r.status > 299) {
             throw unavailable("http_" + r.status);
@@ -131,6 +142,16 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
     }
 
     private record Response(int status, byte[] body) {
+        /** Vault's error shape: a JSON object with an {@code errors} array. */
+        boolean hasVaultErrors() {
+            try {
+                JsonNode n = JSON.readTree(body);
+                return n != null && n.isObject() && n.path("errors").isArray();
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
         JsonNode json() {
             try {
                 JsonNode n = JSON.readTree(body);
@@ -151,22 +172,32 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         if (clientToken != null) {
             rb.header("X-Vault-Token", clientToken);
         }
+        // sendAsync with a capped body: the timeout below bounds the whole exchange, body included
+        CompletableFuture<HttpResponse<byte[]>> exchange = http.sendAsync(rb.build(),
+                HttpResponse.BodyHandlers.limiting(HttpResponse.BodyHandlers.ofByteArray(), MAX_RESPONSE + 1L));
         try {
-            HttpResponse<InputStream> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream in = resp.body()) {
-                byte[] bytes = in.readNBytes(MAX_RESPONSE + 1);
-                if (bytes.length > MAX_RESPONSE) {
-                    throw unavailable("bad_response");
-                }
-                return new Response(resp.statusCode(), bytes);
+            HttpResponse<byte[]> resp = exchange.get(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            if (resp.body().length > MAX_RESPONSE) {
+                throw unavailable("bad_response");
             }
-        } catch (HttpTimeoutException e) {
+            return new Response(resp.statusCode(), resp.body());
+        } catch (TimeoutException e) {
+            exchange.cancel(true);
             throw unavailable("timeout");
         } catch (InterruptedException e) {
+            exchange.cancel(true);
             Thread.currentThread().interrupt();
-            throw unavailable("interrupted");
-        } catch (IOException e) {
-            throw unavailable(isTls(e) ? "tls" : "unreachable");
+            throw new KeyServiceInterruptedException(PROVIDER);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof HttpTimeoutException) {
+                throw unavailable("timeout");
+            }
+            if (cause instanceof IOException io && io.getMessage() != null
+                    && io.getMessage().startsWith("body exceeds capacity")) { // the JDK's limiting handler
+                throw unavailable("bad_response");
+            }
+            throw unavailable(isTls(cause) ? "tls" : "unreachable");
         }
     }
 

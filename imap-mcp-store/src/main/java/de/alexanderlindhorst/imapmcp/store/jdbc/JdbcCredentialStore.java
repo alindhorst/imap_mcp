@@ -8,6 +8,7 @@ import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialCipher;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialDecryptException;
+import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceInterruptedException;
 import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceUnavailableException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -76,6 +77,8 @@ public final class JdbcCredentialStore implements CredentialStore {
         }
         try {
             return Optional.of(cipher.open(tenantUuid.toString(), account.value(), version, sealed));
+        } catch (KeyServiceInterruptedException e) {
+            throw e; // cancelled or past its deadline: says nothing about the key service
         } catch (KeyServiceUnavailableException e) {
             // availability, not integrity: its own WARN line and metric, never the decrypt-failure ones
             LOG.warn("key service unavailable tenant={} account={} provider={} class={}",

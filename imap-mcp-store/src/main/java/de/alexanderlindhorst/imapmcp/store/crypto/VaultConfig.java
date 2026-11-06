@@ -18,7 +18,8 @@ public record VaultConfig(URI address, String transitMount, String keyName, Vaul
     private static final Duration MIN_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration MAX_TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern MOUNT = Pattern.compile("[A-Za-z0-9_-]{1,64}(/[A-Za-z0-9_-]{1,64})*");
-    private static final Pattern KEY_NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    /** Vault's key-name grammar: no leading or trailing dot or dash, so no {@code .} or {@code ..} path segment. */
+    static final Pattern KEY_NAME = Pattern.compile("[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,62}[A-Za-z0-9_])?");
 
     public VaultConfig {
         Objects.requireNonNull(address, "address");
