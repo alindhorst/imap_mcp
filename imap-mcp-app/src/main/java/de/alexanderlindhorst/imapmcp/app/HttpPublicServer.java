@@ -51,15 +51,20 @@ public final class HttpPublicServer {
 
     public static HttpLocalServer build(PublicConfig config, PublicComponents components,
             JWKSource<SecurityContext> keys) {
-        return build(config, components, keys, false);
+        return assemble(config, components, keys, false);
     }
 
     /**
-     * {@code allowInsecureHttpIssuer} lets the linking surface talk to an {@code http} issuer (a Keycloak container in
+     * Test seam: {@code allowInsecureHttpIssuer} lets the linking surface talk to an {@code http} issuer (a Keycloak container in
      * tests). Production code uses {@link #build(PublicConfig, PublicComponents, JWKSource)}, where the issuer must be
      * {@code https}.
      */
-    public static HttpLocalServer build(PublicConfig config, PublicComponents components,
+    public static HttpLocalServer buildForTest(PublicConfig config, PublicComponents components,
+            JWKSource<SecurityContext> keys, boolean allowInsecureHttpIssuer) {
+        return assemble(config, components, keys, allowInsecureHttpIssuer);
+    }
+
+    private static HttpLocalServer assemble(PublicConfig config, PublicComponents components,
             JWKSource<SecurityContext> keys, boolean allowInsecureHttpIssuer) {
         Objects.requireNonNull(keys, "keys");
         PublicConfig.Oauth o = config.oauth();

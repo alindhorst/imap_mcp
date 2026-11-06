@@ -139,7 +139,7 @@ public final class PublicComponents implements AutoCloseable {
     private boolean closed;
 
     /** The stores and services of the linking surface (C1, C2), built once per replica from the same database. */
-    private record Linking(AccountLinker linker, OidcPendingStore pending, WebSessionStore sessions,
+    record Linking(AccountLinker linker, OidcPendingStore pending, WebSessionStore sessions,
             TenantProvisioner provisioner, Supplier<Secret> webClientSecret) {
     }
 
@@ -316,7 +316,7 @@ public final class PublicComponents implements AutoCloseable {
      * credentials through the same cipher (kms provider) as the pool reads them, and write their audit rows through
      * the same audit log as the tools.
      */
-    private static Linking buildLinking(PublicConfig config, RefCredentialStore refs, javax.sql.DataSource ds,
+    static Linking buildLinking(PublicConfig config, RefCredentialStore refs, javax.sql.DataSource ds,
             JdbcAccountRepository repository, JdbcCredentialStore credentials, JdbcAuditLog auditLog,
             JdbcTenantDirectory tenantDirectory, ImapSessionFactory sessions, SsrfPolicy ssrf, Clock clock) {
         AccountLinking linker = new AccountLinking(repository, new JdbcLinkedAccountStore(ds, repository, credentials),

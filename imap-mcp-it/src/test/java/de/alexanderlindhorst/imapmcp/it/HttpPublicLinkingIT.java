@@ -133,7 +133,7 @@ class HttpPublicLinkingIT {
         accounts = new JdbcAccountRepository(components.database().dataSource());
         com.nimbusds.jose.jwk.source.JWKSource<SecurityContext> keys =
                 JWKSourceBuilder.<SecurityContext>create(new URL(keycloak.certsUrl())).build();
-        server = HttpPublicServer.build(config, components, keys, true);
+        server = HttpPublicServer.buildForTest(config, components, keys, true);
         server.start();
     }
 
