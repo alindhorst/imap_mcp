@@ -1,6 +1,5 @@
 package de.alexanderlindhorst.imapmcp.transport.http.web;
 
-import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
 import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
@@ -24,8 +23,8 @@ public record WebSurface(List<Filter> filters, HttpServlet servlet) {
     }
 
     public static WebSurface of(WebConfig config, OidcProvider provider, OidcPendingStore pending,
-            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, AuditLog audit, Clock clock) {
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock) {
         return new WebSurface(List.of(new WebSecurityFilter(config), new WebSessionFilter(sessions)),
-                new AccountsServlet(config, provider, pending, sessions, tenants, linker, audit, clock));
+                new AccountsServlet(config, provider, pending, sessions, tenants, linker, clock));
     }
 }

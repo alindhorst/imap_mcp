@@ -55,6 +55,16 @@
       "realmRoles": ["imap-user"]
     },
     {
+      "username": "carol",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "carol@example.org",
+      "firstName": "Carol",
+      "lastName": "Test",
+      "credentials": [ { "type": "password", "value": "carol-pw", "temporary": false } ],
+      "realmRoles": ["imap-user"]
+    },
+    {
       "username": "bob",
       "enabled": true,
       "emailVerified": true,

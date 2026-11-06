@@ -1,5 +1,7 @@
 package de.alexanderlindhorst.imapmcp.store.jdbc;
 
+import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
+import de.alexanderlindhorst.imapmcp.core.audit.EventInfo;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -14,6 +16,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 
 /**
@@ -27,6 +31,8 @@ public final class JdbcTenantDirectory {
     /** A tenant row: its id and whether it is disabled. */
     public record TenantInfo(TenantId tenantId, boolean disabled) {
     }
+
+    private static final Logger LOG = LoggerFactory.getLogger(JdbcTenantDirectory.class);
 
     public static final Duration CACHE_TTL = Duration.ofMinutes(5);
     public static final int DEFAULT_MAX_ENTRIES = 10_000;
@@ -107,6 +113,49 @@ public final class JdbcTenantDirectory {
             ps.setString(2, issuer);
             ps.setString(3, subject);
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("tenant insert failed (sqlstate " + e.getSQLState() + ")");
+        }
+        invalidate(issuer, subject);
+        return load(issuer, subject).orElseThrow();
+    }
+
+    /**
+     * As {@link #create(String, String)}, and when this call inserts the row it also writes the
+     * {@code tenant_created} audit row in the same transaction; if that write fails nothing is created and
+     * {@link AuditWriteException} is thrown.
+     */
+    public TenantInfo create(String issuer, String subject, String requestId) {
+        if (!withinBounds(issuer, subject)) {
+            throw new IllegalArgumentException("issuer or subject out of bounds");
+        }
+        UUID id = UUID.randomUUID();
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                int inserted;
+                try (PreparedStatement ps = c.prepareStatement("INSERT INTO tenant (id, issuer, subject)"
+                        + " VALUES (?, ?, ?) ON CONFLICT (issuer, subject) DO NOTHING")) {
+                    ps.setObject(1, id);
+                    ps.setString(2, issuer);
+                    ps.setString(3, subject);
+                    inserted = ps.executeUpdate();
+                }
+                if (inserted == 1) {
+                    try {
+                        JdbcAuditLog.insertEvent(c, new EventInfo("tenant_created", new TenantId(id.toString()), null,
+                                requestId, "ok"));
+                    } catch (SQLException e) {
+                        c.rollback();
+                        LOG.error("audit write failed (cause=SQLException, sqlstate={})", e.getSQLState());
+                        throw new AuditWriteException();
+                    }
+                }
+                c.commit();
+            } catch (SQLException | RuntimeException e) {
+                c.rollback();
+                throw e;
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("tenant insert failed (sqlstate " + e.getSQLState() + ")");
         }

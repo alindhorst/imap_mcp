@@ -8,7 +8,7 @@ import org.testcontainers.utility.MountableFile;
 
 /**
  * Keycloak in development mode on a dynamic port with the test realm {@code imap} imported
- * ({@code keycloak/imap-realm.json}: confidential client {@value #CLIENT_ID} with PKCE S256, users alice with the
+ * ({@code keycloak/imap-realm.json}: confidential client {@value #CLIENT_ID} with PKCE S256, users alice and carol with the
  * role {@code imap-user} and bob without). The image is pinned by digest in {@link ItImages}. The issuer is
  * derived from the request host, so it is {@link #issuer()} for clients that use {@link #baseUrl()}.
  */
@@ -19,6 +19,8 @@ public final class KeycloakFixture extends GenericContainer<KeycloakFixture> {
     public static final String CLIENT_SECRET = "web-secret-for-tests";
     public static final String ALICE = "alice";
     public static final String ALICE_PASSWORD = "alice-pw";
+    public static final String CAROL = "carol";
+    public static final String CAROL_PASSWORD = "carol-pw";
     public static final String BOB = "bob";
     public static final String BOB_PASSWORD = "bob-pw";
     private static final int HTTP_PORT = 8080;

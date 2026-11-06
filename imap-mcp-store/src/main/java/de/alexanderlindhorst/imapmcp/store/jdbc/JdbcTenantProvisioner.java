@@ -19,8 +19,8 @@ public final class JdbcTenantProvisioner implements TenantProvisioner {
     }
 
     @Override
-    public TenantRef create(String issuer, String subject) {
-        JdbcTenantDirectory.TenantInfo info = directory.create(issuer, subject);
+    public TenantRef create(String issuer, String subject, String requestId) {
+        JdbcTenantDirectory.TenantInfo info = directory.create(issuer, subject, requestId);
         return new TenantRef(info.tenantId(), info.disabled());
     }
 }

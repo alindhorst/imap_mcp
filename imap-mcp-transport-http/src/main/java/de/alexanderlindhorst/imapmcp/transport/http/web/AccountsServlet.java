@@ -1,8 +1,6 @@
 package de.alexanderlindhorst.imapmcp.transport.http.web;
 
-import de.alexanderlindhorst.imapmcp.core.audit.AuditLog;
 import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
-import de.alexanderlindhorst.imapmcp.core.audit.EventInfo;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
 import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
@@ -45,19 +43,17 @@ public final class AccountsServlet extends HttpServlet {
     private final OidcPendingStore pending;
     private final WebSessionStore sessions;
     private final TenantProvisioner tenants;
-    private final AuditLog audit;
     private final LinkingPages pages;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
-            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, AuditLog audit, Clock clock) {
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock) {
         this.config = config;
         this.provider = provider;
         this.pending = pending;
         this.sessions = sessions;
         this.tenants = tenants;
-        this.audit = audit;
         this.pages = new LinkingPages(linker);
         this.clock = clock;
     }
@@ -246,9 +242,8 @@ public final class AccountsServlet extends HttpServlet {
         if (!allowed) {
             return null;
         }
-        TenantProvisioner.TenantRef created = tenants.create(token.issuer(), token.subject());
-        audit.event(new EventInfo("tenant_created", created.tenantId(), null, UUID.randomUUID().toString(), "ok"));
-        return created;
+        // the provisioner writes the tenant_created row in the same transaction as the tenant
+        return tenants.create(token.issuer(), token.subject(), UUID.randomUUID().toString());
     }
 
     private static void clearBindingCookie(HttpServletResponse res) {

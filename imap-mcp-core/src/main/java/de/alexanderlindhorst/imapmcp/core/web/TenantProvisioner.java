@@ -15,6 +15,10 @@ public interface TenantProvisioner {
 
     Optional<TenantRef> find(String issuer, String subject);
 
-    /** Creates the row if absent (idempotent, safe under concurrency) and returns it. */
-    TenantRef create(String issuer, String subject);
+    /**
+     * Creates the row if absent (idempotent, safe under concurrency) and returns it. When it creates the row it
+     * writes the {@code tenant_created} audit row in the same transaction: a failed audit write
+     * ({@link de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException}) leaves no tenant behind (fail-closed, D5).
+     */
+    TenantRef create(String issuer, String subject, String requestId);
 }

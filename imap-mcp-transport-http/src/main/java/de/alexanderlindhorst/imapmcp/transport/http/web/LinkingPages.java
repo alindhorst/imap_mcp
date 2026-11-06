@@ -102,6 +102,10 @@ final class LinkingPages {
             case "STARTTLS" -> MailAccount.Security.STARTTLS;
             default -> null;
         };
+        if (port < 0 || security == null) { // not a number / not an offered choice: no need to ask the linker
+            outcome(res, LinkOutcome.INVALID_INPUT, "");
+            return;
+        }
         LinkRequest request = new LinkRequest(param(req, "label"), param(req, "host"), port, security,
                 param(req, "username"), readOnly(req), req.getParameter("allow_purge") != null);
         char[] password = param(req, "password").toCharArray();
