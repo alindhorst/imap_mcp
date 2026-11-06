@@ -19,7 +19,6 @@ import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.IOException;
 import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -152,8 +151,7 @@ public final class McpToolAdapter {
         for (ToolOutcome.ContentBlock block : extra) { // after the text block, which stays exactly the structuredContent
             b.addContent(switch (block) {
                 case ToolOutcome.EmbeddedResource r -> new McpSchema.EmbeddedResource(null,
-                        new McpSchema.BlobResourceContents(r.uri(), r.mimeType(),
-                                Base64.getEncoder().encodeToString(r.data()), null));
+                        new McpSchema.BlobResourceContents(r.uri(), r.mimeType(), r.base64(), null));
             });
         }
         return b.structuredContent(structured).build();

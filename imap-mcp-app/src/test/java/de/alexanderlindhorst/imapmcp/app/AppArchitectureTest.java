@@ -18,7 +18,7 @@ class AppArchitectureTest {
     /** AC4: the transport-agnostic wiring never reaches HTTP or Jetty; only the http launcher may. */
     @ArchTest
     static final ArchRule wiringIsFreeOfHttpAndJetty = noClasses().that().resideInAPackage("..app..")
-            .and().haveSimpleNameNotStartingWith("HttpLocal")
+            .and().haveSimpleNameNotStartingWith("HttpLocal").and().haveSimpleNameNotStartingWith("HttpPublic")
             .should().dependOnClassesThat().resideInAnyPackage("..transport.http..", "org.eclipse.jetty..",
                     "jakarta.servlet..");
 
@@ -26,7 +26,8 @@ class AppArchitectureTest {
     @ArchTest
     static final ArchRule mainDoesNotReferenceLaunchersStatically = noClasses().that().haveSimpleName("Main")
             .should().dependOnClassesThat().haveSimpleNameStartingWith("StdioMain")
-            .orShould().dependOnClassesThat().haveSimpleNameStartingWith("HttpLocalMain");
+            .orShould().dependOnClassesThat().haveSimpleNameStartingWith("HttpLocalMain")
+            .orShould().dependOnClassesThat().haveSimpleNameStartingWith("HttpPublicMain");
 
     /** #47: the launchers hold no logger field (logging must not initialise before the bootstrap). */
     @ArchTest

@@ -173,6 +173,21 @@ class CreateFolderToolTest {
     }
 
     @Test
+    void aTokenWithoutTheWriteScopeCreatesNothingAndSendsNothing() {
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(A,
+                java.util.Set.of(de.alexanderlindhorst.imapmcp.core.tenancy.Scopes.READ)), "rid-scope");
+        ToolOutcome out = new CreateFolderTool(new AccountArgument(repo), leases, CreateFolderTool.angusDirectory(),
+                commands).handle(ctx, Map.of("account", handleA(), "name", "NoScope"));
+        var e = ((ToolOutcome.Failure) out).error();
+        assertThat(e.code()).isEqualTo(ErrorCode.PERMISSION_DENIED);
+        assertThat(e.details()).containsEntry("reason", "insufficient_scope")
+                .containsEntry("scope", "imap-mcp:write");
+        assertThat(commands.sent).isEmpty();
+        assertThat(trace.list).isEmpty();
+        assertThat(listedNames()).doesNotContain("NoScope");
+    }
+
+    @Test
     void auditRowIsWrittenBeforeCreateAndCompletedAfterSubscribe() {
         RecordingAuditLog audit = new RecordingAuditLog();
         assertThat(callAudited(audit, "Audited")).isInstanceOf(ToolOutcome.Success.class);

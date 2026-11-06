@@ -284,7 +284,7 @@ class ToolErrorTest {
                 .contains("\"details\":{\"reason\":\"folder_read_only\"}");
         assertThat(json(ToolError.permissionDenied(ToolError.PermissionReason.SERVER_DENIED, RID)))
                 .contains("\"details\":{\"reason\":\"server_denied\"}");
-        assertThat(ToolError.PermissionReason.values()).hasSize(7);
+        assertThat(ToolError.PermissionReason.values()).hasSize(8); // v3b adds insufficient_scope
     }
 
     @Test

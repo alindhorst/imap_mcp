@@ -9,6 +9,7 @@ import de.alexanderlindhorst.imapmcp.core.tool.DescriptionRules;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.ImapLease;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
 import de.alexanderlindhorst.imapmcp.core.tool.InputValidator;
+import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolHandler;
@@ -186,6 +187,9 @@ public final class CreateFolderTool implements ToolHandler {
             return fail(nf.error(), start);
         }
         AccountArgument.Result.Ok ok = (AccountArgument.Result.Ok) r;
+        if (!ctx.accountContext().hasScope(Scopes.WRITE)) { // D3: per call, before any I/O
+            return fail(ToolError.insufficientScope(Scopes.WRITE, rid), start);
+        }
         if (ok.account().account().readOnly()) {
             return fail(ToolError.permissionDenied(ToolError.PermissionReason.ACCOUNT_READ_ONLY, rid), start);
         }

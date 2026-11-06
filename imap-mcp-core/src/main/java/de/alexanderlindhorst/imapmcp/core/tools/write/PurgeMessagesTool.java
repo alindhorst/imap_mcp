@@ -68,15 +68,32 @@ public final class PurgeMessagesTool implements ToolHandler {
     private final PurgeConfirmation confirmation;
     private final DeleteMessagesTool.TrashResolver trash;
     private final PurgeStep.Wire wire;
+    private final boolean purgeEnabled;
 
     public PurgeMessagesTool(WritePreflight preflight, StoreLeases leases, Clock clock,
             PurgeConfirmation confirmation) {
-        this(preflight, leases, clock, confirmation, TargetResolver::resolveTrash, null);
+        this(preflight, leases, clock, confirmation, true);
+    }
+
+    /**
+     * @param purgeEnabled the deployment's switch ({@code purge.enabled} of {@code http-public}, SPEC 4 v3b); the
+     *        single-tenant modes pass true because their gate is the per-account {@code allowPurge} alone. False
+     *        refuses every call with {@code purge_disabled}, before any I/O, whatever the account record says.
+     */
+    public PurgeMessagesTool(WritePreflight preflight, StoreLeases leases, Clock clock,
+            PurgeConfirmation confirmation, boolean purgeEnabled) {
+        this(preflight, leases, clock, confirmation, TargetResolver::resolveTrash, null, purgeEnabled);
     }
 
     /** {@code trash} and {@code wire} are test seams (GreenMail reports no SPECIAL-USE; scripted refusals). */
     PurgeMessagesTool(WritePreflight preflight, StoreLeases leases, Clock clock, PurgeConfirmation confirmation,
             DeleteMessagesTool.TrashResolver trash, PurgeStep.Wire wire) {
+        this(preflight, leases, clock, confirmation, trash, wire, true);
+    }
+
+    PurgeMessagesTool(WritePreflight preflight, StoreLeases leases, Clock clock, PurgeConfirmation confirmation,
+            DeleteMessagesTool.TrashResolver trash, PurgeStep.Wire wire, boolean purgeEnabled) {
+        this.purgeEnabled = purgeEnabled;
         this.preflight = Objects.requireNonNull(preflight, "preflight");
         this.leases = Objects.requireNonNull(leases, "leases");
         this.runner = new FolderGroupRunner(Objects.requireNonNull(clock, "clock"));
@@ -93,8 +110,9 @@ public final class PurgeMessagesTool implements ToolHandler {
         String account = (String) args.get("account");
         List<String> handleList = List.copyOf((List<String>) args.get("handles"));
         WritePreflight.Result checked = preflight.check(ctx, account, handleList, null, a -> {
-            // the operator's gate is read from the account record per call; both checks without I/O
-            if (!a.account().allowPurge()) {
+            // the operator's gates: the deployment switch, then the account record's allowPurge, read per call;
+            // both checks without I/O
+            if (!purgeEnabled || !a.account().allowPurge()) {
                 return ToolError.purgeDisabled(rid);
             }
             return confirmation.available(ctx) ? null : ToolError.confirmationUnavailable(rid);

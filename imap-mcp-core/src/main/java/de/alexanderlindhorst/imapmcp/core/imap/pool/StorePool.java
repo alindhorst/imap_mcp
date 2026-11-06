@@ -1,6 +1,7 @@
 package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.AccountRepository;
+import de.alexanderlindhorst.imapmcp.core.account.LoginOutcomes;
 import de.alexanderlindhorst.imapmcp.core.account.CredentialStore;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
@@ -64,6 +65,19 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     /** {@code metrics} receives the connect+login latency of every new Store. */
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics) {
+        this(sessions, credentials, capabilities, accounts, s, metrics, LoginOutcomes.NONE);
+    }
+
+    /** As the repository variant, with the login outcomes of SPEC 5.3 "Re-link". */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            AccountRepository repository, PoolSettings s, MetricsRecorder metrics, LoginOutcomes outcomes) {
+        this(sessions, credentials, capabilities, lookup(repository), s, metrics, outcomes);
+    }
+
+    /** {@code outcomes} receives every real LOGIN result (refused without [UNAVAILABLE], or success). */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
+            LoginOutcomes outcomes) {
         GenericKeyedObjectPoolConfig<IMAPStore> config = new GenericKeyedObjectPoolConfig<>();
         config.setJmxEnabled(false); // must be set before construction
         config.setMaxTotalPerKey(s.maxPerMailbox());
@@ -76,7 +90,7 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setTimeBetweenEvictionRuns(s.evictionInterval());
         config.setNumTestsPerEvictionRun(-1);
         config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
-        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics);
+        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes);
         this.pool = new GenericKeyedObjectPool<>(factory, config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
@@ -108,7 +122,7 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     public IMAPStore borrow(PoolKey key) throws Exception {
         if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
             pool.clear(key);
-            throw new MessagingException("account is not active");
+            throw new AccountNeedsRelinkException();
         }
         for (int attempt = 0; attempt < REVISION_ATTEMPTS; attempt++) {
             IMAPStore store = pool.borrowObject(key);
