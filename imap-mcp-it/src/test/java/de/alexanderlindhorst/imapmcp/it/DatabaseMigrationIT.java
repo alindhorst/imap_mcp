@@ -212,4 +212,48 @@ class DatabaseMigrationIT {
             assertThat(count(c, "oidc_pending")).isEqualTo(1);
         }
     }
+
+    private static void insertAccountWith(Connection c, UUID tenant, String id, String security, String flavor,
+            String auth) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security, flavor,"
+                        + " username, auth) VALUES (?, ?, ?, 'l', 'a@example.org', 'imap.example.org', 993,"
+                        + " ?, ?, 'u', ?)")) {
+            ps.setObject(1, tenant);
+            ps.setString(2, id);
+            ps.setString(3, "acc_CHECK" + id);
+            ps.setString(4, security);
+            ps.setString(5, flavor);
+            ps.setString(6, auth);
+            ps.executeUpdate();
+        }
+    }
+
+    @Test
+    void theNilTenantIdIsRefused() throws Exception {
+        try (Connection c = db.dataSource().getConnection();
+                PreparedStatement ps = c.prepareStatement(
+                        "INSERT INTO tenant (id, issuer, subject) VALUES (?, 'https://idp.example', 'nil')")) {
+            ps.setObject(1, new UUID(0L, 0L));
+            assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class)
+                    .hasMessageContaining("tenant_id_not_nil");
+        }
+    }
+
+    @Test
+    void securityFlavorAndAuthAreRestrictedToTheStoredValues() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t = insertTenant(c, "checks");
+            insertAccountWith(c, t, "ok1", "IMPLICIT_TLS", "GENERIC", "password");
+            insertAccountWith(c, t, "ok2", "STARTTLS", "GMAIL", "xoauth2");
+            assertThatThrownBy(() -> insertAccountWith(c, t, "bad1", "tls", "GENERIC", "password"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_security_valid");
+            assertThatThrownBy(() -> insertAccountWith(c, t, "bad2", "IMPLICIT_TLS", "generic", "password"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_flavor_valid");
+            assertThatThrownBy(() -> insertAccountWith(c, t, "bad3", "IMPLICIT_TLS", "GENERIC", "PASSWORD"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_auth_valid");
+            assertThatThrownBy(() -> insertAccountWith(c, t, "bad4", "NONE", "GENERIC", "oauth"))
+                    .isInstanceOf(SQLException.class);
+        }
+    }
 }

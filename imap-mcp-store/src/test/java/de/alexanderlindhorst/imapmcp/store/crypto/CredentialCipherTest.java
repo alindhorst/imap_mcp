@@ -164,6 +164,12 @@ class CredentialCipherTest {
     }
 
     @Test
+    void theKeyServiceOutageIsMarkedForTheCoreLogging() {
+        assertThat(new KeyServiceUnavailableException())
+                .isInstanceOf(de.alexanderlindhorst.imapmcp.core.error.ServiceOutage.class);
+    }
+
+    @Test
     void passwordsOfEveryUtf8ShapeRoundTripAndLongOnesToo() {
         CredentialCipher cipher = cipher();
         String[] samples = {"", "a", "p\u00e4ssw\u00f6rd", "\u20ac\u20ac\u20ac", "pw\ud83d\ude00x", "x".repeat(5000),
