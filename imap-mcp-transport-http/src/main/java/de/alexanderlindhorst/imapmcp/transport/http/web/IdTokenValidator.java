@@ -4,7 +4,6 @@ import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.KeySourceException;
 import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.jwk.source.RateLimitReachedException;
 import com.nimbusds.jose.proc.BadJOSEException;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
@@ -47,7 +46,7 @@ public final class IdTokenValidator {
         processor.setJWSTypeVerifier(new DefaultJOSEObjectTypeVerifier<>(JOSEObjectType.JWT, null));
         processor.setJWSKeySelector(new JWSVerificationKeySelector<>(JwtValidator.ALLOWED_ALGORITHMS, keys));
         DefaultJWTClaimsVerifier<SecurityContext> claims = new DefaultJWTClaimsVerifier<>(clientId,
-                new JWTClaimsSet.Builder().issuer(issuer).build(), Set.of("exp", "aud", "iss", "nonce"));
+                new JWTClaimsSet.Builder().issuer(issuer).build(), Set.of("exp", "iat", "aud", "iss", "nonce"));
         claims.setMaxClockSkew((int) SKEW_SECONDS);
         processor.setJWTClaimsSetVerifier(claims);
     }
@@ -61,9 +60,9 @@ public final class IdTokenValidator {
             claims = processor.process(token, null);
         } catch (ParseException e) {
             throw new InvalidTokenException(InvalidTokenException.MALFORMED);
-        } catch (BadJOSEException | RateLimitReachedException e) {
+        } catch (BadJOSEException e) {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);
-        } catch (KeySourceException e) {
+        } catch (KeySourceException e) { // includes RateLimitReachedException: keys not obtainable, not the token's fault
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (JOSEException | RuntimeException e) {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);

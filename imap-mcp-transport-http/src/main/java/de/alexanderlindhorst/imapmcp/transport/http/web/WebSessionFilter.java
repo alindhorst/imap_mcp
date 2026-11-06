@@ -76,7 +76,8 @@ public final class WebSessionFilter implements Filter {
             return;
         }
         if ("POST".equals(req.getMethod())) {
-            String token = req.getParameter(CSRF_FIELD);
+            // the token comes from the form body only: a POST with a query string is refused altogether
+            String token = req.getQueryString() != null ? null : req.getParameter(CSRF_FIELD);
             if (token == null || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8),
                     session.get().csrfToken().getBytes(StandardCharsets.UTF_8))) {
                 LOG.debug("accounts request refused: csrf");

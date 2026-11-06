@@ -13,6 +13,11 @@ import org.junit.jupiter.api.Test;
 
 class WebSupportTest {
 
+    private static WebConfig insecureConfig(String base, String issuer, String role, boolean allowWithoutRole) {
+        return new WebConfig(URI.create(base), issuer, "client", () -> new Secret("s".toCharArray()), "sub", role,
+                null, allowWithoutRole, true);
+    }
+
     private static WebConfig config(String base, String issuer, String role, boolean allowWithoutRole) {
         return new WebConfig(URI.create(base), issuer, "client", () -> new Secret("s".toCharArray()), "sub", role,
                 null, allowWithoutRole);
@@ -61,12 +66,10 @@ class WebSupportTest {
     @Test
     void anIssuerOverPlainHttpIsNotUsedUnlessTheTestSwitchIsOn() throws Exception {
         try (FakeIdp idp = new FakeIdp()) {
-            WebConfig c = config("https://m.example.com", idp.issuer, "r", false);
+            WebConfig insecure = insecureConfig("https://m.example.com", idp.issuer, "r", false);
             var keys = new ImmutableJWKSet<com.nimbusds.jose.proc.SecurityContext>(new JWKSet(idp.key.toPublicJWK()));
 
-            assertThatThrownBy(() -> HttpOidcProvider.create(c, keys).authorizationEndpoint())
-                    .isInstanceOf(OidcException.class).hasMessage(OidcException.UNAVAILABLE);
-            assertThat(HttpOidcProvider.create(c, keys, true).authorizationEndpoint().toString())
+            assertThat(HttpOidcProvider.create(insecure, keys).authorizationEndpoint().toString())
                     .startsWith(idp.issuer);
         }
     }
@@ -74,11 +77,36 @@ class WebSupportTest {
     @Test
     void discoveryWithAnotherIssuerIsRefused() throws Exception {
         try (FakeIdp idp = new FakeIdp()) {
-            WebConfig c = config("https://m.example.com", idp.issuer + "/", "r", false); // differs from the document
+            WebConfig c = insecureConfig("https://m.example.com", idp.issuer + "/", "r", false); // differs from the document
             var keys = new ImmutableJWKSet<com.nimbusds.jose.proc.SecurityContext>(new JWKSet(idp.key.toPublicJWK()));
 
-            assertThatThrownBy(() -> HttpOidcProvider.create(c, keys, true).authorizationEndpoint())
+            assertThatThrownBy(() -> HttpOidcProvider.create(c, keys).authorizationEndpoint())
                     .isInstanceOf(OidcException.class);
         }
+    }
+
+    @Test
+    void theIssuerMustBeHttpsUnlessTheTestSwitchIsOn() {
+        for (String bad : new String[] {"http://idp.example/realms/x", "https://u@idp.example", "https://idp.example?x=1",
+                "https://idp.example#f", "idp.example", "ftp://idp.example"}) {
+            assertThatThrownBy(() -> config("https://m.example.com", bad, "r", false)).as(bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(config("https://m.example.com", "https://idp.example/realms/x", "r", false).issuer())
+                .isEqualTo("https://idp.example/realms/x");
+        assertThat(new WebConfig(URI.create("https://m.example.com"), "http://127.0.0.1:1/realms/x", "client",
+                () -> new Secret("s".toCharArray()), "sub", "r", null, false, true).issuer())
+                .isEqualTo("http://127.0.0.1:1/realms/x");
+    }
+
+    @Test
+    void anExplicitDefaultHttpsPortInTheBaseUrlIsNormalised() {
+        WebConfig c = config("https://Mail.Example.com:443", "https://idp", "r", false);
+
+        assertThat(c.origin()).isEqualTo("https://mail.example.com");
+        assertThat(c.authority()).isEqualTo("mail.example.com");
+        assertThat(c.redirectUri()).isEqualTo("https://mail.example.com/accounts/callback");
+        assertThat(config("https://mail.example.com:8443", "https://idp", "r", false).authority())
+                .isEqualTo("mail.example.com:8443");
     }
 }

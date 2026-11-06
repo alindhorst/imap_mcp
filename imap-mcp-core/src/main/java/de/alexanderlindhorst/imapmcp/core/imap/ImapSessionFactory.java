@@ -6,10 +6,11 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
 import jakarta.mail.Session;
 import java.util.List;
-import java.util.Map;
+import de.alexanderlindhorst.imapmcp.core.util.ExpiringLruMap;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
@@ -24,6 +25,10 @@ import org.slf4j.LoggerFactory;
  */
 public final class ImapSessionFactory implements AutoCloseable {
 
+    /** Sessions unused for this long are dropped, and at most {@link #MAX_SESSIONS} are kept (SPEC 5.5). */
+    public static final Duration SESSION_IDLE_EXPIRY = Duration.ofHours(24);
+    public static final int MAX_SESSIONS = 10_000;
+
     private static final Logger LOG = LoggerFactory.getLogger(ImapSessionFactory.class);
 
     private final ImapTimeouts timeouts;
@@ -31,7 +36,7 @@ public final class ImapSessionFactory implements AutoCloseable {
     private final SocketFactory socketFactory;
     private final AtomicBoolean traceWarned = new AtomicBoolean();
     private final UnaryOperator<Properties> propertiesHook;
-    private final Map<SessionKey, Session> sessions = new ConcurrentHashMap<>();
+    private final ExpiringLruMap<SessionKey, Session> sessions;
     private final ScheduledThreadPoolExecutor writeTimeoutExecutor;
 
     public ImapSessionFactory(ImapTimeouts timeouts) {
@@ -58,6 +63,17 @@ public final class ImapSessionFactory implements AutoCloseable {
      */
     public ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace,
             SocketFactory socketFactory) {
+        this(timeouts, propertiesHook, trace, socketFactory, Clock.systemUTC(), MAX_SESSIONS);
+    }
+
+    ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace, Clock clock,
+            int maxSessions) {
+        this(timeouts, propertiesHook, trace, null, clock, maxSessions);
+    }
+
+    private ImapSessionFactory(ImapTimeouts timeouts, UnaryOperator<Properties> propertiesHook, boolean trace,
+            SocketFactory socketFactory, Clock clock, int maxSessions) {
+        this.sessions = new ExpiringLruMap<>(maxSessions, SESSION_IDLE_EXPIRY, clock);
         this.trace = trace;
         this.socketFactory = socketFactory;
         this.timeouts = Objects.requireNonNull(timeouts, "timeouts");
@@ -150,6 +166,10 @@ public final class ImapSessionFactory implements AutoCloseable {
         }
         props.put(p + "socketFactory", socketFactory); // an object, not a class name
         props.setProperty(p + "socketFactory.fallback", "false");
+    }
+
+    int sessionCount() {
+        return sessions.size();
     }
 
     @Override

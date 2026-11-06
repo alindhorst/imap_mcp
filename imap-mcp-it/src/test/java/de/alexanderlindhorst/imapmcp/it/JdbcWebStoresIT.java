@@ -286,6 +286,21 @@ class JdbcWebStoresIT {
     }
 
     @Test
+    void expiredPendingLoginsDoNotCountTowardsTheCap() throws Exception {
+        exec("TRUNCATE oidc_pending");
+        TestClock clock = new TestClock();
+        JdbcOidcPendingStore pending = new JdbcOidcPendingStore(db.dataSource(), clock, 3);
+        for (int i = 0; i < 3; i++) {
+            pending.begin("n" + i, "v");
+        }
+        assertThatThrownBy(() -> pending.begin("n", "v")).isInstanceOf(OidcPendingStore.LimitReachedException.class);
+
+        clock.advance(OidcPendingStore.TTL.plusSeconds(1));
+
+        assertThat(pending.begin("fresh", "v")).isNotBlank();
+    }
+
+    @Test
     void onlyTheHashOfTheStateIsStored() throws Exception {
         JdbcOidcPendingStore pending = new JdbcOidcPendingStore(db.dataSource(), new TestClock());
         String state = pending.begin("n", "v");

@@ -59,12 +59,12 @@ class KeycloakLoginIT {
         origin = "https://127.0.0.1:" + port;
         WebConfig config = new WebConfig(URI.create(origin), keycloak.issuer(), KeycloakFixture.CLIENT_ID,
                 () -> new Secret(KeycloakFixture.CLIENT_SECRET.toCharArray()), "sub", "imap-user",
-                "realm_access.roles", false);
+                "realm_access.roles", false, true);
         com.nimbusds.jose.jwk.source.JWKSource<SecurityContext> keys =
                 JWKSourceBuilder.<SecurityContext>create(new URL(keycloak.certsUrl())).build();
         Clock clock = Clock.systemUTC();
         server = HttpLocalServer.builder().port(port).webSurface(WebSurface.of(config,
-                HttpOidcProvider.create(config, keys, true), new JdbcOidcPendingStore(db.dataSource(), clock),
+                HttpOidcProvider.create(config, keys), new JdbcOidcPendingStore(db.dataSource(), clock),
                 new JdbcWebSessionStore(db.dataSource(), clock),
                 new JdbcTenantProvisioner(new JdbcTenantDirectory(db.dataSource())), clock)).build();
         server.start();

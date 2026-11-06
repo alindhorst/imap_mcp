@@ -76,14 +76,14 @@ public final class AccountsServlet extends HttpServlet {
                 }
             }
             case WebSessionFilter.LOGIN_PATH -> {
-                if (read) {
+                if ("GET".equals(req.getMethod())) { // HEAD must not start a login
                     login(req, res);
                 } else {
                     methodNotAllowed(res);
                 }
             }
             case WebSessionFilter.CALLBACK_PATH -> {
-                if (read) {
+                if ("GET".equals(req.getMethod())) {
                     callback(req, res);
                 } else {
                     methodNotAllowed(res);
@@ -164,7 +164,7 @@ public final class AccountsServlet extends HttpServlet {
                 .append("&state=").append(enc(state)).append("&nonce=").append(enc(nonce))
                 .append("&code_challenge=").append(enc(challenge(verifier))).append("&code_challenge_method=S256");
         if ("1".equals(req.getParameter("reauth"))) {
-            url.append("&prompt=login");
+            url.append("&prompt=login&max_age=0");
         }
         // Lax, not Strict: the browser comes back from the IdP in a cross-site navigation, which must carry it.
         res.addHeader("Set-Cookie", BINDING_COOKIE + "=" + state + "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age="
@@ -221,8 +221,9 @@ public final class AccountsServlet extends HttpServlet {
                     "<p>This account is not allowed to use this service.</p>");
             return;
         }
-        Instant authTime = token.authTime() != null && token.authTime().isBefore(clock.instant().plusSeconds(60))
-                ? token.authTime() : clock.instant();
+        // A missing or future auth_time is never "fresh": the epoch makes every freshness check fail.
+        Instant authTime = token.authTime() != null && !token.authTime().isAfter(clock.instant().plusSeconds(60))
+                ? token.authTime() : Instant.EPOCH;
         WebSessionStore.Created session = sessions.create(tenant.tenantId(), authTime);
         res.addHeader("Set-Cookie", WebSessionFilter.COOKIE + "=" + session.sessionId()
                 + "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=" + WebSessionStore.ABSOLUTE_TIMEOUT.toSeconds());

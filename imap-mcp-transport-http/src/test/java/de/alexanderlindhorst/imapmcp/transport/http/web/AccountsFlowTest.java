@@ -93,9 +93,9 @@ class AccountsFlowTest {
         Config v = variant.apply(new Config("imap-user", false));
         WebConfig config = new WebConfig(URI.create(origin), idp.issuer, FakeIdp.CLIENT_ID,
                 () -> new Secret(FakeIdp.CLIENT_SECRET.toCharArray()), "sub", v.requiredRole(), "realm_access.roles",
-                v.allowWithoutRole());
-        OidcProvider provider = HttpOidcProvider.forTest(config,
-                new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())), true);
+                v.allowWithoutRole(), true);
+        OidcProvider provider = HttpOidcProvider.create(config,
+                new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())));
         server = HttpLocalServer.builder().port(port)
                 .webSurface(WebSurface.of(config, provider, pending, sessions, tenants, new LinkingPagesTest.FakeLinker(), audit,
                         Clock.systemUTC())).build();
@@ -227,7 +227,36 @@ class AccountsFlowTest {
     void reauthAsksTheIdpToPromptForCredentialsAgain() throws Exception {
         Resp r = get("/accounts/login?reauth=1", null);
 
-        assertThat(query(r.header("location"))).containsEntry("prompt", "login");
+        assertThat(query(r.header("location"))).containsEntry("prompt", "login").containsEntry("max_age", "0");
+    }
+
+    @Test
+    void aHeadRequestStartsNoLogin() throws Exception {
+        Resp r = send("HEAD", "/accounts/login", null, Map.of(), null);
+
+        assertThat(r.status()).isEqualTo(405);
+        assertThat(pending.size()).isZero();
+    }
+
+    @Test
+    void theSessionKeepsTheTokensAuthTimeAndAMissingOrFutureOneIsNeverFresh() throws Exception {
+        long authTime = System.currentTimeMillis() / 1000 - 120;
+        idp.claims = b -> b.claim("auth_time", authTime);
+        callback(startLogin(), "c");
+        assertThat(sessions.byId.values()).singleElement().satisfies(ws ->
+                assertThat(ws.authTime()).isEqualTo(java.time.Instant.ofEpochSecond(authTime)));
+
+        sessions.byId.clear();
+        idp.claims = b -> b.claim("auth_time", null);
+        callback(startLogin(), "c");
+        assertThat(sessions.byId.values()).singleElement().satisfies(ws ->
+                assertThat(ws.authTime()).isEqualTo(java.time.Instant.EPOCH));
+
+        sessions.byId.clear();
+        idp.claims = b -> b.claim("auth_time", System.currentTimeMillis() / 1000 + 3600);
+        callback(startLogin(), "c");
+        assertThat(sessions.byId.values()).singleElement().satisfies(ws ->
+                assertThat(ws.authTime()).isEqualTo(java.time.Instant.EPOCH));
     }
 
     @Test
@@ -276,7 +305,8 @@ class AccountsFlowTest {
         assertThat(sessionCookie).matches("__Host-session=[A-Za-z0-9_-]{43}; Path=/; Secure; HttpOnly; "
                 + "SameSite=Strict; Max-Age=28800");
         assertThat(r.cookieHeader("__Host-oidc")).startsWith("__Host-oidc=; ").contains("Max-Age=0");
-        assertThat(r.body()).contains("http-equiv=\"refresh\"").contains("url=/accounts").doesNotContain("<script");
+        assertThat(r.body()).contains("http-equiv=\"refresh\"").contains("url=/accounts").doesNotContain("<script")
+                .contains("<a href=\"/accounts\">Continue</a>");
         assertSecurityHeaders(r);
     }
 
@@ -537,6 +567,30 @@ class AccountsFlowTest {
     }
 
     @Test
+    void theCsrfTokenIsReadFromTheBodyNeverFromTheQuery() throws Exception {
+        String cookie = login();
+        String csrf = csrfOf(cookie);
+
+        Resp inQuery = send("POST", "/accounts/logout?csrf=" + csrf, cookie, Map.of(), "");
+        Resp both = send("POST", "/accounts/logout?x=1", cookie, Map.of(), "csrf=" + csrf);
+
+        assertThat(inQuery.status()).isEqualTo(403);
+        assertThat(both.status()).isEqualTo(403); // a query string on a POST is refused altogether
+        assertThat(sessions.size()).isEqualTo(1);
+    }
+
+    @Test
+    void methodsOtherThanGetHeadAndPostAreRefusedByTheFilter() throws Exception {
+        String cookie = login();
+
+        for (String m : new String[] {"PUT", "DELETE", "PATCH", "OPTIONS"}) {
+            Resp r = send(m, "/accounts", cookie, Map.of(), m.equals("OPTIONS") ? null : "csrf=x");
+            assertThat(r.status()).as(m).isEqualTo(405);
+            assertSecurityHeaders(r);
+        }
+    }
+
+    @Test
     void aPostWithoutASessionIsForbiddenNotRedirected() throws Exception {
         Resp r = send("POST", "/accounts/logout", null, Map.of(), "csrf=x");
 
@@ -562,7 +616,7 @@ class AccountsFlowTest {
         Resp getLogout = get("/accounts/logout", cookie);
         Resp unknown = get("/accounts/nothing-here", cookie);
 
-        assertThat(post.status()).isIn(403, 405);
+        assertThat(post.status()).isEqualTo(405);
         assertThat(getLogout.status()).isEqualTo(405);
         assertThat(unknown.status()).isEqualTo(404);
         assertSecurityHeaders(getLogout);
