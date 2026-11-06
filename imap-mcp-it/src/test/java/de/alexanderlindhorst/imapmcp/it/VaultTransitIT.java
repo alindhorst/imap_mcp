@@ -316,7 +316,7 @@ class VaultTransitIT {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     void aSealedVaultGivesInternalErrorWithTheUnavailabilityWarnAndMetricAndNoLogin() throws Exception {
         TenantId t = newTenant();
         AccountId a = newAccount(t, "sealed-acct");
@@ -371,7 +371,72 @@ class VaultTransitIT {
     }
 
     @Test
-    @Order(10)
+    @Order(9)
+    void aFlippedByteOfTheStoredWrappedDekIsADecryptFailureThroughThePoolWithoutALogin() throws Exception {
+        TenantId t = newTenant();
+        AccountId a = newAccount(t, "flip-acct");
+        JdbcCredentialStore s = store(wrapper());
+        s.insert(t, a, 1, "pw".toCharArray());
+        try (Connection c = db.dataSource().getConnection();
+                PreparedStatement sel = c.prepareStatement("SELECT wrapped_dek FROM credential WHERE tenant_id = ?");
+                PreparedStatement upd = c.prepareStatement("UPDATE credential SET wrapped_dek = ? WHERE tenant_id = ?")) {
+            sel.setObject(1, UUID.fromString(t.value()));
+            byte[] wrapped;
+            try (var rs = sel.executeQuery()) {
+                rs.next();
+                wrapped = rs.getBytes(1);
+            }
+            int at = wrapped.length - 8; // inside the base64 payload
+            wrapped[at] = (byte) (wrapped[at] == 'A' ? 'B' : 'A');
+            upd.setBytes(1, wrapped);
+            upd.setObject(2, UUID.fromString(t.value()));
+            upd.executeUpdate();
+        }
+        operations.clear();
+
+        int connections = borrowAndCountConnections(s, t, a, CredentialDecryptException.class);
+
+        assertThat(connections).isZero();
+        assertThat(operations).contains("credentials/decrypt_failure").doesNotContain("credentials/key_service_unavailable");
+    }
+
+    private int borrowAndCountConnections(JdbcCredentialStore s, TenantId t, AccountId a, Class<?> expectedRoot)
+            throws Exception {
+        AtomicInteger connections = new AtomicInteger();
+        try (ServerSocket mailServer = new ServerSocket(0, 5, java.net.InetAddress.getLoopbackAddress());
+                ImapSessionFactory sessions = new ImapSessionFactory(new ImapTimeouts(Duration.ofSeconds(2),
+                        Duration.ofSeconds(2), Duration.ofSeconds(2)))) {
+            Thread acceptor = Thread.startVirtualThread(() -> {
+                try {
+                    while (true) {
+                        mailServer.accept().close();
+                        connections.incrementAndGet();
+                    }
+                } catch (java.io.IOException e) {
+                    // closed by the test
+                }
+            });
+            MailAccount account = new MailAccount(a, "l", null, "127.0.0.1", mailServer.getLocalPort(),
+                    MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "u", new SecretRef("db:"));
+            StorePool pool = new StorePool(sessions, s, new CapabilityCache(), key -> account, PoolSettings.DEFAULTS);
+            PoolKey key = PoolKey.of(new AccountContext(t), new ResolvedAccount(t, account, "acc_TESTHANDLE"));
+            assertThatThrownBy(() -> pool.borrow(key)).satisfies(e -> {
+                assertThat(ImapErrorMapper.map(e, "req").error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR);
+                Throwable root = e;
+                while (root.getCause() != null) {
+                    root = root.getCause();
+                }
+                assertThat(root).isInstanceOf(expectedRoot);
+            });
+            pool.close();
+            mailServer.close();
+            acceptor.join(2000);
+        }
+        return connections.get();
+    }
+
+    @Test
+    @Order(11)
     void aStoppedVaultIsUnreachableUnavailability() {
         VaultTransitKeyWrapper w = wrapper();
         vault.stop();
