@@ -140,6 +140,44 @@ public final class JdbcAccountRepository implements AccountRepository {
     }
 
     /**
+     * Inserts a new account on the caller's connection and transaction and returns its random id and handle. A
+     * collision of a random id or handle is retried under a savepoint, so the transaction stays usable.
+     */
+    String[] insertAccount(Connection c, UUID tenant, NewAccount a) throws SQLException {
+        for (int attempt = 1;; attempt++) {
+            String id = randomBase32();
+            String handle = "acc_" + randomBase32();
+            java.sql.Savepoint sp = c.setSavepoint();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security,"
+                            + " flavor, username, auth, read_only, allow_purge)"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?)")) {
+                ps.setObject(1, tenant);
+                ps.setString(2, id);
+                ps.setString(3, handle);
+                ps.setString(4, a.label());
+                ps.setString(5, a.address());
+                ps.setString(6, a.host());
+                ps.setInt(7, a.port());
+                ps.setString(8, a.security().name());
+                ps.setString(9, a.flavor().name());
+                ps.setString(10, a.username());
+                ps.setBoolean(11, a.readOnly());
+                ps.setBoolean(12, a.allowPurge());
+                ps.executeUpdate();
+                c.releaseSavepoint(sp);
+                return new String[] {id, handle};
+            } catch (SQLException e) {
+                if (UNIQUE_VIOLATION.equals(e.getSQLState()) && attempt < CREATE_ATTEMPTS) {
+                    c.rollback(sp);
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    /**
      * Records one LOGIN answered {@code NO} without {@code [UNAVAILABLE]} for the tenant's account. Atomic in SQL;
      * the third consecutive one sets {@code needs_relink} and raises the revision once, so pooled Stores of the old
      * revision are dropped. {@code revision} is the account revision the LOGIN used: a refusal for an older revision
@@ -247,7 +285,7 @@ public final class JdbcAccountRepository implements AccountRepository {
         return new IllegalStateException(what + " (sqlstate " + e.getSQLState() + ")");
     }
 
-    private static UUID uuid(TenantId tenant) {
+    static UUID uuid(TenantId tenant) {
         try {
             UUID u = UUID.fromString(tenant.value());
             // UUID.fromString is lenient (upper case, short groups): only the canonical text owns anything

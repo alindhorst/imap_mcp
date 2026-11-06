@@ -96,17 +96,23 @@ public final class JdbcAuditLog implements AuditLog {
 
     @Override
     public void event(EventInfo event) throws AuditWriteException {
-        try (Connection c = dataSource.getConnection();
-                PreparedStatement ps = c.prepareStatement("INSERT INTO audit_event (tenant_id, account_id, request_id,"
-                        + " event_type, result, completed_at) VALUES (?, ?, ?, ?, ?, now())")) {
+        try (Connection c = dataSource.getConnection()) {
+            insertEvent(c, event);
+        } catch (SQLException | RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
+    /** The event row on the caller's connection, so that it commits or rolls back with the action it records. */
+    static void insertEvent(Connection c, EventInfo event) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO audit_event (tenant_id, account_id, request_id,"
+                + " event_type, result, completed_at) VALUES (?, ?, ?, ?, ?, now())")) {
             ps.setObject(1, UUID.fromString(event.tenant().value()));
             ps.setString(2, event.account() == null ? null : event.account().value());
             ps.setString(3, event.requestId());
             ps.setString(4, event.type());
             ps.setString(5, event.result());
             ps.executeUpdate();
-        } catch (SQLException | RuntimeException e) {
-            throw failed(e);
         }
     }
 

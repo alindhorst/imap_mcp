@@ -211,7 +211,7 @@ class JdbcLinkedAccountStoreIT {
     @Test
     void aFailingAuditWriteUndoesTheLinkFailClosed() throws Exception {
         TenantId t = AccountSql.newTenant(db.dataSource());
-        exec("ALTER TABLE audit_event ADD CONSTRAINT audit_block_link CHECK (event_type <> 'link')");
+        exec("ALTER TABLE audit_event ADD CONSTRAINT audit_block_link CHECK (event_type <> 'link') NOT VALID");
         try {
             assertThatThrownBy(() -> store.create(t, request("Work"), "pw".toCharArray(), 10, "req-1"))
                     .isInstanceOf(LinkedAccountStore.UnavailableException.class);
