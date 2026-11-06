@@ -2,6 +2,8 @@ package de.alexanderlindhorst.imapmcp.app.config;
 
 import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader.Section;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
+import de.alexanderlindhorst.imapmcp.store.crypto.VaultAuth;
+import de.alexanderlindhorst.imapmcp.store.crypto.VaultConfig;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -218,7 +220,56 @@ public final class PublicConfigLoader {
         if (local != null) {
             throw new ConfigException(s.path("local") + ": not allowed with kms.provider vault");
         }
-        throw new ConfigException(s.path("provider") + ": vault is not available in this build");
+        if (vault == null) {
+            throw new ConfigException(s.path("vault") + ": required with kms.provider vault");
+        }
+        PublicConfig.Kms kms = new PublicConfig.Kms("vault", null, List.of(), vault(new Section(vault, s.path("vault"))));
+        s.finish();
+        return kms;
+    }
+
+    /** {@code kms.vault.*} (SPEC 5.7): the grammar rules of {@link VaultConfig} apply; its messages carry no value. */
+    private static VaultConfig vault(Section v) {
+        String address = v.string("address", null);
+        boolean allowInsecure = v.bool("allowInsecureHttp", false);
+        String mount = v.string("transitMount", "transit");
+        String keyName = v.string("keyName", null);
+        Section a = v.section("auth");
+        String method = a.string("method", null);
+        VaultAuth auth;
+        if ("token".equals(method)) {
+            forbid(a, "roleId", "token");
+            forbid(a, "secretId", "token");
+            forbid(a, "path", "token");
+            auth = new VaultAuth.Token(a.requiredRef("token"));
+        } else if ("approle".equals(method)) {
+            forbid(a, "token", "approle");
+            String path = a.string("path", "approle");
+            auth = new VaultAuth.AppRole(path, a.requiredRef("roleId"), a.requiredRef("secretId"));
+        } else {
+            throw new ConfigException(a.path("method") + ": must be one of approle, token");
+        }
+        a.finish();
+        Path caCert = v.optionalAbsolutePath("caCert");
+        Duration timeout = v.duration("requestTimeout", VaultConfig.DEFAULT_REQUEST_TIMEOUT);
+        v.finish();
+        URI uri;
+        try {
+            uri = new URI(address);
+        } catch (URISyntaxException e) { // its message would echo the value
+            throw new ConfigException(v.path("address") + ": must be a base URL");
+        }
+        try {
+            return new VaultConfig(uri, mount, keyName, auth, caCert, timeout, allowInsecure);
+        } catch (IllegalArgumentException e) { // fixed texts of VaultConfig, none carries a value
+            throw new ConfigException(e.getMessage());
+        }
+    }
+
+    private static void forbid(Section s, String key, String method) {
+        if (s.take(key) != null) {
+            throw new ConfigException(s.path(key) + ": not allowed with kms.vault.auth.method " + method);
+        }
     }
 
     private static PublicConfig.Kms localKeks(Section s) {
