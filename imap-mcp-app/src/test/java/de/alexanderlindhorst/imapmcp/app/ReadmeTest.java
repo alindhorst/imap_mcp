@@ -82,6 +82,22 @@ class ReadmeTest {
                 .contains("Rotation with `kms.provider: local`").contains("rotate the Transit key");
     }
 
+    /** B3 part 3 (#315): the linking surface section for operators. */
+    @Test
+    void theReadmeDocumentsTheLinkingSurfaceForOperators() {
+        assertThat(readme).contains("#### Linking surface (`/accounts`)")
+                .contains("`oauth.webClientId`").contains("`oauth.webClientSecret`")
+                                .contains("`<public.baseUrl>/accounts/callback`")
+                .contains("`realm_access.roles`").contains("`id.token.claim`").contains("realm roles")
+                .contains("`303`").contains("Post/Redirect/Get")
+                .contains("10 probes per tenant per hour").contains("per replica")
+                .contains("`public.maxAccountsPerTenant`").contains("`oauth.allowWithoutRole`")
+                .contains("`link_url`").contains("`__Host-session`")
+                .doesNotContain("the linking surface follows").doesNotContain("`keyring:` or `cmd:`")
+                .contains("`env:`, `file:` or `keyring:`").contains("only with `file:` or `keyring:`")
+                .contains("`purge.enabled` is true, `read_only` is off");
+    }
+
     /**
      * #143 / #62: every {@code keyring:} reference in the README passes the store's own validation (form, length,
      * control characters) and is looked up under exactly the service and account the README's storing commands use.

@@ -72,6 +72,8 @@ class HttpPublicJarIT {
                   issuer: https://idp.example.com/realms/test
                   resource: https://mail.example.com/mcp
                   requiredRole: imap-mcp-user
+                  webClientId: imap-mcp-web
+                  webClientSecret: env:WEB_SECRET
                 public:
                   baseUrl: https://mail.example.com
                 security:
@@ -94,6 +96,7 @@ class HttpPublicJarIT {
                 %s""".formatted(dbUrl, postgres.getUsername(), port, extraYaml));
         Map<String, String> env = new HashMap<>();
         env.put("DB_PW", postgres.getPassword());
+        env.put("WEB_SECRET", "web-secret");
         env.put("HANDLE_KEY", HANDLE_KEY);
         env.put("KEK", KEK);
         env.put("IMAP_MCP_STATE_DIR", root.resolve("state").toString());

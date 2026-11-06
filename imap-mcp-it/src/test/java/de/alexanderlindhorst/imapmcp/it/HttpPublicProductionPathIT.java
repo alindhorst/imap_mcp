@@ -78,6 +78,8 @@ class HttpPublicProductionPathIT {
                   issuer: %s
                   resource: %s
                   requiredRole: r
+                  webClientId: imap-mcp-web
+                  webClientSecret: env:WEB_SECRET
                 public:
                   baseUrl: https://mail.example.com
                 security:
@@ -97,7 +99,7 @@ class HttpPublicProductionPathIT {
                 http:
                   allowedHosts: ["127.0.0.1:*"]
                 """.formatted(postgres.getJdbcUrl(), postgres.getUsername(), ISSUER, RESOURCE));
-        Map<String, String> env = Map.of("DB_PW", postgres.getPassword(), "HK", key(1), "KEK", key(2));
+        Map<String, String> env = Map.of("DB_PW", postgres.getPassword(), "WEB_SECRET", "web-secret", "HK", key(1), "KEK", key(2));
         PublicConfig config = PublicConfigLoader.load(file, env);
         components = PublicComponents.create(config, AppPaths.resolve(new String[] {"--config", file.toString()},
                 Map.of(AppPaths.ENV_STATE_DIR, dir.resolve("state").toString()), dir, dir), Clock.systemUTC(), env);
