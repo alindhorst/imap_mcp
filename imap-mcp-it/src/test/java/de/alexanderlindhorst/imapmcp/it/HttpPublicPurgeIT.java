@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import org.junit.jupiter.api.AfterAll;
@@ -82,6 +83,7 @@ class HttpPublicPurgeIT {
     private static final Map<String, TenantId> tenants = new LinkedHashMap<>();
     private static final Map<String, ResolvedAccount> boxes = new LinkedHashMap<>();
     private static final List<McpSchema.ElicitFormRequest> requests = new CopyOnWriteArrayList<>();
+    private static final AtomicInteger connects = new AtomicInteger();
 
     private static String b64(int seed) {
         byte[] k = new byte[32];
@@ -139,14 +141,17 @@ class HttpPublicPurgeIT {
             p.put("mail.imaps.ssl.checkserveridentity", "false");
             return p;
         }, policy -> new de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory(policy,
-                host -> new java.net.InetAddress[] {java.net.InetAddress.getLoopbackAddress()}, a -> false, p -> true));
+                host -> {
+            connects.incrementAndGet(); // one name resolution per new IMAP connection
+            return new java.net.InetAddress[] {java.net.InetAddress.getLoopbackAddress()};
+        }, a -> false, p -> true));
         JdbcAccountRepository accounts = new JdbcAccountRepository(components.database().dataSource());
-        for (String user : List.of("alice", "bob", "dave")) { // dave: the decline cooldown is per tenant and account
+        for (String user : List.of("alice", "bob", "dave", "frank", "erin")) { // dave: the decline cooldown is per tenant and account
             TenantId tenant = components.tenantDirectory().create(ISSUER, user).tenantId();
             tenants.put(user, tenant);
             ResolvedAccount box = accounts.create(tenant, new NewAccount(user + " box", null, "imap.example.com",
                     DOVECOT.imapsPort(), MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC,
-                    "purge-pub-" + user, false, true));
+                    "purge-pub-" + user, false, !user.equals("erin"))); // erin: allow_purge false
             components.credentials().insert(tenant, box.account().id(), 1, DovecotContainer.PASSWORD.toCharArray());
             boxes.put(user, box);
         }
@@ -401,5 +406,56 @@ class HttpPublicPurgeIT {
             assertThat(noScope.headers().firstValue("WWW-Authenticate"))
                     .contains("Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"");
         }
+    }
+
+    @Test
+    void twoPrincipalsWithoutATenantRowStillHaveSeparateSessions() throws Exception {
+        // both map to the one sentinel tenant: the session binds to (issuer, subject), not to the tenant
+        HttpResponse<String> init = raw("POST", INIT, token("ghost-one", BOTH), null);
+        assertThat(init.statusCode()).isEqualTo(200);
+        String session = init.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        assertThat(raw("POST", LIST, token("ghost-one", BOTH), session).statusCode()).isEqualTo(200);
+        assertThat(raw("POST", LIST, token("ghost-two", BOTH), session).statusCode()).isEqualTo(404);
+        assertThat(raw("GET", null, token("ghost-two", BOTH), session).statusCode()).isEqualTo(404);
+        assertThat(raw("DELETE", null, token("ghost-two", BOTH), session).statusCode()).isEqualTo(404);
+        assertThat(raw("POST", LIST, token("ghost-one", BOTH), session).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void aSessionApprovalCoversTheNextCallOfThatSessionOnlyAndIsAudited() throws Exception {
+        requests.clear();
+        Function<McpSchema.ElicitFormRequest, McpSchema.ElicitResult> allowForSession = req ->
+                new McpSchema.ElicitResult(McpSchema.ElicitResult.Action.ACCEPT, Map.of("allow_for_session", true));
+        Map<String, String> h;
+        try (McpSyncClient first = client(token("frank", BOTH), allowForSession)) {
+            seed(first, "frank", "app-1", "app-2", "app-3");
+            h = handles(first, "frank");
+            assertThat(purge(first, "frank", h.get("app-1"))).containsEntry("confirmation", "elicited");
+            assertThat(purge(first, "frank", h.get("app-2"))).containsEntry("confirmation", "session_approval");
+            assertThat(requests).hasSize(1);
+        }
+        // a second session of the same principal is asked again
+        try (McpSyncClient second = client(token("frank", BOTH),
+                req -> new McpSchema.ElicitResult(McpSchema.ElicitResult.Action.ACCEPT, Map.of()))) {
+            assertThat(purge(second, "frank", h.get("app-3"))).containsEntry("confirmation", "elicited");
+        }
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tool = 'purge_messages' AND tenant_id = '"
+                + tenants.get("frank").value() + "'::uuid AND confirmation = 'session_approval' AND item_status = 'ok'"))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void anAccountWithoutAllowPurgeIsPurgeDisabledWithoutAnyImapConnection() throws Exception {
+        int before = connects.get();
+        try (McpSyncClient c = client(token("erin", BOTH),
+                req -> new McpSchema.ElicitResult(McpSchema.ElicitResult.Action.ACCEPT, Map.of()))) {
+            Map<String, Object> r = call(c, "purge_messages",
+                    Map.of("account", account("erin"), "handles", List.of("msg_" + "A".repeat(40))));
+            assertThat(map(map(r, "error"), "details")).containsEntry("reason", "purge_disabled");
+        }
+        assertThat(connects.get()).as("IMAP connections opened").isEqualTo(before);
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tool = 'purge_messages' AND tenant_id = '"
+                + tenants.get("erin").value() + "'::uuid AND error_code = 'PERMISSION_DENIED' AND ref_hash IS NULL"))
+                .isPositive();
     }
 }
