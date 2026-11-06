@@ -92,6 +92,11 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
         return new DefaultPooledObject<>(store);
     }
 
+    /** True for a refused LOGIN that counts toward a re-link (stub). */
+    static boolean isCountedRefusal(Throwable t) {
+        return false;
+    }
+
     /** Revision of the account the Store was made for, or -1 for a Store this factory did not make. */
     long revisionOf(IMAPStore store) {
         return revisions.getOrDefault(store, -1L);
