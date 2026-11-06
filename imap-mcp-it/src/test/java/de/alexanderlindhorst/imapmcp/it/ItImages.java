@@ -11,6 +11,9 @@ public final class ItImages {
     public static final String POSTGRES =
             "postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac";
 
+    public static final String VAULT =
+            "hashicorp/vault:1.20@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10";
+
     private ItImages() {
     }
 }

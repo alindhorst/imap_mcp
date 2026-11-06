@@ -142,7 +142,7 @@ class VaultTransitKeyWrapperTest {
     // ---- request shape ----
 
     @Test
-    void wrapPostsToEncryptWithTheTokenPlaintextAndAssociatedData() throws Exception {
+    void wrapPostsToEncryptWithTheTokenAndThePlaintextOnly() throws Exception {
         script.add(ENCRYPT_OK);
         VaultTransitKeyWrapper w = wrapper(config(startHttp(), token()), refs("t-1"));
 
@@ -155,8 +155,7 @@ class VaultTransitKeyWrapperTest {
         assertThat(s.path()).isEqualTo("/v1/transit/encrypt/imap-mcp");
         assertThat(s.token()).isEqualTo("t-1");
         assertThat(s.body()).contains("\"plaintext\":\"" + b64(DEK) + "\"");
-        String aad = b64(LocalKeyWrapperAad.of(TENANT, ACCOUNT));
-        assertThat(s.body()).contains("\"associated_data\":\"" + aad + "\"");
+        assertThat(s.body()).doesNotContain("associated_data").doesNotContain(TENANT);
     }
 
     @Test
@@ -476,10 +475,4 @@ class VaultTransitKeyWrapperTest {
         }
     }
 
-    /** Local copy of the associated-data bytes the wrapper must send: length-prefixed tenant and account. */
-    private static final class LocalKeyWrapperAad {
-        static byte[] of(String tenant, String account) {
-            return VaultTransitKeyWrapper.associatedData(tenant, account);
-        }
-    }
 }

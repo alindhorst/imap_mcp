@@ -2,7 +2,6 @@ package de.alexanderlindhorst.imapmcp.store.crypto;
 
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -34,7 +33,10 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Vault Transit {@link KeyWrapper} (D6, SPEC 5.3 and 5.7). Wrap is {@code <mount>/encrypt/<keyName>}, unwrap is
  * {@code <mount>/decrypt/<kek_id of the row>}; {@code kek_id} is the key name and the wrapped DEK is Vault's
- * {@code vault:v<n>:...} ciphertext. Tenant and account travel as the AEAD {@code associated_data}.
+ * {@code vault:v<n>:...} ciphertext. Tenant and account are not sent: Transit's {@code context} exists only for
+ * derived keys, and {@code associated_data} would make {@code rewrap} impossible (Vault's rewrap takes none, so it
+ * answers {@code 400} for such a ciphertext). The binding to tenant and account is the AAD of the credential
+ * ciphertext itself ({@link CredentialCipher}), which a copied row still fails.
  *
  * <p>Failure semantics: a {@code 400} on decrypt (and a malformed key name or ciphertext in the row) is an
  * integrity failure ({@link KeyWrapException}); every other failure (connect, TLS, timeout, any other non-2xx, a
@@ -44,7 +46,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class VaultTransitKeyWrapper implements KeyWrapper {
 
     private static final String PROVIDER = "vault";
-    private static final byte[] AD_PREFIX = "imap-mcp:vault:v1".getBytes(StandardCharsets.US_ASCII);
     private static final Pattern KEK_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private static final Pattern CIPHERTEXT = Pattern.compile("vault:v[0-9]{1,9}:[A-Za-z0-9+/=]{1,16384}");
     private static final int MAX_RESPONSE = 1 << 20;
@@ -75,24 +76,9 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         this.base = URI.create(config.address().toString().replaceAll("/+$", ""));
     }
 
-    /** The AEAD associated data: a fixed prefix and the length-prefixed (4-byte big endian) tenant and account. */
-    static byte[] associatedData(String tenantId, String accountId) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.writeBytes(AD_PREFIX);
-        for (String part : new String[] {tenantId, accountId}) {
-            byte[] bytes = part.getBytes(StandardCharsets.UTF_8);
-            out.writeBytes(new byte[] {(byte) (bytes.length >>> 24), (byte) (bytes.length >>> 16),
-                    (byte) (bytes.length >>> 8), (byte) bytes.length});
-            out.writeBytes(bytes);
-        }
-        return out.toByteArray();
-    }
-
     @Override
     public WrappedKey wrap(byte[] dek, String tenantId, String accountId) {
-        Base64.Encoder enc = Base64.getEncoder();
-        String body = json(Map.of("plaintext", enc.encodeToString(dek), "associated_data",
-                enc.encodeToString(associatedData(tenantId, accountId))));
+        String body = json(Map.of("plaintext", Base64.getEncoder().encodeToString(dek)));
         JsonNode data = post("/v1/" + config.transitMount() + "/encrypt/" + config.keyName(), body).path("data");
         String ciphertext = data.path("ciphertext").asString("");
         if (!CIPHERTEXT.matcher(ciphertext).matches()) {
@@ -107,8 +93,7 @@ public final class VaultTransitKeyWrapper implements KeyWrapper {
         if (kekId == null || !KEK_ID.matcher(kekId).matches() || !CIPHERTEXT.matcher(ciphertext).matches()) {
             throw new KeyWrapException("key unwrap failed"); // a row that is no Vault wrap: integrity, no request
         }
-        String body = json(Map.of("ciphertext", ciphertext, "associated_data",
-                Base64.getEncoder().encodeToString(associatedData(tenantId, accountId))));
+        String body = json(Map.of("ciphertext", ciphertext));
         JsonNode data = post("/v1/" + config.transitMount() + "/decrypt/" + kekId, body, true).path("data");
         String plaintext = data.path("plaintext").asString("");
         try {
