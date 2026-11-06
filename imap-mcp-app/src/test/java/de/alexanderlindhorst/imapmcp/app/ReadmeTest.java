@@ -166,7 +166,7 @@ class ReadmeTest {
                 .contains("security add-generic-password").contains("within 5 minutes");
         assertThat(readme).contains("phase v3a").contains("reversible write tools")
                 .contains("enabled by default").contains("`readOnly`")
-                .contains("`http-public` and the later phases are not implemented")
+                .contains("`http-public` (v3b) is available")
                 .contains("moves to Trash, not a permanent delete")
                 .contains("`read_only`").contains("account_read_only")
                 .contains("at least 30 s").contains("100 handles").contains("10 folders")

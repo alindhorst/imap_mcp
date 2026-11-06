@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize mail in IMAP mailboxes. Changes are reversible, except the gated permanent deletion from Trash that the user confirms each time. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
-> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`, `stdio` only), with `stdio` and `http-local`. `http-public` and the later phases are not implemented; see "Scope by phase".
+> **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`, `stdio` only), with `stdio` and `http-local`. `http-public` (v3b) is available as described below; the stateful transport for `purge_messages` and the linking surface follow; see "Scope by phase".
 
 ## Tools
 
@@ -75,9 +75,9 @@ The same jar runs in two modes in v2 (see SPEC section 2):
 |---|---|---|
 | `stdio` (dev, single user) | Claude Code / Desktop spawn the process | MCP client config with `java -jar ... --mode stdio` |
 | `http-local` (single user, container) | Long-running local server, warm JVM | `http://127.0.0.1:<port>/mcp` with a bearer token |
-| `http-public` (production, multi-tenant) | Not implemented; planned for phase v3 | OAuth 2.1 |
+| `http-public` (production, multi-tenant) | Behind a TLS reverse proxy; accounts, credentials and tenants in Postgres | OAuth 2.1 resource server (JWT access tokens) |
 
-The mode comes from `--mode stdio|http-local` (fallback env `IMAP_MCP_MODE`). Without a mode the jar prints a usage text to stderr and exits with 2.
+The mode comes from `--mode stdio|http-local|http-public` (fallback env `IMAP_MCP_MODE`). Without a mode the jar prints a usage text to stderr and exits with 2.
 
 ### Configuration
 
@@ -434,7 +434,43 @@ Every test is skipped, with a reason, when its credentials are not set.
 
 ### http-public
 
-Planned for phase v3 (multi-tenant, OAuth resource server, account linking, Postgres). Not available yet. See SPEC sections 3 and 5.3.
+The multi-tenant mode for a hosted deployment (what a Claude connector needs): `java -jar imap-mcp.jar --mode http-public --config <file>`. This server is an OAuth 2.1 resource server only; the identity provider (for example Keycloak) is separate and must put the resource URI into the access token's `aud` claim (RFC 8707). Mail accounts are linked per user in the linking surface, not in the config file; a configured `accounts` list fails startup.
+
+```yaml http-public
+db:
+  url: jdbc:postgresql://db.internal:5432/imapmcp   # no password in the URL
+  username: imapmcp
+  password: env:DB_PASSWORD
+oauth:
+  issuer: https://idp.example.com/realms/mail        # https; keys are discovered from <issuer>/.well-known/openid-configuration
+  resource: https://mail.example.com/mcp             # the canonical resource URI, expected in the token's aud
+  requiredRole: imap-mcp-user                        # IdP role needed to get a tenant (or allowWithoutRole: true for development)
+public:
+  baseUrl: https://mail.example.com                  # the linking surface lives at <baseUrl>/accounts
+security:
+  handleKeys:                                        # explicit and identical on every replica; ids 0 to 255
+    - id: 1
+      key: env:HANDLE_KEY_1                          # base64url (no padding) of 32 random bytes
+  signingKeyId: 1
+ssrf:
+  allowedHosts: ["imap.example.com", "*.mail.example.net"]   # IMAP hosts a user may link
+kms:
+  provider: local                                    # credentials are AES-256-GCM encrypted; the key is wrapped by a KEK
+  local:
+    currentKekId: kek-1
+    keks:
+      - id: kek-1
+        key: env:KEK_1                               # base64url (no padding) of 32 random bytes
+```
+
+- **Startup fails** (one line on stderr naming the config key, never a value) without a database, without an explicit key ring, with an empty `ssrf.allowedHosts` unless `ssrf.allowAnyPublicHost: true`, with a non-https issuer or resource, with `tools.download.dir`, `maxBytes` or `displayDir`, with `http.token`, with a password in `db.url`, and with unknown keys. It also logs one fingerprint (12 hex characters) per handle key id and per KEK id, so replicas can be compared; key material is never logged.
+- **Reverse proxy:** terminate TLS there and forward `Host`. `http.allowedHosts` defaults to the host of `public.baseUrl`; bind to a non-loopback address only with `http.allowNonLoopbackBind: true` (or `IMAP_MCP_HTTP_ALLOW_NON_LOOPBACK_BIND`). The proxy's read timeout must exceed `tools.deadline`. With the stateful transport (`http.stateful`, planned, refused at startup for now) a load balancer needs affinity on the `Mcp-Session-Id` header.
+- **Discovery and checks:** `GET /.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` serve the RFC 9728 metadata; a missing or invalid token gets `401` with a `WWW-Authenticate` challenge naming it. The scope `imap-mcp:read` is required for every request (`403 insufficient_scope` otherwise); `imap-mcp:write` is checked per call for the write tools. Tokens are accepted in the `Authorization` header only.
+- **Tenants:** a user who is not yet known sees no accounts (`list_accounts` returns an empty list and the `link_url`); no MCP request creates a tenant. A tenant is created at the first login of the linking surface, and only for users with `oauth.requiredRole`.
+- **Tools:** one fixed list for everybody (read tools, `download_attachment` with the file embedded in the result, and the five write tools). `purge_messages` is not registered. Restrictions are refusals at call time: `account_read_only`, `insufficient_scope`, and `relink_required` (an account whose password was refused three times in a row; `list_accounts` shows it as `needs_relink` with the `link_url`).
+- **Audit and retention:** every call of a write tool leaves a row in the database (reference hashes only, never folder names, UIDs or message handles); rows are deleted after 180 days. If the audit row cannot be written, the call fails and nothing is changed.
+- **Egress:** the server blocks private and loopback addresses and any host outside `ssrf.allowedHosts`, and only connects to port 993 (implicit TLS) or 143 (STARTTLS). Add an egress network policy as well.
+- **Key rotation:** add a handle key id or KEK id, switch `signingKeyId` or `currentKekId`, restart every replica, and remove the old id only when nothing refers to it any more (SPEC 5.4 and 5.7).
 
 ## Scope by phase
 
