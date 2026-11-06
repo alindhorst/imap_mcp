@@ -1,5 +1,8 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
+import jakarta.servlet.AsyncContext;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -56,11 +59,16 @@ final class SessionBindingFilter implements Filter {
                 notFound(response);
                 return;
             }
+            // An initialize that carries a session id still makes the SDK create a new session: record that one too.
+            ServletResponse out = "POST".equals(request.getMethod())
+                    ? new RegisteringResponse(response, registry, principal, id, false) : res;
             try {
-                chain.doFilter(req, res);
+                chain.doFilter(req, out);
             } finally {
                 if ("DELETE".equals(request.getMethod())) {
                     registry.remove(id);
+                } else if (request.isAsyncStarted()) {
+                    bindStream(request, id);
                 }
             }
             return;
@@ -69,17 +77,48 @@ final class SessionBindingFilter implements Filter {
             chain.doFilter(req, res); // the SDK refuses a GET/DELETE without a session itself
             return;
         }
-        if (!registry.tryReserve()) {
+        if (!registry.tryReserve(principal)) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.setHeader("Retry-After", RETRY_AFTER_SECONDS);
             return;
         }
-        RegisteringResponse wrapped = new RegisteringResponse(response, registry, principal);
+        RegisteringResponse wrapped = new RegisteringResponse(response, registry, principal, null, true);
         try {
             chain.doFilter(req, wrapped);
         } finally {
             wrapped.finish();
         }
+    }
+
+    /**
+     * The SDK keeps an SSE stream open without timeout; it is closed with its session (eviction, idle, DELETE) or
+     * forgotten when it finishes by itself.
+     */
+    private void bindStream(HttpServletRequest request, String sessionId) {
+        AsyncContext async = request.getAsyncContext();
+        Runnable closer = async::complete;
+        registry.attachStream(sessionId, closer);
+        async.addListener(new AsyncListener() {
+            @Override
+            public void onComplete(AsyncEvent event) {
+                registry.detachStream(sessionId, closer);
+            }
+
+            @Override
+            public void onTimeout(AsyncEvent event) {
+                registry.detachStream(sessionId, closer);
+            }
+
+            @Override
+            public void onError(AsyncEvent event) {
+                registry.detachStream(sessionId, closer);
+            }
+
+            @Override
+            public void onStartAsync(AsyncEvent event) {
+                // a re-dispatch keeps the same stream
+            }
+        });
     }
 
     private static void notFound(HttpServletResponse res) throws IOException {
@@ -93,12 +132,17 @@ final class SessionBindingFilter implements Filter {
     private static final class RegisteringResponse extends HttpServletResponseWrapper {
         private final SessionRegistry registry;
         private final String principal;
+        private final String knownSessionId; // the id the request carried, or null
+        private final boolean reserved;
         private final AtomicBoolean settled = new AtomicBoolean();
 
-        RegisteringResponse(HttpServletResponse response, SessionRegistry registry, String principal) {
+        RegisteringResponse(HttpServletResponse response, SessionRegistry registry, String principal,
+                String knownSessionId, boolean reserved) {
             super(response);
             this.registry = registry;
             this.principal = principal;
+            this.knownSessionId = knownSessionId;
+            this.reserved = reserved;
         }
 
         @Override
@@ -114,14 +158,19 @@ final class SessionBindingFilter implements Filter {
         }
 
         private void capture(String name, String value) {
-            if (SESSION_HEADER.equalsIgnoreCase(name) && value != null && settled.compareAndSet(false, true)) {
-                registry.register(value, principal);
+            if (SESSION_HEADER.equalsIgnoreCase(name) && value != null && !value.equals(knownSessionId)
+                    && settled.compareAndSet(false, true)) {
+                if (reserved) {
+                    registry.register(value, principal);
+                } else {
+                    registry.registerUnreserved(value, principal);
+                }
             }
         }
 
         void finish() {
-            if (settled.compareAndSet(false, true)) {
-                registry.release();
+            if (reserved && settled.compareAndSet(false, true)) {
+                registry.release(principal);
             }
         }
     }

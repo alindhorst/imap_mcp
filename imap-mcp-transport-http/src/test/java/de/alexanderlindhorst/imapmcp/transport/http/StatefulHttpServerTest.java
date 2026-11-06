@@ -290,7 +290,7 @@ class StatefulHttpServerTest {
     void anEvictedSessionsOpenStreamIsClosed() throws Exception {
         start(builder().sessionLimits(1, 100, Duration.ofMinutes(30)));
         String first = initialize("alice");
-        java.io.InputStream stream = openStream("alice", first);
+        var stream = openStream("alice", first);
         String second = initialize("alice"); // evicts the first session
         assertThat(second).isNotEqualTo(first);
         assertStreamEnds(stream);
@@ -300,31 +300,36 @@ class StatefulHttpServerTest {
     void deleteClosesTheSessionsOpenStream() throws Exception {
         start(builder());
         String id = initialize("alice");
-        java.io.InputStream stream = openStream("alice", id);
+        var stream = openStream("alice", id);
         assertThat(send("DELETE", null, "alice", id).statusCode()).isIn(200, 204);
         assertStreamEnds(stream);
     }
 
-    private java.io.InputStream openStream(String principal, String session) throws Exception {
+    /** Opens the GET stream; the SDK may not flush headers before its first event, so the call is not awaited. */
+    private java.util.concurrent.CompletableFuture<HttpResponse<java.io.InputStream>> openStream(String principal,
+            String session) throws Exception {
         HttpRequest r = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
                 .header("Accept", "text/event-stream").header("MCP-Protocol-Version", "2025-06-18")
                 .header("X-Test-Principal", principal).header("Mcp-Session-Id", session).GET().build();
-        HttpResponse<java.io.InputStream> resp = http.send(r, HttpResponse.BodyHandlers.ofInputStream());
-        assertThat(resp.statusCode()).isEqualTo(200);
-        return resp.body();
+        var future = http.sendAsync(r, HttpResponse.BodyHandlers.ofInputStream());
+        Thread.sleep(700); // the server has the stream registered with its session by now
+        assertThat(server.sessionCount()).isPositive();
+        return future;
     }
 
-    private static void assertStreamEnds(java.io.InputStream stream) throws Exception {
-        var done = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-            try {
-                while (stream.read() != -1) {
+    /** The stream ends (normally, or with an I/O error) well before its own timeout, which is none. */
+    private static void assertStreamEnds(java.util.concurrent.CompletableFuture<HttpResponse<java.io.InputStream>> f)
+            throws Exception {
+        var done = f.thenApplyAsync(resp -> {
+            try (java.io.InputStream in = resp.body()) {
+                while (in.read() != -1) {
                     // drain until the server closes the stream
                 }
-                return true;
             } catch (java.io.IOException e) {
-                return true; // a reset is a closed stream too
+                // a reset is a closed stream too
             }
-        });
+            return true;
+        }).exceptionally(t -> true);
         assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
     }
 

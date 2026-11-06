@@ -76,6 +76,7 @@ public final class HttpLocalServer {
     private Server server;
     private ServerConnector connector;
     private Runnable mcpServerCloser = () -> { };
+    private SessionRegistry sessionRegistry;
 
     private HttpLocalServer(Builder b) {
         this.bind = b.bind;
@@ -124,7 +125,8 @@ public final class HttpLocalServer {
         private final Map<String, HttpServlet> openServlets = new LinkedHashMap<>();
         private boolean stateful;
         private final List<McpServerFeatures.SyncToolSpecification> statefulTools = new ArrayList<>();
-        private Function<HttpServletRequest, String> sessionPrincipal = req -> "local";
+        private Function<HttpServletRequest, String> sessionPrincipal =
+                req -> req.getAttribute(BearerTokenFilter.ACCOUNT_ATTRIBUTE) != null ? "local" : null;
         private Consumer<String> sessionEndListener = id -> { };
         private int maxSessionsPerPrincipal = SessionRegistry.MAX_PER_PRINCIPAL;
         private int maxSessions = SessionRegistry.MAX_PER_REPLICA;
@@ -282,8 +284,9 @@ public final class HttpLocalServer {
                     .requestTimeout(requestTimeout).tools(statefulTools).build();
             mcpServerCloser = mcp::closeGracefully;
             mcpServlet = transport;
-            sessionFilter = new SessionBindingFilter(new SessionRegistry(maxSessionsPerPrincipal, maxSessions,
-                    sessionIdle, sessionClock, sessionEndListener), sessionPrincipal);
+            sessionRegistry = new SessionRegistry(maxSessionsPerPrincipal, maxSessions, sessionIdle, sessionClock,
+                    sessionEndListener);
+            sessionFilter = new SessionBindingFilter(sessionRegistry, sessionPrincipal);
         } else {
             HttpServletStatelessServerTransport transport = HttpServletStatelessServerTransport.builder()
                     .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
@@ -342,6 +345,11 @@ public final class HttpLocalServer {
             server.stop();
         }
         mcpServerCloser.run();
+    }
+
+    /** Number of live sessions (stateful mode; 0 otherwise). */
+    int sessionCount() {
+        return sessionRegistry == null ? 0 : sessionRegistry.size();
     }
 
     /** The actually bound port (useful with port 0). */

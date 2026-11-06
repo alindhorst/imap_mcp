@@ -175,7 +175,11 @@ public final class ElicitingPurgeConfirmation implements PurgeConfirmation {
         };
     }
 
-    /** Session-end callback of the HTTP transport: the session's approvals are dropped with it (SPEC 4, v3b). */
+    /**
+     * Session-end callback of the HTTP transport: the session's approvals are dropped with it (SPEC 4, v3b). A call
+     * still running when its session ends can create an approval afterwards (the approval is made when its mutation
+     * begins); nobody can use it, because the session id is gone, and it expires after 15 minutes.
+     */
     public void sessionEnded(String sessionId) {
         if (sessionId != null) {
             approvals.values().removeIf(a -> a.sessionId.equals(sessionId));
