@@ -175,7 +175,14 @@ class PublicConfigLoaderTest {
                 Arguments.of(VAULT_KMS.replace("method: token\n      token: env:VAULT_TOKEN", "method: approle\n      roleId: env:R"),
                         "kms.vault.auth.secretId: required"),
                 Arguments.of(VAULT_KMS.replace("method: token", "method: token\n      roleId: env:R"),
-                        "kms.vault.auth.roleId: not allowed with kms.vault.auth.method token"));
+                        "kms.vault.auth.roleId: not allowed with kms.vault.auth.method token"),
+                Arguments.of(VAULT_KMS.replace("method: token\n      token: env:VAULT_TOKEN",
+                        "method: approle\n      path: bad path!\n      roleId: env:R\n      secretId: env:S"),
+                        "kms.vault.auth.path"),
+                Arguments.of(VAULT_KMS.replace("keyName: imap-mcp", "keyName: imap-mcp\n    bogus: 1"),
+                        "kms.vault.bogus: unknown key"),
+                Arguments.of(VAULT_KMS.replace("method: token", "method: token\n      bogus: 1"),
+                        "kms.vault.auth.bogus: unknown key"));
     }
 
     @ParameterizedTest
@@ -183,6 +190,16 @@ class PublicConfigLoaderTest {
     void vaultStartupFailuresNameTheKeyPath(String kms, String expected) {
         assertThatThrownBy(() -> bind(withVault(kms))).isInstanceOf(ConfigException.class)
                 .hasMessageContaining(expected);
+    }
+
+    @Test
+    void vaultConfigurationMessagesNeverEchoValues() {
+        for (String bad : new String[] {"https://user:HUNTER2@vault.example.com", "https://vault.example.com/path?x=HUNTER2",
+                "ht!tp://HUNTER2", "https://va ult.example.com/HUNTER2"}) {
+            assertThatThrownBy(() -> bind(withVault(VAULT_KMS.replace("https://vault.example.com:8200", bad))))
+                    .isInstanceOf(ConfigException.class).hasMessageContaining("kms.vault.address")
+                    .hasMessageNotContaining("HUNTER2");
+        }
     }
 
     @Test

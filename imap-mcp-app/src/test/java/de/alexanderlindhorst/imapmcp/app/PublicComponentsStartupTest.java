@@ -299,6 +299,62 @@ class PublicComponentsStartupTest {
     }
 
     @Test
+    void aNotFoundKeyTextNamesTheMountAndTheKeyName() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "t");
+        String yaml = vaultYaml();
+        vaultStatus = 404;
+        vaultBody = "{\"errors\":[]}";
+        assertThatThrownBy(() -> start(yaml, env)).hasMessageContaining("kms.vault.transitMount")
+                .hasMessageContaining("kms.vault.keyName");
+    }
+
+    @Test
+    void theCaCertMessageNamesTheKeyOnce() throws IOException {
+        Map<String, String> env = env();
+        env.put("VAULT_TOKEN", "t");
+        String yaml = vaultYaml().replace("keyName: imap-mcp", "keyName: imap-mcp\n    caCert: /nonexistent/ca.pem");
+        assertThatThrownBy(() -> start(yaml, env)).satisfies(e -> assertThat(e.getMessage().split("kms\\.vault\\.caCert", -1))
+                .hasSize(2));
+    }
+
+    @Test
+    void anApproleLoginFailureAtStartupNamesTheKmsAndNotTheSecret() throws IOException {
+        Map<String, String> env = env();
+        env.put("RID", "role-id-SECRET");
+        env.put("SID", "secret-id-SECRET");
+        String yaml = vaultYaml().replace("method: token\n      token: env:VAULT_TOKEN",
+                "method: approle\n      roleId: env:RID\n      secretId: env:SID");
+        vaultStatus = 403;
+        vaultBody = "{\"errors\":[\"permission denied RESPONSETEXT\"]}";
+        assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("kms.vault").hasMessageNotContaining("SECRET")
+                .hasMessageNotContaining("RESPONSETEXT");
+        assertThat(vaultRequests).anyMatch(r -> r.startsWith("POST /v1/auth/approle/login"));
+    }
+
+    @Test
+    void noInsecureHttpWarningWithAnHttpsAddressEvenIfTheFlagIsSet() throws IOException {
+        Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Level old = log.getLevel();
+        log.setLevel(Level.TRACE);
+        appender.start();
+        log.addAppender(appender);
+        try {
+            Map<String, String> env = env();
+            env.put("VAULT_TOKEN", "t");
+            String yaml = vaultYaml().replace("address: http://", "address: https://");
+            assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class); // nothing speaks TLS
+            assertThat(appender.list).noneSatisfy(e -> assertThat(e.getFormattedMessage())
+                    .contains("kms.vault.allowInsecureHttp"));
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(old);
+        }
+    }
+
+    @Test
     void insecureHttpToVaultGivesAStartupWarning() throws IOException {
         Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
