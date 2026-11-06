@@ -101,6 +101,19 @@ class InMemoryMetricsRecorderTest {
     }
 
     @Test
+    void keyServiceOutagesAreCountedSeparatelyFromDecryptFailures() {
+        rec.keyServiceUnavailable(T1);
+        rec.decryptFailure(T1);
+        rec.keyServiceUnavailable(T1);
+        var byOp = new java.util.HashMap<String, OperationMetrics>();
+        rec.snapshot().operations().forEach(o -> byOp.put(o.tool() + "/" + o.op(), o));
+        assertThat(byOp.get("credentials/key_service_unavailable").count()).isEqualTo(2);
+        assertThat(byOp.get("credentials/key_service_unavailable").tenant()).isEqualTo(logIds.tenant(T1.value()));
+        assertThat(byOp.get("credentials/decrypt_failure").count()).isEqualTo(1);
+        MetricsRecorder.NOOP.keyServiceUnavailable(T1); // default method: discards
+    }
+
+    @Test
     void authFailuresAndTimeoutsCountPerHashedTenantOnly() {
         rec.authFailure(T1);
         rec.authFailure(T1);

@@ -36,4 +36,7 @@ public interface MetricsRecorder {
 
     /** A stored credential failed to decrypt (integrity failure, not a key-service outage). */
     default void decryptFailure(TenantId tenant) { }
+
+    /** The key service (for example Vault Transit) was unreachable while unwrapping a credential key. */
+    default void keyServiceUnavailable(TenantId tenant) { }
 }
