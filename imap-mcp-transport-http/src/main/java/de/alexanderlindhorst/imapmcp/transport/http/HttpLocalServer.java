@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.eclipse.jetty.ee10.servlet.FilterHolder;
@@ -78,6 +80,10 @@ public final class HttpLocalServer {
     private final Duration sessionIdle;
     private final Clock sessionClock;
     private final Duration requestTimeout;
+    private final int initializeRatePerMinute; // 0: no rate limit
+    private final Clock initializeClock;
+    private final MetricsRecorder metrics;
+    private final AtomicInteger sdkRequests = new AtomicInteger();
 
     private Server server;
     private ServerConnector connector;
@@ -110,6 +116,9 @@ public final class HttpLocalServer {
         this.sessionIdle = b.sessionIdle;
         this.sessionClock = b.sessionClock;
         this.requestTimeout = b.requestTimeout;
+        this.initializeRatePerMinute = b.initializeRatePerMinute;
+        this.initializeClock = b.initializeClock;
+        this.metrics = b.metrics;
     }
 
     public static Builder builder() {
@@ -143,6 +152,27 @@ public final class HttpLocalServer {
         private Duration sessionIdle = SessionRegistry.IDLE_TIMEOUT;
         private Clock sessionClock = Clock.systemUTC();
         private Duration requestTimeout = Duration.ofMinutes(11);
+        private int initializeRatePerMinute;
+        private Clock initializeClock = Clock.systemUTC();
+        private MetricsRecorder metrics = MetricsRecorder.NOOP;
+
+        /**
+         * Token bucket per principal for requests without a session id (stateful only; SPEC 4, D12): 1 to 600 per
+         * minute, capacity twice that. Without it nothing is limited.
+         */
+        public Builder initializeRateLimit(int ratePerMinute, Clock clock) {
+            if (ratePerMinute < 1 || ratePerMinute > 600) {
+                throw new IllegalArgumentException("initialize rate must be 1 to 600 per minute");
+            }
+            this.initializeRatePerMinute = ratePerMinute;
+            this.initializeClock = Objects.requireNonNull(clock, "clock");
+            return this;
+        }
+
+        public Builder metrics(MetricsRecorder metrics) {
+            this.metrics = Objects.requireNonNull(metrics, "metrics");
+            return this;
+        }
 
         public Builder bind(String bind) {
             this.bind = Objects.requireNonNull(bind, "bind");
@@ -319,10 +349,20 @@ public final class HttpLocalServer {
             var mcp = McpServer.sync(transport).serverInfo(serverName, serverVersion).validateToolInputs(false)
                     .requestTimeout(requestTimeout).tools(statefulTools).build();
             mcpServerCloser = mcp::closeGracefully;
-            mcpServlet = transport;
+            mcpServlet = new HttpServlet() { // counts what reaches the SDK (tests: a refused request must not)
+                @Override
+                protected void service(HttpServletRequest req, jakarta.servlet.http.HttpServletResponse resp)
+                        throws jakarta.servlet.ServletException, java.io.IOException {
+                    sdkRequests.incrementAndGet();
+                    transport.service(req, resp);
+                }
+            };
             sessionRegistry = new SessionRegistry(maxSessionsPerPrincipal, maxSessions, sessionIdle, sessionClock,
                     sessionEndListener);
-            sessionFilter = new SessionBindingFilter(sessionRegistry, sessionPrincipal);
+            InitializeRateLimiter limiter = initializeRatePerMinute > 0
+                    ? new InitializeRateLimiter(initializeClock, initializeRatePerMinute) : null;
+            sessionFilter = new SessionBindingFilter(sessionRegistry, sessionPrincipal, limiter, metrics, jsonMapper,
+                    maxRequestBytes);
         } else {
             HttpServletStatelessServerTransport transport = HttpServletStatelessServerTransport.builder()
                     .jsonMapper(jsonMapper).messageEndpoint(MCP_PATH).maxRequestSize(maxRequestBytes)
@@ -389,6 +429,11 @@ public final class HttpLocalServer {
             server.stop();
         }
         mcpServerCloser.run();
+    }
+
+    /** Requests that reached the SDK servlet (stateful mode). */
+    int sdkRequestCount() {
+        return sdkRequests.get();
     }
 
     /** Number of live sessions (stateful mode; 0 otherwise). */

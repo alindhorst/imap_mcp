@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import io.modelcontextprotocol.client.McpClient;
@@ -323,9 +325,11 @@ class StatefulHttpServerTest {
     void aBodyThatDoesNotParseIsPassedOnToTheSdk() throws Exception {
         start(builder());
         String id = initialize("alice");
+        int sdk = server.sdkRequestCount();
         HttpResponse<String> r = send("POST", "{not json", "alice", id);
         assertThat(r.statusCode()).isNotEqualTo(404).isNotEqualTo(200);
-        assertThat(r.body()).doesNotContain("-32600").doesNotContain("-32003");
+        assertThat(r.body()).contains("Invalid message format"); // the SDK's own answer, not ours
+        assertThat(server.sdkRequestCount()).isEqualTo(sdk + 1);
         assertThat(send("POST", LIST, "alice", id).statusCode()).isEqualTo(200);
     }
 
@@ -422,7 +426,8 @@ class StatefulHttpServerTest {
 
     @Test
     void theRefusalIsCountedPerTenantAsInitializeRateLimited() throws Exception {
-        try (InMemoryMetricsRecorder metrics = new InMemoryMetricsRecorder()) {
+        try (InMemoryMetricsRecorder metrics = new InMemoryMetricsRecorder(
+                new LogIds(new KeyRing(1, Map.of(1, new byte[32]))), java.time.Clock.systemUTC())) {
             start(limited(1, metrics));
             init("alice");
             init("alice");
