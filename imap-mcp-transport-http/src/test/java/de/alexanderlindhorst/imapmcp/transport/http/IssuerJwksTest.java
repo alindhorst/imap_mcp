@@ -152,6 +152,7 @@ class IssuerJwksTest {
             redirectTargetHits.incrementAndGet();
             reply(ex, jwks.get());
         });
+        idp.setExecutor(java.util.concurrent.Executors.newCachedThreadPool()); // a stalled handler must not block others
         idp.start();
     }
 
@@ -458,6 +459,7 @@ class IssuerJwksTest {
         assertThat(count(ch.qos.logback.classic.Level.WARN)).isEqualTo(1);
         clock.addAndGet(54 * 60_000); // 59 min after the fetch
         assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+        awaitJwksHits(3); // the refresh this request started has failed again
         assertThat(stale.get()).isEqualTo(1);
         clock.addAndGet(2 * 60_000); // 61 min
         assertUnavailable(v, token(b -> { }), 30);

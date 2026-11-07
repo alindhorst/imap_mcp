@@ -6,12 +6,10 @@ import com.nimbusds.jose.jwk.JWKSelector;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
-import com.nimbusds.jose.util.DefaultResourceRetriever;
 import com.nimbusds.jose.util.JSONObjectUtils;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -25,10 +23,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,11 +52,15 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
 
     private static final Logger LOG = LoggerFactory.getLogger(IssuerJwks.class);
     private static final int TIMEOUT_MS = 5000;
+    /** A refresh is bounded by one deadline per fetch (discovery, then keys); a waiter outlasts that, not the reverse. */
+    private static final long WAIT_MS = 2L * TIMEOUT_MS + 1000;
     private static final int MAX_BYTES = 256 * 1024;
     /** Retry of a failed discovery (v0.18). */
     static final long NEGATIVE_CACHE_MS = 10_000;
     static final long STALE_WINDOW_MS = 60 * 60_000L;
     private static final int DEFAULT_RETRY_AFTER_SECONDS = 30;
+    /** Monotonic: a wall-clock step must neither shorten the stale window nor open the refresh gate. */
+    private static final LongSupplier MONOTONIC_MILLIS = () -> System.nanoTime() / 1_000_000;
 
     private final String issuer;
     private final long dueAfterMs;
@@ -67,19 +71,21 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     private final MetricsRecorder metrics;
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(Duration.ofMillis(TIMEOUT_MS)).build();
-    private final DefaultResourceRetriever retriever = new NoRedirectRetriever();
     /** Orders request arrivals against refresh starts without clock ties. */
     private final AtomicLong sequence = new AtomicLong();
     private final Object lock = new Object();
 
-    /** The last key set fetched successfully and when; replaced as a whole, never mutated. */
-    private record Keys(JWKSet set, long fetchedAt) { }
+    /**
+     * One immutable snapshot of the key state, replaced as a whole under the lock: the last key set fetched
+     * successfully (null before the first success and after the stale set was dropped), the time of that fetch and
+     * whether the last refresh attempt failed (the stale window runs).
+     */
+    private record State(JWKSet set, long fetchedAt, boolean failed) { }
 
     /** A refresh in flight; {@code done} completes with whether it succeeded, after the result is published. */
     private record Refresh(long startSequence, CompletableFuture<Boolean> done) { }
 
-    private volatile Keys keys;
-    private volatile boolean failed; // the last refresh attempt failed (the stale window runs)
+    private volatile State state = new State(null, 0, false);
     private volatile URL jwksUrl; // set once discovery succeeded
     // guarded by lock
     private boolean attempted;
@@ -114,7 +120,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
 
     private static IssuerJwks create(String issuer, Duration cacheTtl, Duration minRefreshInterval,
             MetricsRecorder metrics) {
-        return new IssuerJwks(issuer, cacheTtl, minRefreshInterval, null, false, System::currentTimeMillis, metrics);
+        return new IssuerJwks(issuer, cacheTtl, minRefreshInterval, null, false, MONOTONIC_MILLIS, metrics);
     }
 
     /** Test seam: loopback http, a discovery URL override and a clock. */
@@ -147,19 +153,17 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     @Override
     public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
         long arrival = sequence.incrementAndGet();
-        Keys k = keys;
-        boolean stale = failed;
-        if (k != null && stale && clockMillis.getAsLong() - k.fetchedAt >= STALE_WINDOW_MS) {
-            dropStale(k);
-            k = null;
+        State st = state;
+        if (st.set != null && st.failed && clockMillis.getAsLong() - st.fetchedAt >= STALE_WINDOW_MS) {
+            st = dropStale(st);
         }
-        if (k != null) {
-            List<JWK> hit = decide(selector, k.set);
+        if (st.set != null) {
+            List<JWK> hit = decide(selector, st.set);
             if (hit != null) {
-                if (stale) {
+                if (st.failed) {
                     metrics.oauthKeysStale();
                 }
-                if (clockMillis.getAsLong() - k.fetchedAt >= dueAfterMs) {
+                if (clockMillis.getAsLong() - st.fetchedAt >= dueAfterMs) {
                     refreshInBackground();
                 }
                 return hit;
@@ -183,13 +187,14 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         return fit.isEmpty() ? null : fit;
     }
 
-    private void dropStale(Keys expired) {
+    private State dropStale(State expired) {
         synchronized (lock) {
-            if (keys == expired) {
-                keys = null;
+            if (state == expired) {
+                state = new State(null, 0, true);
                 LOG.error("Issuer keys dropped: the stale window of {} minutes ended; every token gets 503 until a "
                         + "fetch succeeds", STALE_WINDOW_MS / 60_000);
             }
+            return state;
         }
     }
 
@@ -217,18 +222,18 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         }
         boolean ok;
         try {
-            ok = refresh.done.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            ok = refresh.done.get(WAIT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException | ExecutionException e) {
             ok = false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new KeysUnavailableException(DEFAULT_RETRY_AFTER_SECONDS);
         }
-        Keys k = keys;
-        if (!ok || k == null) {
+        State st = state;
+        if (!ok || st.set == null) {
             throw new KeysUnavailableException(DEFAULT_RETRY_AFTER_SECONDS);
         }
-        List<JWK> hit = decide(selector, k.set);
+        List<JWK> hit = decide(selector, st.set);
         return hit != null ? hit : List.of(); // still missing after a refresh that started after arrival: 401
     }
 
@@ -237,13 +242,15 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         return !attempted || now - lastAttemptStart >= (jwksUrl == null ? NEGATIVE_CACHE_MS : refreshIntervalMs);
     }
 
-    /** Caller holds the lock. Whole seconds, at least 1; 30 while discovery has not succeeded. */
+    /** Caller holds the lock. Whole seconds in [1, interval]; 30 while discovery has not succeeded. */
     private int restOfInterval(long now) {
         if (jwksUrl == null || !attempted) {
             return DEFAULT_RETRY_AFTER_SECONDS;
         }
-        long rest = refreshIntervalMs - (now - lastAttemptStart);
-        return (int) Math.max(1, (rest + 999) / 1000);
+        long elapsed = now - lastAttemptStart;
+        long rest = elapsed < 0 ? refreshIntervalMs : refreshIntervalMs - Math.min(elapsed, refreshIntervalMs);
+        long max = Math.max(1, (refreshIntervalMs + 999) / 1000);
+        return (int) Math.min(max, Math.max(1, (rest + 999) / 1000));
     }
 
     /** Caller holds the lock. */
@@ -264,7 +271,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
                 url = discover().toURL();
                 jwksUrl = url;
             }
-            JWKSet set = JWKSet.parse(retriever.retrieveResource(url).getContent());
+            JWKSet set = JWKSet.parse(new String(fetch(url.toURI(), "jwks"), StandardCharsets.UTF_8));
             published(set);
             ok = true;
         } catch (Failure e) {
@@ -284,9 +291,9 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
 
     private void published(JWKSet set) {
         synchronized (lock) {
-            keys = new Keys(set, clockMillis.getAsLong());
-            if (failed) {
-                failed = false;
+            boolean wasFailed = state.failed;
+            state = new State(set, clockMillis.getAsLong(), false);
+            if (wasFailed) {
                 LOG.info("Issuer keys recovered: a fetch succeeded again");
             }
         }
@@ -294,46 +301,95 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
 
     private void failedRefresh(String reason, int status) {
         synchronized (lock) {
-            if (!failed) {
-                failed = true;
-                LOG.warn("Issuer keys unavailable (reason={}, status={}); the last good set stays usable for {} "
-                        + "minutes after its fetch", reason, status, STALE_WINDOW_MS / 60_000);
+            State st = state;
+            state = new State(st.set, st.fetchedAt, true);
+            if (!st.failed) {
+                if (st.set != null) {
+                    LOG.warn("Issuer keys unavailable (reason={}, status={}); the last good set stays usable for {} "
+                            + "minutes after its fetch", reason, status, STALE_WINDOW_MS / 60_000);
+                } else {
+                    LOG.warn("Issuer keys unavailable (reason={}, status={}); no key set is held, every token gets "
+                            + "503 until a fetch succeeds", reason, status);
+                }
             } else {
                 LOG.debug("Issuer key refresh failed again (reason={}, status={})", reason, status);
             }
         }
     }
 
-    private URI discover() throws IOException, InterruptedException, ParseException, Failure {
-        HttpResponse<InputStream> res = http.send(HttpRequest.newBuilder(discoveryUri)
+    /**
+     * One GET of {@code uri} under an overall deadline of 5 s for headers and body together: status exactly
+     * {@code 200}, no redirect (the client never follows), at most 256 KiB. A stalled body is cut by closing the
+     * stream. Reasons are fixed words prefixed with {@code what}; nothing of the response is kept.
+     */
+    private byte[] fetch(URI uri, String what) throws Failure, InterruptedException {
+        AtomicReference<InputStream> open = new AtomicReference<>();
+        CompletableFuture<HttpResponse<InputStream>> sent = http.sendAsync(HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofMillis(TIMEOUT_MS)).header("Accept", "application/json").GET().build(),
                 HttpResponse.BodyHandlers.ofInputStream());
-        byte[] body;
-        try (InputStream in = res.body()) {
-            if (res.statusCode() != 200) {
-                throw new Failure("discovery_status", res.statusCode());
+        CompletableFuture<byte[]> read = sent.thenApply(res -> {
+            open.set(res.body());
+            try (InputStream in = res.body()) {
+                if (res.statusCode() != 200) {
+                    throw new CompletionException(new Failure(what + "_status", res.statusCode()));
+                }
+                byte[] body = in.readNBytes(MAX_BYTES + 1);
+                if (body.length > MAX_BYTES) {
+                    throw new CompletionException(new Failure(what + "_too_large", res.statusCode()));
+                }
+                return body;
+            } catch (IOException e) {
+                throw new CompletionException(new Failure(what + "_io", res.statusCode()));
             }
-            body = in.readNBytes(MAX_BYTES + 1);
+        });
+        try {
+            return read.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            read.cancel(true);
+            sent.cancel(true);
+            closeQuietly(open.get());
+            throw new Failure(what + "_timeout", -1);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof Failure f) {
+                throw f;
+            }
+            throw new Failure(what + "_io", -1);
+        } catch (InterruptedException e) {
+            read.cancel(true);
+            sent.cancel(true);
+            closeQuietly(open.get());
+            throw e;
         }
-        if (body.length > MAX_BYTES) {
-            throw new Failure("discovery_too_large", res.statusCode());
+    }
+
+    private static void closeQuietly(InputStream in) {
+        if (in != null) {
+            try {
+                in.close();
+            } catch (IOException ignored) {
+                // nothing to do: the stream is abandoned
+            }
         }
+    }
+
+    private URI discover() throws InterruptedException, ParseException, Failure {
+        byte[] body = fetch(discoveryUri, "discovery");
         Map<String, Object> meta = JSONObjectUtils.parse(new String(body, StandardCharsets.UTF_8));
         if (!issuer.equals(meta.get("issuer"))) {
-            throw new Failure("issuer_mismatch", res.statusCode());
+            throw new Failure("issuer_mismatch", 200);
         }
         if (!(meta.get("jwks_uri") instanceof String s)) {
-            throw new Failure("jwks_uri_missing", res.statusCode());
+            throw new Failure("jwks_uri_missing", 200);
         }
         URI jwks;
         try {
             jwks = new URI(s);
         } catch (URISyntaxException e) {
-            throw new Failure("jwks_uri_invalid", res.statusCode());
+            throw new Failure("jwks_uri_invalid", 200);
         }
         boolean scheme = "https".equals(jwks.getScheme()) || (allowHttp && "http".equals(jwks.getScheme()));
         if (!scheme || jwks.getHost() == null) {
-            throw new Failure("jwks_uri_scheme", res.statusCode());
+            throw new Failure("jwks_uri_scheme", 200);
         }
         return jwks;
     }
@@ -347,21 +403,6 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
             super(reason, null, false, false);
             this.reason = reason;
             this.status = status;
-        }
-    }
-
-    /** Nimbus' retriever follows redirects by default (HttpURLConnection); a key fetch must not. */
-    private static final class NoRedirectRetriever extends DefaultResourceRetriever {
-
-        NoRedirectRetriever() {
-            super(TIMEOUT_MS, TIMEOUT_MS, MAX_BYTES);
-        }
-
-        @Override
-        protected HttpURLConnection openHTTPConnection(URL url) throws IOException {
-            HttpURLConnection c = super.openHTTPConnection(url);
-            c.setInstanceFollowRedirects(false);
-            return c;
         }
     }
 }

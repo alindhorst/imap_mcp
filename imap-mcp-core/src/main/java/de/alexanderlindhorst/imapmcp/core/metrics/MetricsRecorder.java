@@ -43,6 +43,6 @@ public interface MetricsRecorder {
     /** A request was answered {@code 503} because the issuer's signing keys are unavailable (D16); replica-wide. */
     default void oauthKeysUnavailable() { }
 
-    /** A token's key decision used the stale key set of an outage (D16); replica-wide. */
+    /** A key decision was made with the stale key set of an outage (D16, counts key decisions, not validated tokens); replica-wide. */
     default void oauthKeysStale() { }
 }
