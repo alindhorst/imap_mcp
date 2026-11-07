@@ -349,14 +349,7 @@ public final class HttpLocalServer {
             var mcp = McpServer.sync(transport).serverInfo(serverName, serverVersion).validateToolInputs(false)
                     .requestTimeout(requestTimeout).tools(statefulTools).build();
             mcpServerCloser = mcp::closeGracefully;
-            mcpServlet = new HttpServlet() { // counts what reaches the SDK (tests: a refused request must not)
-                @Override
-                protected void service(HttpServletRequest req, jakarta.servlet.http.HttpServletResponse resp)
-                        throws jakarta.servlet.ServletException, java.io.IOException {
-                    sdkRequests.incrementAndGet();
-                    transport.service(req, resp);
-                }
-            };
+            mcpServlet = transport;
             sessionRegistry = new SessionRegistry(maxSessionsPerPrincipal, maxSessions, sessionIdle, sessionClock,
                     sessionEndListener);
             InitializeRateLimiter limiter = initializeRatePerMinute > 0
@@ -391,6 +384,9 @@ public final class HttpLocalServer {
         addFilter(ctx, bearerFilter, MCP_PATH);
         addFilter(ctx, principalFilter, MCP_PATH);
         addFilter(ctx, sessionFilter, MCP_PATH); // after the token and the principal: the session binds to the principal
+        if (stateful) {
+            addFilter(ctx, new SdkRequestCounter(sdkRequests), MCP_PATH); // what got past every filter (tests)
+        }
         ctx.addServlet(new ServletHolder(mcpServlet), MCP_PATH);
         if (healthServlet != null) {
             ctx.addServlet(new ServletHolder(healthServlet), HEALTH_PATH);
@@ -407,6 +403,16 @@ public final class HttpLocalServer {
         server.setHandler(ctx);
         server.setStopTimeout(5000);
         server.start();
+    }
+
+    /** Counts the requests that reach the SDK servlet, so tests can show that a refused request did not. */
+    private record SdkRequestCounter(AtomicInteger count) implements Filter {
+        @Override
+        public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res,
+                jakarta.servlet.FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
+            count.incrementAndGet();
+            chain.doFilter(req, res);
+        }
     }
 
     private static void addFilter(ServletContextHandler ctx, Filter filter, String path) {

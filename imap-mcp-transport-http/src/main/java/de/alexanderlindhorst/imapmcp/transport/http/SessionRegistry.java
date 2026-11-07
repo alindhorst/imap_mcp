@@ -91,15 +91,25 @@ final class SessionRegistry {
 
     /** Turns a reservation of {@code principal} into the session {@code sessionId}. */
     void register(String sessionId, String principal) {
-        add(sessionId, principal);
+        add(sessionId, principal, true);
     }
 
-    private void add(String sessionId, String principal) {
+    /**
+     * Records a session the SDK created for a request that had no reservation (safety net: the filter refuses an
+     * {@code initialize} that carries a session id, so this should not happen); it still counts against the caps.
+     */
+    void registerUnreserved(String sessionId, String principal) {
+        add(sessionId, principal, false);
+    }
+
+    private void add(String sessionId, String principal, boolean reserved) {
         Objects.requireNonNull(sessionId, "sessionId");
         Objects.requireNonNull(principal, "principal");
         List<Ended> ended = new ArrayList<>();
         synchronized (lock) {
-            unreserve(principal);
+            if (reserved) {
+                unreserve(principal);
+            }
             prune(ended);
             Entry old = sessions.remove(sessionId);
             if (old != null) {
