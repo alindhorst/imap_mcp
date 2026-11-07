@@ -24,7 +24,9 @@ import java.util.Set;
  * with an allowlisted asymmetric algorithm only ({@code none}, HMAC and the other RSA/EC variants are
  * rejected, as is JWE), {@code iss} equal to the configured issuer, {@code aud} containing the configured
  * resource, {@code exp} required, {@code exp}/{@code nbf} with 60 s skew, and the subject claim present.
- * A failure carries a fixed category only, never token content or the library's message.
+ * A failure carries a fixed category only, never token content or the library's message. The order is
+ * {@code typ}/{@code alg}, then the key decision ({@link KeysUnavailableException}: not the token's fault), then
+ * signature and claims.
  */
 public final class JwtValidator {
 
@@ -59,9 +61,11 @@ public final class JwtValidator {
             throw new InvalidTokenException(InvalidTokenException.MALFORMED);
         } catch (BadJOSEException e) {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);
+        } catch (KeysUnavailableException e) {
+            throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE, e.retryAfterSeconds());
         } catch (RateLimitReachedException e) {
-            // too many unknown-kid refreshes: a flood of tokens with foreign kids, not an outage
-            throw new InvalidTokenException(InvalidTokenException.REJECTED);
+            // a refresh was refused by the interval: the key decision cannot be made (D16), not an invalid token
+            throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (KeySourceException e) {
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (JOSEException | RuntimeException e) {

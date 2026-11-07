@@ -80,7 +80,7 @@ public final class HttpPublicServer {
                 .bind(h.bind()).port(h.port()).allowNonLoopbackBind(h.allowNonLoopbackBind())
                 .hostFilter(new HostFilter(h.allowedHosts()))
                 .originFilter(new OriginFilter(h.allowedOrigins()))
-                .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth))
+                .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth, components.metrics()))
                 .principalFilter(new PrincipalContextFilter(tenants))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
