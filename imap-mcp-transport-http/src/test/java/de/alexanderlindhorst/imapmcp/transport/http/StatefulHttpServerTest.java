@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
+import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
+import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -270,20 +274,178 @@ class StatefulHttpServerTest {
         assertThat(r.body()).contains("session=" + id);
     }
 
+    static final String RATE_LIMITED_BODY =
+            "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32003,\"message\":\"Too many requests\"},\"id\":null}";
+    static final String INVALID_REQUEST_BODY =
+            "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"},\"id\":null}";
+
     @Test
-    void anInitializeWithAValidSessionIdRegistersTheSessionTheSdkCreatesForIt() throws Exception {
+    void anInitializeCarryingASessionIdGets400BeforeTheSdkAndRegistersNothing() throws Exception {
         start(builder().sessionLimits(2, 100, Duration.ofMinutes(30)));
         String first = initialize("alice");
+        assertThat(server.sessionCount()).isEqualTo(1);
+        int sdk = server.sdkRequestCount();
         HttpResponse<String> again = send("POST", INIT, "alice", first);
-        assertThat(again.statusCode()).isEqualTo(200);
-        String second = again.headers().firstValue("Mcp-Session-Id").orElseThrow();
-        assertThat(second).isNotEqualTo(first);
-        assertThat(send("POST", INITIALIZED, "alice", second).statusCode()).isEqualTo(202);
-        assertThat(send("POST", LIST, "alice", second).statusCode()).isEqualTo(200); // bound, not an orphan
-        assertThat(send("POST", LIST, "bob", second).statusCode()).isEqualTo(404);
-        send("POST", INIT, "alice", first); // a third session of alice: the least recently used one goes
-        assertThat(ended).hasSize(1);
+        assertThat(again.statusCode()).isEqualTo(400);
+        assertThat(again.body()).isEqualTo(INVALID_REQUEST_BODY);
+        assertThat(again.headers().firstValue("Mcp-Session-Id")).isEmpty();
+        assertThat(server.sessionCount()).isEqualTo(1);
+        assertThat(server.sdkRequestCount()).isEqualTo(sdk); // the SDK never saw it
+        assertThat(ended).isEmpty();
+        assertThat(send("POST", LIST, "alice", first).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void anInitializeInsideABatchWithASessionIdIsRefusedToo() throws Exception {
+        start(builder());
+        String id = initialize("alice");
+        String batch = "[" + LIST + "," + INIT + "]";
+        int sdk = server.sdkRequestCount();
+        HttpResponse<String> r = send("POST", batch, "alice", id);
+        assertThat(r.statusCode()).isEqualTo(400);
+        assertThat(r.body()).isEqualTo(INVALID_REQUEST_BODY);
+        assertThat(server.sdkRequestCount()).isEqualTo(sdk);
+        assertThat(server.sessionCount()).isEqualTo(1);
+    }
+
+    @Test
+    void anotherMethodWithASessionIdPassesWithItsBodyIntact() throws Exception {
+        start(builder());
+        String id = initialize("alice");
+        HttpResponse<String> r = send("POST", CALL_ECHO, "alice", id);
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.body()).contains("session=" + id);
+        // text that merely mentions initialize in a string value is not an initialize
+        String tricky = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\","
+                + "\"arguments\":{\"method\":\"initialize\"}}}";
+        assertThat(send("POST", tricky, "alice", id).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void aBodyThatDoesNotParseIsPassedOnToTheSdk() throws Exception {
+        start(builder());
+        String id = initialize("alice");
+        int sdk = server.sdkRequestCount();
+        HttpResponse<String> r = send("POST", "{not json", "alice", id);
+        assertThat(r.statusCode()).isNotEqualTo(404).isNotEqualTo(200);
+        assertThat(r.body()).contains("Invalid message format"); // the SDK's own answer, not ours
+        assertThat(server.sdkRequestCount()).isEqualTo(sdk + 1);
+        assertThat(send("POST", LIST, "alice", id).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void aBodyBeyondMaxRequestBytesIsRefusedWith413() throws Exception {
+        start(builder().maxRequestBytes(2048));
+        String id = initialize("alice");
+        String big = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\",\"params\":{\"x\":\""
+                + "a".repeat(4096) + "\"}}";
+        assertThat(send("POST", big, "alice", id).statusCode()).isEqualTo(413);
+    }
+
+    static java.time.Clock clockAt(java.util.concurrent.atomic.AtomicLong offsetMillis) {
+        return new java.time.Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+                return java.time.ZoneOffset.UTC;
+            }
+
+            @Override
+            public java.time.Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public java.time.Instant instant() {
+                return java.time.Instant.parse("2026-11-07T12:00:00Z").plusMillis(offsetMillis.get());
+            }
+        };
+    }
+
+    private HttpLocalServer.Builder limited(int ratePerMinute, MetricsRecorder metrics) {
+        return builder().initializeRateLimit(ratePerMinute, clockAt(offsetMillis)).metrics(metrics)
+                .bearerFilter(new BearerTokenFilter(TOKEN.toCharArray(), new AccountContext(new TenantId("t"))));
+    }
+
+    private HttpResponse<String> init(String principal) throws Exception {
+        return send("POST", INIT, principal, null, "Authorization", "Bearer " + TOKEN);
+    }
+
+    @Test
+    void afterTheCapacityTheNextInitializeGets429WithRetryAfterAndNoSdkSession() throws Exception {
+        start(limited(1, MetricsRecorder.NOOP)); // 1 per minute, capacity 2
+        assertThat(init("alice").statusCode()).isEqualTo(200);
+        assertThat(init("alice").statusCode()).isEqualTo(200);
+        int sdk = server.sdkRequestCount();
+        HttpResponse<String> r = init("alice");
+        assertThat(r.statusCode()).isEqualTo(429);
+        assertThat(r.headers().firstValue("Retry-After")).hasValue("60");
+        assertThat(r.headers().firstValue("WWW-Authenticate")).isEmpty();
+        assertThat(r.headers().firstValue("Mcp-Session-Id")).isEmpty();
+        assertThat(r.body()).isEqualTo(RATE_LIMITED_BODY);
+        assertThat(server.sdkRequestCount()).isEqualTo(sdk);
         assertThat(server.sessionCount()).isEqualTo(2);
+        offsetMillis.set(30_000);
+        assertThat(init("alice").headers().firstValue("Retry-After")).hasValue("30");
+    }
+
+    @Test
+    void aRefilledTokenAdmitsAgainAndAnotherPrincipalIsUnaffected() throws Exception {
+        start(limited(1, MetricsRecorder.NOOP));
+        init("alice");
+        init("alice");
+        assertThat(init("alice").statusCode()).isEqualTo(429);
+        assertThat(init("bob").statusCode()).isEqualTo(200);
+        offsetMillis.set(60_000);
+        assertThat(init("alice").statusCode()).isEqualTo(200);
+        assertThat(init("alice").statusCode()).isEqualTo(429);
+    }
+
+    @Test
+    void aTokenIsConsumedByAnInitializeRefusedAtTheReplicaCapButA429TakesNone() throws Exception {
+        start(limited(1, MetricsRecorder.NOOP).sessionLimits(10, 1, Duration.ofMinutes(30)));
+        assertThat(init("alice").statusCode()).isEqualTo(200); // fills the replica
+        assertThat(init("bob").statusCode()).isEqualTo(503);
+        assertThat(init("bob").statusCode()).isEqualTo(503);
+        assertThat(init("bob").statusCode()).isEqualTo(429); // both tokens went to the 503s
+        offsetMillis.set(60_000);
+        assertThat(init("bob").statusCode()).isEqualTo(503); // exactly one token came back; the 429 took none
+        assertThat(init("bob").statusCode()).isEqualTo(429);
+    }
+
+    @Test
+    void requestsWithASessionIdTakeNoToken() throws Exception {
+        start(limited(1, MetricsRecorder.NOOP));
+        HttpResponse<String> r = init("alice");
+        String id = r.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        for (int i = 0; i < 10; i++) {
+            assertThat(send("POST", LIST, "alice", id, "Authorization", "Bearer " + TOKEN).statusCode())
+                    .isEqualTo(200);
+        }
+        assertThat(init("alice").statusCode()).isEqualTo(200); // second token still there
+    }
+
+    @Test
+    void theRefusalIsCountedPerTenantAsInitializeRateLimited() throws Exception {
+        try (InMemoryMetricsRecorder metrics = new InMemoryMetricsRecorder(
+                new LogIds(new KeyRing(1, Map.of(1, new byte[32]))), java.time.Clock.systemUTC())) {
+            start(limited(1, metrics));
+            init("alice");
+            init("alice");
+            init("alice");
+            init("alice");
+            var o = metrics.snapshot().operations().stream().filter(x -> x.op().equals("rate_limited"))
+                    .findFirst().orElseThrow();
+            assertThat(o.tool()).isEqualTo("initialize");
+            assertThat(o.count()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void withoutARateLimitConfiguredInitializeIsNotLimited() throws Exception {
+        start(builder());
+        for (int i = 0; i < 30; i++) {
+            assertThat(send("POST", INIT, "alice", null).statusCode()).isEqualTo(200);
+        }
     }
 
     @Test
