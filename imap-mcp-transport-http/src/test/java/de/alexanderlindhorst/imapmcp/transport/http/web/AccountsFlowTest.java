@@ -79,6 +79,9 @@ class AccountsFlowTest {
         idp.close();
     }
 
+    /** Replaces the key source of the ID-token validation when set (D16 tests). */
+    com.nimbusds.jose.jwk.source.JWKSource<com.nimbusds.jose.proc.SecurityContext> keysOverride;
+
     record Config(String requiredRole, boolean allowWithoutRole) {
     }
 
@@ -94,8 +97,8 @@ class AccountsFlowTest {
         WebConfig config = new WebConfig(URI.create(origin), idp.issuer, FakeIdp.CLIENT_ID,
                 () -> new Secret(FakeIdp.CLIENT_SECRET.toCharArray()), "sub", v.requiredRole(), "realm_access.roles",
                 v.allowWithoutRole(), true);
-        OidcProvider provider = HttpOidcProvider.create(config,
-                new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())));
+        OidcProvider provider = HttpOidcProvider.create(config, keysOverride != null ? keysOverride
+                : new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())));
         server = HttpLocalServer.builder().port(port)
                 .webSurface(WebSurface.of(config, provider, pending, sessions, tenants, new LinkingPagesTest.FakeLinker(),
                         Clock.systemUTC())).build();
@@ -464,6 +467,41 @@ class AccountsFlowTest {
         assertThat(r.body()).doesNotContain("idp-detail-canary").doesNotContain("invalid_grant");
         assertThat(sessions.size()).isZero();
         assertSecurityHeaders(r);
+    }
+
+    @Test
+    void keyUnavailabilityAtTheCallbackIs503WithAGenericPageAndCreatesNothing() throws Exception {
+        keysOverride = (selector, ctx) -> {
+            throw new de.alexanderlindhorst.imapmcp.transport.http.KeysUnavailableException(30);
+        };
+        start(c -> c);
+        Started s = startLogin();
+
+        Resp r = callback(s, "good-code");
+
+        assertThat(r.status()).isEqualTo(503);
+        assertThat(r.body()).containsIgnoringCase("try again later").doesNotContain("idp-detail-canary");
+        assertThat(r.cookieHeader("__Host-session")).isNull();
+        assertThat(r.cookieHeader("__Host-oidc")).startsWith("__Host-oidc=; ").contains("Max-Age=0");
+        assertThat(sessions.size()).isZero();
+        assertThat(tenants.created).isZero();
+        assertThat(audit.events).isEmpty();
+        assertThat(pending.size()).isZero(); // the state was burned as before
+        assertSecurityHeaders(r); // no-store and CSP
+        // replaying the same state gets the ordinary refusal
+        idp.nonce = s.query().get("nonce");
+        assertThat(get("/accounts/callback?code=c&state=" + s.state(), s.bindingCookie()).status()).isEqualTo(400);
+    }
+
+    @Test
+    void aDecidableInvalidIdTokenIsStillA400() throws Exception {
+        idp.claims = b -> b.claim("nonce", "not-the-nonce");
+        Resp r = callback(startLogin(), "c");
+        assertThat(r.status()).isEqualTo(400);
+        idp.claims = b -> { };
+        idp.signingKey = new com.nimbusds.jose.jwk.gen.RSAKeyGenerator(2048).keyID("idp-1").generate();
+        assertThat(callback(startLogin(), "c").status()).isEqualTo(400);
+        assertThat(sessions.size()).isZero();
     }
 
     @Test
