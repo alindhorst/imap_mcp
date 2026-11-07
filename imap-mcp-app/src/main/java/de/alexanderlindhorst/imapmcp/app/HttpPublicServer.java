@@ -77,7 +77,7 @@ public final class HttpPublicServer {
         ProtectedResourceMetadataServlet metadata = new ProtectedResourceMetadataServlet(oauth);
         // one reporter for /mcp and the linking callback: one counter, one WARN per minute (D16)
         KeysUnavailableReporter keysUnavailable = new KeysUnavailableReporter(components.metrics(),
-                System::currentTimeMillis);
+                () -> System.nanoTime() / 1_000_000); // monotonic: a wall-clock step must not reopen the WARN
         HttpLocalServer.Builder builder = HttpLocalServer.builder()
                 .maxRequestBytes((int) Math.min(h.maxRequestBytes(), Integer.MAX_VALUE))
                 .serverInfo(AppVersion.SERVER_NAME, AppVersion.version())

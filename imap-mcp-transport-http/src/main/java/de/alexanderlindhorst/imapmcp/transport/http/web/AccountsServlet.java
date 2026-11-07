@@ -52,7 +52,7 @@ public final class AccountsServlet extends HttpServlet {
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
             WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
             KeysUnavailableReporter keysUnavailable) {
-        this.keysUnavailable = keysUnavailable;
+        this.keysUnavailable = java.util.Objects.requireNonNull(keysUnavailable, "keysUnavailable");
         this.config = config;
         this.provider = provider;
         this.pending = pending;
