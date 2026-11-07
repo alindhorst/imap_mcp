@@ -70,6 +70,40 @@ class ImapErrorMapperTest {
         assertThat(m.error().requestId()).isEqualTo(RID);
     }
 
+    static Stream<Arguments> loginTexts() {
+        return Stream.of(
+                Arguments.of("[UNAVAILABLE] Temporary authentication failure", true),
+                Arguments.of("  \t[UNAVAILABLE] try later", true),
+                Arguments.of("[unavailable] try later", true),
+                Arguments.of("[Unavailable]", true),
+                Arguments.of("[AUTHENTICATIONFAILED] Invalid credentials", false),
+                Arguments.of("Invalid credentials", false),
+                Arguments.of("Invalid credentials [UNAVAILABLE]", false),
+                Arguments.of("UNAVAILABLE", false),
+                Arguments.of("", false),
+                Arguments.of(null, false));
+    }
+
+    @ParameterizedTest
+    @MethodSource("loginTexts")
+    void loginRefusalIsUnavailableOnlyWithLeadingCode(String text, boolean unavailable) {
+        for (Throwable t : List.of(new AuthenticationFailedException(text),
+                new MessagingException("wrapped", new AuthenticationFailedException(text)))) {
+            ImapErrorMapper.MappedError m = ImapErrorMapper.map(t, RID);
+            if (unavailable) {
+                assertThat(m.error().code()).isEqualTo(ErrorCode.UPSTREAM_UNAVAILABLE);
+                assertThat(m.error().retryable()).isTrue();
+                assertThat(details(m.error())).containsEntry("reason", "login_unavailable");
+                assertThat(m.error().hint()).isEqualTo("Retry in a minute or later.");
+                assertThat(m.error().toMap().toString()).doesNotContain("Temporary").doesNotContain("try later");
+            } else {
+                assertThat(m.error()).isEqualTo(ToolError.authFailed(RID));
+                assertThat(m.error().retryable()).isFalse();
+            }
+            assertThat(m.discardConnection()).isTrue();
+        }
+    }
+
     @Test
     void serverBusyMapsWithoutDiscardAndKeepsCanonicalError() {
         for (Throwable t : List.of(new ServerBusyException(), new IllegalStateException("w", new ServerBusyException()))) {
