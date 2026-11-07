@@ -5,7 +5,6 @@ import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.KeySourceException;
 import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.jwk.source.RateLimitReachedException;
 import com.nimbusds.jose.proc.BadJOSEException;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
@@ -63,9 +62,6 @@ public final class JwtValidator {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);
         } catch (KeysUnavailableException e) {
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE, e.retryAfterSeconds());
-        } catch (RateLimitReachedException e) {
-            // a refresh was refused by the interval: the key decision cannot be made (D16), not an invalid token
-            throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (KeySourceException e) {
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (JOSEException | RuntimeException e) {
