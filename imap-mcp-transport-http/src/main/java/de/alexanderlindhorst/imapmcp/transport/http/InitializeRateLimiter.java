@@ -31,10 +31,11 @@ final class InitializeRateLimiter {
     private final Clock clock;
     private final long costNanos;
     private final long capacityNanos;
-    private final long retryAtFullTable;
     private final int maxPrincipals;
     private final Map<String, Bucket> buckets = new HashMap<>();
     private Instant lastSweep;
+    /** The earliest time any bucket is full again (and can be dropped); {@code Instant.MAX} for an empty table. */
+    private Instant nextFullAt = Instant.MAX;
 
     InitializeRateLimiter(Clock clock, int ratePerMinute) {
         this(clock, ratePerMinute, MAX_PRINCIPALS);
@@ -47,7 +48,6 @@ final class InitializeRateLimiter {
         }
         this.costNanos = NANOS_PER_MINUTE / ratePerMinute;
         this.capacityNanos = costNanos * 2L * ratePerMinute;
-        this.retryAtFullTable = wholeSeconds(costNanos);
         this.maxPrincipals = maxPrincipals;
         this.lastSweep = clock.instant();
     }
@@ -64,15 +64,20 @@ final class InitializeRateLimiter {
         Bucket bucket = buckets.get(principal);
         if (bucket == null) {
             if (buckets.size() >= maxPrincipals) {
-                sweep(now);
+                if (now.isBefore(nextFullAt)) {
+                    // full of live entries and none refilled yet: refuse a newcomer in O(1) (fail-closed)
+                    return wholeSeconds(Duration.between(now, nextFullAt).toNanos());
+                }
+                sweep(now); // nextFullAt was a lower bound: a debit may have moved the earliest bucket later
                 if (buckets.size() >= maxPrincipals) {
-                    return retryAtFullTable; // full of live entries: refuse a newcomer (fail-closed)
+                    return wholeSeconds(Duration.between(now, nextFullAt).toNanos());
                 }
             }
             bucket = new Bucket();
             bucket.credit = capacityNanos;
             bucket.updated = now;
             buckets.put(principal, bucket);
+            // a new bucket is full: it enters nextFullAt when it is debited below
         } else {
             refill(bucket, now);
         }
@@ -80,6 +85,7 @@ final class InitializeRateLimiter {
             return wholeSeconds(costNanos - bucket.credit);
         }
         bucket.credit -= costNanos;
+        lowerNextFullAt(bucket);
         return 0;
     }
 
@@ -91,13 +97,23 @@ final class InitializeRateLimiter {
         }
     }
 
+    private void lowerNextFullAt(Bucket b) {
+        Instant fullAt = b.updated.plusNanos(capacityNanos - b.credit);
+        if (fullAt.isBefore(nextFullAt)) {
+            nextFullAt = fullAt;
+        }
+    }
+
     private void sweep(Instant now) {
         lastSweep = now;
+        nextFullAt = Instant.MAX;
         for (Iterator<Bucket> it = buckets.values().iterator(); it.hasNext();) {
             Bucket b = it.next();
             refill(b, now);
             if (b.credit >= capacityNanos) {
                 it.remove();
+            } else {
+                lowerNextFullAt(b);
             }
         }
     }
