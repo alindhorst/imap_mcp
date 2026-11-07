@@ -48,6 +48,22 @@ class OAuthResourceConfigTest {
     }
 
     @Test
+    void theResourcePathIsStrictlyCheckedOnTheRawForm() {
+        for (String bad : List.of("https://mail.example.com//mcp", "https://mail.example.com/../mcp",
+                "https://mail.example.com/./mcp", "https://mail.example.com/x/../mcp",
+                "https://mail.example.com/%2e%2e/mcp", "https://mail.example.com/x%20y/mcp",
+                "https://mail.example.com/x%2Fy/mcp", "https://mail.example.com/\u00e4/mcp",
+                "https://mail.example.com/\u202e/mcp", "https://mail.example.com/*/mcp",
+                "https://mail.example.com/x;a/mcp/", "https://mail.example.com:/mcp")) {
+            assertThatThrownBy(() -> new OAuthResourceConfig("https://idp", bad, "sub", List.of()))
+                    .as(bad).isInstanceOf(IllegalArgumentException.class);
+        }
+        for (String ok : List.of("https://mail.example.com:8443/a.b/c_d-e~f/mcp", "https://mail.example.com/x:y@z/mcp")) {
+            assertThat(new OAuthResourceConfig("https://idp", ok, "sub", List.of()).resource()).isEqualTo(ok);
+        }
+    }
+
+    @Test
     void issuerAndSubjectClaimMustNotBeBlank() {
         assertThatThrownBy(() -> new OAuthResourceConfig(" ", TestTokens.RESOURCE, "sub", List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
