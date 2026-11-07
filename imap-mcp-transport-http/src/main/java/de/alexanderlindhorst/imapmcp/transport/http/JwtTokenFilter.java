@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,32 +35,29 @@ public final class JwtTokenFilter implements Filter {
     private final JwtValidator validator;
     private final String challengeMissing;
     private final String challengeInvalid;
-    private final LongSupplier clockMillis;
-    private final MetricsRecorder metrics;
-    private final AtomicLong lastKeysWarn = new AtomicLong(Long.MIN_VALUE);
+    private final KeysUnavailableReporter keysUnavailable;
 
     public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config) {
-        this(validator, config, MetricsRecorder.NOOP);
+        this(validator, config, KeysUnavailableReporter.withoutMetrics());
     }
 
     /** With the replica-wide counter {@code oauth_keys_unavailable} (SPEC 5.6). */
     public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, MetricsRecorder metrics) {
-        this(validator, config, metrics, System::currentTimeMillis);
+        this(validator, config, new KeysUnavailableReporter(metrics, System::currentTimeMillis));
     }
 
     /** Test seam: a clock for the rate limit of the key-unavailable warning. */
     JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, LongSupplier clockMillis) {
-        this(validator, config, MetricsRecorder.NOOP, clockMillis);
+        this(validator, config, new KeysUnavailableReporter(MetricsRecorder.NOOP, clockMillis));
     }
 
-    private JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, MetricsRecorder metrics,
-            LongSupplier clockMillis) {
+    /** With a reporter shared with the linking surface's callback. */
+    public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, KeysUnavailableReporter reporter) {
         this.validator = Objects.requireNonNull(validator, "validator");
         String metadata = ", resource_metadata=\"" + config.metadataUrl() + "\"";
         this.challengeMissing = "Bearer realm=\"imap-mcp\"" + metadata;
         this.challengeInvalid = "Bearer realm=\"imap-mcp\", error=\"invalid_token\"" + metadata;
-        this.clockMillis = clockMillis;
-        this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.keysUnavailable = Objects.requireNonNull(reporter, "reporter");
     }
 
     @Override
@@ -85,8 +81,7 @@ public final class JwtTokenFilter implements Filter {
         } catch (InvalidTokenException e) {
             if (InvalidTokenException.KEYS_UNAVAILABLE.equals(e.category())) {
                 // D16: not an invalid token, so no challenge (a client would re-authorize instead of retrying)
-                warnKeysUnavailable();
-                metrics.oauthKeysUnavailable();
+                keysUnavailable.report();
                 unavailable(response, e.retryAfterSeconds());
             } else {
                 LOG.debug("Token rejected: {}", e.category());
@@ -96,15 +91,6 @@ public final class JwtTokenFilter implements Filter {
         }
         request.setAttribute(PRINCIPAL_ATTRIBUTE, principal);
         chain.doFilter(req, res);
-    }
-
-    /** At most one warning per minute: an unreachable identity provider fails every request. */
-    private void warnKeysUnavailable() {
-        long now = clockMillis.getAsLong();
-        long last = lastKeysWarn.get();
-        if ((last == Long.MIN_VALUE || now - last >= WARN_INTERVAL_MS) && lastKeysWarn.compareAndSet(last, now)) {
-            LOG.warn("Token not validated: {}", InvalidTokenException.KEYS_UNAVAILABLE);
-        }
     }
 
     /** The credentials after {@code Bearer }, or null when the scheme is another or the value is not one token. */

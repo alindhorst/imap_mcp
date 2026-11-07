@@ -10,6 +10,7 @@ import de.alexanderlindhorst.imapmcp.transport.http.HttpLocalServer;
 import de.alexanderlindhorst.imapmcp.transport.http.JwtPrincipal;
 import de.alexanderlindhorst.imapmcp.transport.http.JwtTokenFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.JwtValidator;
+import de.alexanderlindhorst.imapmcp.transport.http.KeysUnavailableReporter;
 import de.alexanderlindhorst.imapmcp.transport.http.OAuthResourceConfig;
 import de.alexanderlindhorst.imapmcp.transport.http.OriginFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.PrincipalContextFilter;
@@ -74,17 +75,20 @@ public final class HttpPublicServer {
         PrincipalTenants tenants = (issuer, subject) -> components.tenantDirectory().find(issuer, subject)
                 .map(t -> new PrincipalTenants.Tenant(t.tenantId(), t.disabled()));
         ProtectedResourceMetadataServlet metadata = new ProtectedResourceMetadataServlet(oauth);
+        // one reporter for /mcp and the linking callback: one counter, one WARN per minute (D16)
+        KeysUnavailableReporter keysUnavailable = new KeysUnavailableReporter(components.metrics(),
+                System::currentTimeMillis);
         HttpLocalServer.Builder builder = HttpLocalServer.builder()
                 .maxRequestBytes((int) Math.min(h.maxRequestBytes(), Integer.MAX_VALUE))
                 .serverInfo(AppVersion.SERVER_NAME, AppVersion.version())
                 .bind(h.bind()).port(h.port()).allowNonLoopbackBind(h.allowNonLoopbackBind())
                 .hostFilter(new HostFilter(h.allowedHosts()))
                 .originFilter(new OriginFilter(h.allowedOrigins()))
-                .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth, components.metrics()))
+                .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth, keysUnavailable))
                 .principalFilter(new PrincipalContextFilter(tenants))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
-                .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer))
+                .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer, keysUnavailable))
                 .openServlet(OAuthResourceConfig.METADATA_ROOT, metadata);
         if (!oauth.metadataPath().equals(OAuthResourceConfig.METADATA_ROOT)) {
             builder.openServlet(oauth.metadataPath(), metadata);
@@ -107,13 +111,13 @@ public final class HttpPublicServer {
      * {@code public.*}; the ID token is checked against the same key source as the access tokens.
      */
     static WebSurface webSurface(PublicConfig config, PublicComponents components, JWKSource<SecurityContext> keys,
-            boolean allowInsecureHttpIssuer) {
+            boolean allowInsecureHttpIssuer, KeysUnavailableReporter keysUnavailable) {
         PublicConfig.Oauth o = config.oauth();
         WebConfig web = new WebConfig(URI.create(config.pub().baseUrl()), o.issuer(), o.webClientId(),
                 components.webClientSecret(), o.subjectClaim(), o.requiredRole(), o.roleClaim(),
                 o.allowWithoutRole(), allowInsecureHttpIssuer);
         return WebSurface.of(web, HttpOidcProvider.create(web, keys), components.oidcPendingStore(),
                 components.webSessionStore(), components.tenantProvisioner(), components.accountLinker(),
-                components.clock());
+                components.clock(), keysUnavailable);
     }
 }
