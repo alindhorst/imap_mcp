@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** SPEC 5.7 (v0.20): the http-public configuration and its startup failures, each naming the key path. */
 class PublicConfigLoaderTest {
@@ -243,6 +244,24 @@ class PublicConfigLoaderTest {
                 .isInstanceOf(ConfigException.class).hasMessageContaining("kms.local: not allowed with kms.provider vault");
         assertThatThrownBy(() -> bind(withVault("kms:\n  provider: vault\n")))
                 .hasMessageContaining("kms.vault: required");
+    }
+
+    @Test
+    void initializeRatePerMinuteDefaultsToTenAndIsBoundWhenSet() {
+        PublicConfig c = bind(VALID);
+        assertThat(c.http().initializeRatePerMinute()).isEqualTo(10);
+        assertThat(c.http().initializeRateSet()).isFalse();
+        PublicConfig set = bind(VALID + "http:\n  stateful: true\n  initializeRatePerMinute: 600\n");
+        assertThat(set.http().initializeRatePerMinute()).isEqualTo(600);
+        assertThat(set.http().initializeRateSet()).isTrue();
+        assertThat(bind(VALID + "http:\n  initializeRatePerMinute: 1\n").http().initializeRatePerMinute()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "601", "-1", "ten", "2.5"})
+    void initializeRatePerMinuteOutsideOneTo600FailsStartupNamingTheKey(String value) {
+        assertThatThrownBy(() -> bind(VALID + "http:\n  stateful: true\n  initializeRatePerMinute: " + value + "\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("http.initializeRatePerMinute");
     }
 
     @Test
