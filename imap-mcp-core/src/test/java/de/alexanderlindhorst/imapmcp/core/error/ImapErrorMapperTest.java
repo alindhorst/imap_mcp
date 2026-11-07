@@ -95,7 +95,7 @@ class ImapErrorMapperTest {
                 assertThat(m.error().retryable()).isTrue();
                 assertThat(details(m.error())).containsEntry("reason", "login_unavailable");
                 assertThat(m.error().hint()).isEqualTo("Retry in a minute or later.");
-                assertThat(m.error().toMap().toString()).doesNotContain("Temporary").doesNotContain("try later");
+                assertThat(m.error().toMap().toString()).doesNotContain("Temporary").doesNotContain("UNAVAILABLE]");
             } else {
                 assertThat(m.error()).isEqualTo(ToolError.authFailed(RID));
                 assertThat(m.error().retryable()).isFalse();
