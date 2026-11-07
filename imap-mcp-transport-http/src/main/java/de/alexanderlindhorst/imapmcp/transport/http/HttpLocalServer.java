@@ -1,7 +1,7 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.json.McpJsonDefaults;
+import de.alexanderlindhorst.imapmcp.core.mcp.SafeMcpJson;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
@@ -123,7 +123,7 @@ public final class HttpLocalServer {
         private int maxRequestBytes = MAX_REQUEST_BYTES;
         private String serverName = "imap-mcp";
         private String serverVersion = "dev";
-        private McpJsonMapper jsonMapper = McpJsonDefaults.getMapper();
+        private McpJsonMapper jsonMapper = SafeMcpJson.mapper();
         private final List<McpStatelessServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
         private Function<HttpServletRequest, McpTransportContext> contextExtractor = req -> McpTransportContext.EMPTY;
         private Filter hostFilter;
