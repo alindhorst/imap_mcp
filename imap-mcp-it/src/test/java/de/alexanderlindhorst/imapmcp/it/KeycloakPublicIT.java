@@ -65,9 +65,10 @@ class KeycloakPublicIT {
     private static final String ISSUER = KeycloakFixture.publicIssuer(REALM);
     private static final String RESOURCE = KeycloakFixture.RESOURCE;
     private static final String METADATA_URL = "https://mail.example.com/.well-known/oauth-protected-resource/mcp";
-    private static final String MISSING = "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA_URL + "\"";
+    private static final String MISSING = "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA_URL
+            + "\", scope=\"imap-mcp:read imap-mcp:write\"";
     private static final String INVALID = "Bearer realm=\"imap-mcp\", error=\"invalid_token\", resource_metadata=\""
-            + METADATA_URL + "\"";
+            + METADATA_URL + "\", scope=\"imap-mcp:read imap-mcp:write\"";
     private static final String READ_SCOPE = "imap-mcp:read";
     private static final String BOTH_SCOPES = "imap-mcp:read imap-mcp:write";
     private static final HttpClient HTTP = HttpClient.newHttpClient();
@@ -335,7 +336,8 @@ class KeycloakPublicIT {
         HttpResponse<String> r = rpc(noScope, LIST_ACCOUNTS);
         assertThat(r.statusCode()).isEqualTo(403);
         assertThat(r.headers().allValues("WWW-Authenticate"))
-                .containsExactly("Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"");
+                .containsExactly("Bearer realm=\"imap-mcp\", error=\"insufficient_scope\", resource_metadata=\""
+                        + METADATA_URL + "\", scope=\"imap-mcp:read imap-mcp:write\"");
     }
 
     @Test
