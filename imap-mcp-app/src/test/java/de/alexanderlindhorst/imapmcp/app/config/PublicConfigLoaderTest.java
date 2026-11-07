@@ -92,6 +92,12 @@ class PublicConfigLoaderTest {
     }
 
     @Test
+    void theResourcePathMayCarryAPrefixBeforeMcp() {
+        assertThat(bind(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/x/mcp"))
+                .oauth().resource()).isEqualTo("https://mail.example.com/x/mcp");
+    }
+
+    @Test
     void thePublicBaseUrlIsNormalisedToTheOriginBrowsersSend() {
         String base = "baseUrl: https://mail.example.com";
         assertThat(bind(VALID.replace(base, "baseUrl: https://MAIL.Example.com:443")).pub().baseUrl())
@@ -270,6 +276,14 @@ class PublicConfigLoaderTest {
                         "oauth.issuer: must be an https URI"),
                 Arguments.of(VALID.replace("https://mail.example.com/mcp", "http://mail.example.com/mcp"),
                         "oauth.resource: must be an https URI"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/mcp/"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/x"),
+                        "oauth.resource: path must end with /mcp"),
                 Arguments.of(VALID.replace("  requiredRole: imap-mcp-user\n", ""),
                         "oauth.requiredRole: required unless oauth.allowWithoutRole is true"),
                 Arguments.of(without("public"), "public.baseUrl: required"),

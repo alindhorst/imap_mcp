@@ -33,6 +33,21 @@ class OAuthResourceConfigTest {
     }
 
     @Test
+    void resourcePathMustEndWithMcpWithoutATrailingSlash() {
+        for (String bad : List.of("https://mail.example.com", "https://mail.example.com/",
+                "https://mail.example.com/mcp/", "https://mail.example.com/x", "https://mail.example.com/xmcp",
+                "https://mail.example.com/mcp/x")) {
+            assertThatThrownBy(() -> new OAuthResourceConfig("https://idp", bad, "sub", List.of()))
+                    .as(bad).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("oauth.resource");
+        }
+        for (String ok : List.of("https://mail.example.com/mcp", "https://mail.example.com/x/mcp")) {
+            assertThat(new OAuthResourceConfig("https://idp", ok, "sub", List.of()).resource()).isEqualTo(ok);
+        }
+        assertThat(new OAuthResourceConfig("https://idp", "https://mail.example.com/x/mcp", "sub", List.of())
+                .metadataPath()).isEqualTo("/.well-known/oauth-protected-resource/x/mcp");
+    }
+
+    @Test
     void issuerAndSubjectClaimMustNotBeBlank() {
         assertThatThrownBy(() -> new OAuthResourceConfig(" ", TestTokens.RESOURCE, "sub", List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
