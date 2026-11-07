@@ -218,7 +218,7 @@ class HttpPublicIT {
         HttpResponse<String> r = rpc(null, "{}");
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(r.headers().firstValue("WWW-Authenticate")).contains(
-                "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA + "\"");
+                "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA + "\", scope=\"imap-mcp:read imap-mcp:write\"");
     }
 
     @Test
@@ -226,7 +226,8 @@ class HttpPublicIT {
         HttpResponse<String> r = rpc(token("alice", "openid"), "{}");
         assertThat(r.statusCode()).isEqualTo(403);
         assertThat(r.headers().firstValue("WWW-Authenticate"))
-                .contains("Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"");
+                .contains("Bearer realm=\"imap-mcp\", error=\"insufficient_scope\", resource_metadata=\"" + METADATA
+                        + "\", scope=\"imap-mcp:read imap-mcp:write\"");
     }
 
     @Test
@@ -295,7 +296,8 @@ class HttpPublicIT {
         HttpResponse<String> r = rpc(jwt.serialize(), "{}");
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(r.headers().firstValue("WWW-Authenticate")).hasValueSatisfying(
-                v -> assertThat(v).contains("invalid_token").contains(METADATA));
+                v -> assertThat(v).isEqualTo("Bearer realm=\"imap-mcp\", error=\"invalid_token\", resource_metadata=\""
+                        + METADATA + "\", scope=\"imap-mcp:read imap-mcp:write\""));
     }
 
     @Test

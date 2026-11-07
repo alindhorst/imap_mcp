@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * Read-only lookup of the tenant of a validated principal (SPEC 5.3): the row found by the issuer and the subject
  * claim. There is deliberately no way to create a tenant here: no MCP request creates rows (tenant creation is
- * the linking surface's first login). Implementations cache (5 minutes, bounded) and are backed by the store.
+ * the linking surface's first login). Implementations cache (30 seconds, bounded) and are backed by the store.
  */
 @FunctionalInterface
 public interface PrincipalTenants {

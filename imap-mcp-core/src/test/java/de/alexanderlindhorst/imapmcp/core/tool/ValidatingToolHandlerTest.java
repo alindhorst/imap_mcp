@@ -46,4 +46,14 @@ class ValidatingToolHandlerTest {
         verify(delegate).handle(any(), cap.capture());
         assertThat(cap.getValue()).containsOnlyKeys("account");
     }
+
+    @Test
+    void aSchemaFailureMarksTheCallAsAStepOneRejection() {
+        h.handle(ctx, Map.of("account", "a", "page_size", 101));
+        assertThat(ctx.argumentsRejected()).isTrue();
+        ToolCallContext fine = new ToolCallContext(new AccountContext(new TenantId("t1")), "req-10");
+        when(delegate.handle(any(), any())).thenReturn(new ToolOutcome.Success(Map.of()));
+        h.handle(fine, Map.of("account", "a"));
+        assertThat(fine.argumentsRejected()).isFalse();
+    }
 }

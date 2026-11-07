@@ -23,6 +23,7 @@ public final class ValidatingToolHandler implements ToolHandler {
     public ToolOutcome handle(ToolCallContext context, Map<String, Object> args) {
         InputValidator.Result r = validator.validate(args, context.requestId());
         if (!r.valid()) {
+            context.rejectArguments();
             return new ToolOutcome.Failure(r.error());
         }
         return delegate.handle(context, r.args());

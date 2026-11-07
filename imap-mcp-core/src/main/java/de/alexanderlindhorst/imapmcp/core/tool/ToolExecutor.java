@@ -136,6 +136,9 @@ public final class ToolExecutor {
         if (write) {
             auditFailure(ctx, outcome);
         }
+        if (write && ctx.argumentsRejected() && outcome instanceof ToolOutcome.Failure) {
+            metrics.writeArgumentRejected(tenant, toolName); // check-order step 1: counted, never audited (D10)
+        }
         if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
             reportExecutorOutcome(toolName, ctx, f.error().code(), elapsed);
         }

@@ -95,8 +95,8 @@ final class SessionRegistry {
     }
 
     /**
-     * Records a session the SDK created without a reservation (an {@code initialize} that carried a session id); it
-     * still counts against the per-principal cap.
+     * Records a session the SDK created for a request that had no reservation (safety net: the filter refuses an
+     * {@code initialize} that carries a session id, so this should not happen); it still counts against the caps.
      */
     void registerUnreserved(String sessionId, String principal) {
         add(sessionId, principal, false);

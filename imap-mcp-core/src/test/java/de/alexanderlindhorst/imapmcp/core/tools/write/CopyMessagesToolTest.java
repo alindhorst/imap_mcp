@@ -516,4 +516,12 @@ class CopyMessagesToolTest {
         t.handle(ctx(A), args(acctHandle, List.of(h1, h2), DST, null));
         assertThat(taken).hasValue(1);
     }
+
+    @Test
+    void aTargetShapeFailureMarksAStepOneRejection() throws Exception {
+        String h = deliver("INBOX", "s");
+        ToolCallContext c = ctx(A);
+        noLeaseTool().handle(c, args(acctHandle, List.of(h), null, null));
+        assertThat(c.argumentsRejected()).isTrue();
+    }
 }

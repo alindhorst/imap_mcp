@@ -17,7 +17,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-/** Tenant lookup by (iss, subject), cached for 5 minutes and bounded (A8, SPEC 5.3). */
+/** Tenant lookup by (iss, subject), cached for 30 seconds and bounded (A8, SPEC 5.3). */
 class JdbcTenantDirectoryIT {
 
     private static PostgresFixture postgres;
@@ -103,14 +103,14 @@ class JdbcTenantDirectoryIT {
     }
 
     @Test
-    void aHitIsCachedForFiveMinutesAndReloadedAfterwards() throws Exception {
+    void aHitIsCachedForThirtySecondsAndReloadedAfterwards() throws Exception {
         TestClock clock = new TestClock();
         JdbcTenantDirectory dir = new JdbcTenantDirectory(db.dataSource(), clock, 100);
         TenantId t = dir.create("https://idp.example", "carol").tenantId();
         assertThat(dir.find("https://idp.example", "carol")).isPresent();
 
         exec("UPDATE tenant SET status = 'disabled' WHERE id = ?", UUID.fromString(t.value()));
-        clock.advance(Duration.ofMinutes(4).plusSeconds(59));
+        clock.advance(Duration.ofSeconds(29));
         assertThat(dir.find("https://idp.example", "carol").orElseThrow().disabled()).isFalse(); // still cached
 
         clock.advance(Duration.ofSeconds(2));

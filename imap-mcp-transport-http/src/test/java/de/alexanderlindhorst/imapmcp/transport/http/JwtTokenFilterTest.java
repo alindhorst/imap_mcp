@@ -36,9 +36,11 @@ import org.slf4j.LoggerFactory;
 class JwtTokenFilterTest {
 
     static final String METADATA_URL = "https://mail.example.com/.well-known/oauth-protected-resource/mcp";
-    static final String MISSING = "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA_URL + "\"";
+    static final String MISSING = "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA_URL
+            + "\", scope=\"imap-mcp:read imap-mcp:write\"";
     static final String INVALID =
-            "Bearer realm=\"imap-mcp\", error=\"invalid_token\", resource_metadata=\"" + METADATA_URL + "\"";
+            "Bearer realm=\"imap-mcp\", error=\"invalid_token\", resource_metadata=\"" + METADATA_URL
+                    + "\", scope=\"imap-mcp:read imap-mcp:write\"";
     static final String UNAUTHORIZED = BearerTokenFilter.UNAUTHORIZED_BODY;
     static final ToolDefinition WHO = new ToolDefinition("who_am_i", "Who am I",
             "Echo the tenant id. Read-only; does not change flags or mark messages as read.",

@@ -425,7 +425,9 @@ class HttpPublicPurgeIT {
             HttpResponse<String> noScope = raw(m, null, token("alice", "openid"), "any");
             assertThat(noScope.statusCode()).as(m + " no scope").isEqualTo(403);
             assertThat(noScope.headers().firstValue("WWW-Authenticate"))
-                    .contains("Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"");
+                    .hasValueSatisfying(v -> assertThat(v)
+                            .startsWith("Bearer realm=\"imap-mcp\", error=\"insufficient_scope\", resource_metadata=\"")
+                            .endsWith("\", scope=\"imap-mcp:read imap-mcp:write\""));
         }
     }
 
