@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Maps the principal validated by {@link JwtTokenFilter} to the request's {@link AccountContext} (SPEC 5.3, D2,
  * D3). Order: the read scope {@code imap-mcp:read} first (missing: {@code 403} with
- * {@code WWW-Authenticate: Bearer error="insufficient_scope", scope="imap-mcp:read"}, no lookup), then the tenant
+ * the RFC 9728 {@code insufficient_scope} challenge naming both scopes, no lookup), then the tenant
  * row by (issuer, subject claim): a disabled tenant gets {@code 403}; a principal without a row gets the context of
  * {@link TenantId#NONE}, which owns nothing (so {@code list_accounts} is empty and every other tool says
  * {@code ACCOUNT_NOT_FOUND}); no MCP request creates a row. The token's scopes travel in the context for the
@@ -35,7 +35,6 @@ public final class PrincipalContextFilter implements Filter {
     public static final String READ_SCOPE = "imap-mcp:read";
     public static final String WRITE_SCOPE = "imap-mcp:write";
 
-    static final String INSUFFICIENT_SCOPE = "Bearer error=\"insufficient_scope\", scope=\"" + READ_SCOPE + "\"";
     static final String INTERNAL_BODY =
             "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Internal error\"},\"id\":null}";
     static final String UNAVAILABLE_BODY =
@@ -44,9 +43,11 @@ public final class PrincipalContextFilter implements Filter {
     private static final Logger LOG = LoggerFactory.getLogger(PrincipalContextFilter.class);
 
     private final PrincipalTenants tenants;
+    private final String challengeInsufficientScope;
 
-    public PrincipalContextFilter(PrincipalTenants tenants) {
+    public PrincipalContextFilter(PrincipalTenants tenants, OAuthResourceConfig config) {
         this.tenants = Objects.requireNonNull(tenants, "tenants");
+        this.challengeInsufficientScope = config.challenge("insufficient_scope");
     }
 
     @Override
@@ -62,7 +63,7 @@ public final class PrincipalContextFilter implements Filter {
         }
         Set<String> scopes = scopes(principal);
         if (!scopes.contains(READ_SCOPE)) {
-            response.setHeader("WWW-Authenticate", INSUFFICIENT_SCOPE);
+            response.setHeader("WWW-Authenticate", challengeInsufficientScope);
             Forbidden.send(response);
             return;
         }

@@ -197,7 +197,7 @@ class HttpPublicIT {
         HttpResponse<String> r = rpc(null, "{}");
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(r.headers().firstValue("WWW-Authenticate")).contains(
-                "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA + "\", scope=\"imap-mcp:read imap-mcp:write\");
+                "Bearer realm=\"imap-mcp\", resource_metadata=\"" + METADATA + "\", scope=\"imap-mcp:read imap-mcp:write\"");
     }
 
     @Test
