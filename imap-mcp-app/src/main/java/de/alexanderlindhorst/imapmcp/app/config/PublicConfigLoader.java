@@ -67,6 +67,10 @@ public final class PublicConfigLoader {
                     + "(accounts are linked in the linking surface)");
         }
         AppConfig.Imap imap = ConfigLoader.imap(top.section("imap"));
+        if (imap.trace()) {
+            throw new ConfigException("config.imap.trace: not available in http-public "
+                    + "(the trace would write every tenant's mail content into the operator log)");
+        }
         AppConfig.Pool pool = ConfigLoader.pool(top.section("pool"));
         AppConfig.Secrets secrets = new AppConfig.Secrets(
                 top.section("secrets").duration("keyringTimeout", Duration.ofSeconds(5)));
