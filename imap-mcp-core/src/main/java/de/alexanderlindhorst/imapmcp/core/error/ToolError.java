@@ -206,6 +206,12 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 "Retry the same call later.", null, requestId);
     }
 
+    /** A LOGIN answered {@code NO [UNAVAILABLE]} (SPEC 4, D14): the provider is throttling or temporarily failing. */
+    public static ToolError loginUnavailable(String requestId) {
+        return of(ErrorCode.UPSTREAM_UNAVAILABLE, "The IMAP server is temporarily unavailable. Retry later.",
+                "Retry in a minute or later.", detail("reason", "login_unavailable"), requestId);
+    }
+
     /** The SSRF policy refused the connect (SPEC 5.3). Not retryable; the message never names host or address. */
     public static ToolError addressBlocked(String requestId) {
         return of(ErrorCode.UPSTREAM_ERROR, "The IMAP server address is not allowed.",

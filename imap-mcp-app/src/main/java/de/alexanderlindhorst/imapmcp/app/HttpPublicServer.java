@@ -70,6 +70,8 @@ public final class HttpPublicServer {
      */
     static HttpLocalServer.Builder metadataServlets(HttpLocalServer.Builder builder, OAuthResourceConfig oauth) {
         ProtectedResourceMetadataServlet metadata = new ProtectedResourceMetadataServlet(oauth);
+        // the root is a deliberate fallback (SPEC 5.3): strictly it belongs to the resource https://<authority>,
+        // so `resource` still equals oauth.resource
         return builder.openServlet(OAuthResourceConfig.METADATA_ROOT, metadata)
                 .openServlet(oauth.metadataPath(), metadata);
     }
@@ -90,7 +92,7 @@ public final class HttpPublicServer {
                 .hostFilter(new HostFilter(h.allowedHosts()))
                 .originFilter(new OriginFilter(h.allowedOrigins()))
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth))
-                .principalFilter(new PrincipalContextFilter(tenants))
+                .principalFilter(new PrincipalContextFilter(tenants, oauth))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
                 .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer));

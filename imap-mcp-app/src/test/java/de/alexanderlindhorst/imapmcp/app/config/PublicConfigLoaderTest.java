@@ -252,6 +252,15 @@ class PublicConfigLoaderTest {
     }
 
     @Test
+    void imapTraceTrueFailsStartupWithTheSpecMessageAndFalseIsAccepted() {
+        assertThatThrownBy(() -> bind(VALID + "imap:\n  trace: true\n")).isInstanceOf(ConfigException.class)
+                .hasMessage("config.imap.trace: not available in http-public "
+                        + "(the trace would write every tenant's mail content into the operator log)");
+        assertThat(bind(VALID + "imap:\n  trace: false\n").imap().trace()).isFalse();
+        assertThat(bind(VALID).imap().trace()).isFalse();
+    }
+
+    @Test
     void optionalKeysAreBound() {
         String yaml = VALID.replace("requiredRole: imap-mcp-user", "allowWithoutRole: true\n  subjectClaim: oid\n  roleClaim: roles")
                 + "purge:\n  enabled: false\nhttp:\n  stateful: true\ntools:\n  download:\n    inlineMaxBytes: 1MiB\n"

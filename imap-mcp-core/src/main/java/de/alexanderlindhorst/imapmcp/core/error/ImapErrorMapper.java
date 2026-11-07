@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.core.error;
 
 import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
 import de.alexanderlindhorst.imapmcp.core.net.RefusalMarker;
+import de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
@@ -115,6 +116,9 @@ public final class ImapErrorMapper {
             return new MappedError(ToolError.serverBusy(rid), false);
         }
         if (t instanceof AuthenticationFailedException) {
+            if (LoginRefusal.isUnavailable(t)) { // a temporary server answer, not refused credentials (D14)
+                return new MappedError(ToolError.loginUnavailable(rid), true);
+            }
             return new MappedError(ToolError.authFailed(rid), true);
         }
         boolean charset = (t instanceof SearchException || t instanceof CommandFailedException

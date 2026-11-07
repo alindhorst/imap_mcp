@@ -15,6 +15,7 @@ public record OAuthResourceConfig(String issuer, String resource, String subject
         List<String> scopesSupported) {
 
     public static final String METADATA_ROOT = "/.well-known/oauth-protected-resource";
+    static final String CHALLENGE_SCOPE = "imap-mcp:read imap-mcp:write";
 
     public OAuthResourceConfig {
         if (issuer == null || issuer.isBlank()) {
@@ -75,5 +76,15 @@ public record OAuthResourceConfig(String issuer, String resource, String subject
     public String metadataUrl() {
         URI u = parse(resource);
         return "https://" + u.getRawAuthority() + metadataPath();
+    }
+
+    /**
+     * The {@code WWW-Authenticate} challenge of SPEC 5.3 ("Discovery and challenges"): realm, the optional
+     * {@code error} ({@code invalid_token} or {@code insufficient_scope}), the metadata URL and both scopes. No
+     * {@code error_description}: nothing about the token is echoed.
+     */
+    public String challenge(String error) {
+        return "Bearer realm=\"imap-mcp\"" + (error == null ? "" : ", error=\"" + error + "\"")
+                + ", resource_metadata=\"" + metadataUrl() + "\", scope=\"" + CHALLENGE_SCOPE + "\"";
     }
 }

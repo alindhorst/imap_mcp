@@ -34,7 +34,8 @@ import org.slf4j.LoggerFactory;
 class PrincipalContextFilterTest {
 
     static final String INSUFFICIENT =
-            "Bearer error=\"insufficient_scope\", scope=\"imap-mcp:read\"";
+            "Bearer realm=\"imap-mcp\", error=\"insufficient_scope\", resource_metadata=\""
+                    + JwtTokenFilterTest.METADATA_URL + "\", scope=\"imap-mcp:read imap-mcp:write\"";
     static final TenantId NO_TENANT = TenantId.NONE;
     static final TenantId TENANT_A = new TenantId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     static final TenantId TENANT_B = new TenantId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -96,7 +97,7 @@ class PrincipalContextFilterTest {
                 }))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
-                .principalFilter(new PrincipalContextFilter(tenants)).build();
+                .principalFilter(new PrincipalContextFilter(tenants, cfg)).build();
         server.start();
     }
 
@@ -249,7 +250,7 @@ class PrincipalContextFilterTest {
     void withoutAValidatedPrincipalTheMisconfigurationIs500NotAChallenge() throws Exception {
         PrincipalTenants tenants = (i, s) -> Optional.of(new PrincipalTenants.Tenant(TENANT_A, false));
         server = HttpLocalServer.builder().port(0).bearerFilter((rq, rs, ch) -> ch.doFilter(rq, rs))
-                .principalFilter(new PrincipalContextFilter(tenants)).build();
+                .principalFilter(new PrincipalContextFilter(tenants, TestTokens.config())).build();
         server.start();
         HttpResponse<String> r = post(null);
         assertThat(r.statusCode()).isEqualTo(500);
@@ -281,7 +282,7 @@ class PrincipalContextFilterTest {
     @Test
     void aPrincipalFilterWithoutAnyTokenFilterDoesNotBuild() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().port(0)
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty())).build())
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build())
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -300,7 +301,7 @@ class PrincipalContextFilterTest {
                         c.accountContext().tenantId().value(), "write", false))))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty())).build();
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build();
         server.start();
         post(token("stranger", "imap-mcp:read"));
         assertThat(seen.get().scopeLimited()).isTrue(); // also for a principal without a row
