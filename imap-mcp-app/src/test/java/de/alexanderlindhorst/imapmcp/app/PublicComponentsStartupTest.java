@@ -18,6 +18,7 @@ import java.time.Clock;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -387,6 +388,38 @@ class PublicComponentsStartupTest {
             log.detachAppender(appender);
             log.setLevel(old);
         }
+    }
+
+    private List<ILoggingEvent> startupLog(String yaml) {
+        Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Level old = log.getLevel();
+        log.setLevel(Level.TRACE);
+        appender.start();
+        log.addAppender(appender);
+        try {
+            assertThatThrownBy(() -> start(yaml, env())).isInstanceOf(AppStartupException.class); // no database here
+            return new java.util.ArrayList<>(appender.list);
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(old);
+        }
+    }
+
+    @Test
+    void initializeRateWithoutStatefulGivesAStartupWarning() {
+        assertThat(startupLog(BASE + "http:\n  initializeRatePerMinute: 5\n")).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.WARN);
+            assertThat(e.getFormattedMessage()).contains("http.initializeRatePerMinute").contains("http.stateful");
+        });
+    }
+
+    @Test
+    void noInitializeRateWarningWhenStatefulOrWhenTheKeyIsNotSet() {
+        assertThat(startupLog(BASE + "http:\n  stateful: true\n  initializeRatePerMinute: 5\n")).noneSatisfy(
+                e -> assertThat(e.getFormattedMessage()).contains("http.initializeRatePerMinute"));
+        assertThat(startupLog(BASE)).noneSatisfy(
+                e -> assertThat(e.getFormattedMessage()).contains("http.initializeRatePerMinute"));
     }
 
     @Test

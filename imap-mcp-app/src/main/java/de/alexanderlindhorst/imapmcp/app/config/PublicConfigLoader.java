@@ -333,6 +333,9 @@ public final class PublicConfigLoader {
         return new PublicConfig.Kms("local", current, List.copyOf(keks), null);
     }
 
+    /** D12, proposed default. */
+    private static final int DEFAULT_INITIALIZE_RATE = 10;
+
     private static PublicConfig.Http http(Section s, PublicConfig.Public pub) {
         if (s.take("token") != null) {
             throw new ConfigException(s.path("token") + ": not available in http-public (the static token does not exist there)");
@@ -345,8 +348,10 @@ public final class PublicConfigLoader {
         List<String> origins = s.stringList("allowedOrigins", List.of());
         long maxBytes = s.size("maxRequestBytes", 1024L * 1024, Long.MAX_VALUE);
         boolean stateful = s.bool("stateful", false);
+        boolean rateSet = s.take("initializeRatePerMinute") != null;
+        int rate = s.integer("initializeRatePerMinute", DEFAULT_INITIALIZE_RATE, 1, 600);
         s.finish();
-        return new PublicConfig.Http(bind, port, nonLoopback, hosts, origins, maxBytes, stateful);
+        return new PublicConfig.Http(bind, port, nonLoopback, hosts, origins, maxBytes, stateful, rate, rateSet);
     }
 
     private static PublicConfig.Tools tools(Section s) {
@@ -398,6 +403,6 @@ public final class PublicConfigLoader {
             nonLoopback = Boolean.parseBoolean(v);
         }
         return new PublicConfig.Http(bind, port, nonLoopback, h.allowedHosts(), h.allowedOrigins(),
-                h.maxRequestBytes(), h.stateful());
+                h.maxRequestBytes(), h.stateful(), h.initializeRatePerMinute(), h.initializeRateSet());
     }
 }

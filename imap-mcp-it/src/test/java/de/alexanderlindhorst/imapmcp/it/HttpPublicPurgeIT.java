@@ -127,6 +127,7 @@ class HttpPublicPurgeIT {
                   enabled: true
                 http:
                   stateful: true
+                  initializeRatePerMinute: 20
                   allowedHosts: ["mail.example.com:*", "127.0.0.1:*"]
                 tools:
                   deadline: 60s
@@ -173,6 +174,33 @@ class HttpPublicPurgeIT {
         if (postgres != null) {
             postgres.stop();
         }
+    }
+
+    /** D12: {@code http.initializeRatePerMinute} reaches the server; capacity is twice the rate. */
+    @Test
+    void initializeRateFromTheConfigurationLimitsAPrincipalWith429() throws Exception {
+        components.tenantDirectory().create(ISSUER, "ivan");
+        String init = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":"
+                + "\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}";
+        String token = token("ivan", BOTH);
+        HttpResponse<String> last = null;
+        for (int i = 0; i < 40; i++) { // capacity 2 x 20
+            last = postInitialize(init, token);
+            assertThat(last.statusCode()).as("initialize " + i).isEqualTo(200);
+        }
+        last = postInitialize(init, token);
+        assertThat(last.statusCode()).isEqualTo(429);
+        assertThat(last.headers().firstValue("Retry-After")).isPresent();
+        assertThat(last.headers().firstValue("WWW-Authenticate")).isEmpty();
+        // another principal is unaffected
+        assertThat(postInitialize(init, token("alice", BOTH)).statusCode()).isEqualTo(200);
+    }
+
+    private static HttpResponse<String> postInitialize(String body, String token) throws Exception {
+        return HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
+                .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+                .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     // ---- helpers ----

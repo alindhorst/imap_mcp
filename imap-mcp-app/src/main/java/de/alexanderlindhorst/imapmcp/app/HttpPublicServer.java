@@ -21,6 +21,7 @@ import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -96,7 +97,9 @@ public final class HttpPublicServer {
             // never to the tenant (unknown principals share one sentinel tenant); the SDK's server-to-client request
             // timeout is above the longest tool deadline (SPEC 5.5).
             builder.stateful(true).sessionPrincipal(HttpPublicServer::sessionPrincipal)
-                    .sessionEndListener(components.sessionEndListener()).requestTimeout(STATEFUL_REQUEST_TIMEOUT);
+                    .sessionEndListener(components.sessionEndListener()).requestTimeout(STATEFUL_REQUEST_TIMEOUT)
+                    .initializeRateLimit(h.initializeRatePerMinute(), Clock.systemUTC())
+                    .metrics(components.metrics());
             components.statefulToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::statefulTool);
         } else {
             components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);
