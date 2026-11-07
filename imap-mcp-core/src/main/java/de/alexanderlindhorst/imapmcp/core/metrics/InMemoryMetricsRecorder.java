@@ -149,6 +149,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void initializeRateLimited(TenantId tenant) {
+        operation(tenant, "initialize", "rate_limited", Duration.ZERO);
+    }
+
+    @Override
     public void authFailure(TenantId tenant) {
         TenantStats s = series(tenants, tenant, TenantStats::new);
         if (s != null) {
