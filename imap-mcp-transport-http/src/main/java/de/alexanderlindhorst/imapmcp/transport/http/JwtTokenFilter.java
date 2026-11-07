@@ -57,9 +57,8 @@ public final class JwtTokenFilter implements Filter {
     private JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, MetricsRecorder metrics,
             LongSupplier clockMillis) {
         this.validator = Objects.requireNonNull(validator, "validator");
-        String metadata = ", resource_metadata=\"" + config.metadataUrl() + "\"";
-        this.challengeMissing = "Bearer realm=\"imap-mcp\"" + metadata;
-        this.challengeInvalid = "Bearer realm=\"imap-mcp\", error=\"invalid_token\"" + metadata;
+        this.challengeMissing = config.challenge(null);
+        this.challengeInvalid = config.challenge("invalid_token");
         this.clockMillis = clockMillis;
         this.metrics = Objects.requireNonNull(metrics, "metrics");
     }

@@ -69,6 +69,16 @@ class ToolExecutorMetricsTest {
     }
 
     @Test
+    void loginUnavailableIsNoAuthFailure() {
+        ToolOutcome o = executor.wrap("t", (cx, a) -> {
+            throw new RuntimeException(new AuthenticationFailedException("[UNAVAILABLE] try later"));
+        }).handle(ctx(T1), Map.of());
+        assertThat(((ToolOutcome.Failure) o).error().code())
+                .isEqualTo(de.alexanderlindhorst.imapmcp.core.error.ErrorCode.UPSTREAM_UNAVAILABLE);
+        assertThat(rec.snapshot().tenants()).noneMatch(m -> m.authFailures() > 0);
+    }
+
+    @Test
     void failureOutcomeFromHandlerWithAuthFailedIsCounted() {
         executor.wrap("t", (cx, a) -> new ToolOutcome.Failure(ToolError.authFailed("rid")))
                 .handle(ctx(T2), Map.of());
