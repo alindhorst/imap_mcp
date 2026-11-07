@@ -396,4 +396,31 @@ class MoveMessagesToolTest {
         assertThat(snapshot("INBOX").keySet()).containsAll(uids);
         assertThat(snapshot("Target")).isEmpty();
     }
+
+    @Test
+    void aTargetShapeFailureMarksAStepOneRejection() {
+        ToolCallContext c = new ToolCallContext(new AccountContext(T1), "rid-shape");
+        ToolOutcome o = handler.handle(c, args(T1, List.of("h"), null));
+        assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(c.argumentsRejected()).isTrue();
+    }
+
+    /** Step 5 (decoded duplicate, WritePreflight) is not step 1: no marker, no metric, the call row is written. */
+    @Test
+    void aDecodedDuplicateIsNotAStepOneRejectionAndWritesItsCallRow() throws Exception {
+        var recorded = new de.alexanderlindhorst.imapmcp.core.audit.RecordingAuditLog();
+        var logIds = new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(new KeyRing(1, Map.of(1, new byte[32])));
+        var executor = new de.alexanderlindhorst.imapmcp.core.tool.ToolExecutor(Duration.ofSeconds(10), logIds,
+                de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder.NOOP, (t, r, c, d) -> { }, recorded);
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(T1), "rid-dup");
+        // two different handle strings that decode to one message (INBOX is case-insensitive): the schema's
+        // uniqueItems does not see it, WritePreflight does (step 5)
+        ToolOutcome o = executor.wrap(MoveMessagesTool.DEFINITION, handler)
+                .handle(ctx, args(T1, List.of(handle(T1, "INBOX", 1), handle(T1, "Inbox", 1)), "Target"));
+        assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(ctx.argumentsRejected()).isFalse();
+        assertThat(recorded.completions).singleElement()
+                .satisfies(c -> assertThat(c.errorCode()).isEqualTo("INVALID_ARGUMENT"));
+        assertThat(recorded.calls.get(0).account()).isEqualTo(account.id());
+    }
 }

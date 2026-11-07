@@ -144,6 +144,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void writeArgumentRejected(TenantId tenant, String tool) {
+        operation(tenant, tool, "write_argument_rejected", Duration.ZERO);
+    }
+
+    @Override
     public void keyServiceUnavailable(TenantId tenant) {
         operation(tenant, "credentials", "key_service_unavailable", Duration.ZERO);
     }

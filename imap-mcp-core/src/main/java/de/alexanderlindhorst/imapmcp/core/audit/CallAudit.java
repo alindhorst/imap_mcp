@@ -27,6 +27,7 @@ public final class CallAudit {
     private boolean completed;
     private boolean attempted;
     private boolean failureRecorded;
+    private boolean argumentsRejected;
     private String confirmation;
     private String tool = "";
     private String requestId = "";
@@ -42,6 +43,18 @@ public final class CallAudit {
 
     public boolean enabled() {
         return log != null && log != AuditLog.NONE;
+    }
+
+    /** Whether the call failed check-order step 1 (D10): such a call gets no row. */
+    public synchronized boolean argumentsRejected() {
+        return argumentsRejected;
+    }
+
+    /** Marks the call as a step-1 rejection; no row is written for it afterwards. Does nothing when disabled. */
+    public synchronized void argumentsRejected(boolean rejected) {
+        if (enabled()) {
+            this.argumentsRejected = rejected;
+        }
     }
 
     /**
@@ -101,7 +114,7 @@ public final class CallAudit {
      * write is one ERROR line and the original error stays. No-op once rows were begun or a begin was attempted.
      */
     public synchronized void recordFailure(String errorCode) {
-        if (!enabled() || attempted) {
+        if (!enabled() || attempted || argumentsRejected) { // step 1: metric only (D10)
             return;
         }
         CallInfo info = call.get().withConfirmation(confirmation);
