@@ -324,6 +324,98 @@ class HttpPublicIT {
         }
     }
 
+    // ---- D11 (SPEC 5.3, 5.8): call rows without a resolved account; D10: no row for a step-1 rejection ----
+
+    private static final String NIL_TENANT = "00000000-0000-0000-0000-000000000000";
+    private static final String WRITE = "imap-mcp:read imap-mcp:write";
+
+    private int callRows(String tenant, String tool) throws Exception {
+        return count("SELECT count(*) FROM audit_event WHERE tool = '" + tool + "' AND tenant_id = '" + tenant
+                + "'::uuid");
+    }
+
+    private int accountlessRows(String tenant) throws Exception {
+        return count("SELECT count(*) FROM audit_event WHERE tool = 'create_folder' AND tenant_id = '" + tenant
+                + "'::uuid AND account_id IS NULL AND error_code = 'ACCOUNT_NOT_FOUND' AND result = 'failed'"
+                + " AND item_status IS NULL");
+    }
+
+    /** Exactly one new accountless row for the tenant since {@code before}, and no other new row of the tool. */
+    private void assertOneAccountlessRow(String tenant, int before, int accountlessBefore) throws Exception {
+        assertThat(callRows(tenant, "create_folder")).isEqualTo(before + 1);
+        assertThat(accountlessRows(tenant)).isEqualTo(accountlessBefore + 1);
+    }
+
+    private static String createFolderArgs(String handle) {
+        return "{\"account\":\"" + handle + "\",\"name\":\"CanaryFolderName\"}";
+    }
+
+    private void assertNoAuditRowContains(String... canaries) throws Exception {
+        try (var c = components.database().dataSource().getConnection();
+                var st = c.createStatement();
+                var rs = st.executeQuery("SELECT coalesce(string_agg(row_to_json(a)::text, ''), '')"
+                        + " FROM audit_event a")) {
+            rs.next();
+            for (String canary : canaries) {
+                assertThat(rs.getString(1)).doesNotContain(canary);
+            }
+        }
+    }
+
+    @Test
+    void anUnknownMalformedOrTamperedAccountHandleGivesOneAccountlessCallRowOfTheCallersTenant() throws Exception {
+        String tamperedHandle = aliceAccount.handle().substring(0, aliceAccount.handle().length() - 1)
+                + (aliceAccount.handle().endsWith("A") ? "B" : "A");
+        for (String handle : new String[] {"acc_CanaryUnknownHandle0123456789", tamperedHandle}) {
+            int before = callRows(tenantAlice.value(), "create_folder");
+            int accountless = accountlessRows(tenantAlice.value());
+            HttpResponse<String> r = callTool(token("alice", WRITE), "create_folder", createFolderArgs(handle));
+            assertThat(r.statusCode()).isEqualTo(200);
+            assertThat(r.body()).contains("ACCOUNT_NOT_FOUND");
+            assertOneAccountlessRow(tenantAlice.value(), before, accountless);
+        }
+        assertNoAuditRowContains("CanaryUnknownHandle", "CanaryFolderName");
+    }
+
+    @Test
+    void anotherTenantsAccountHandleGivesTheSameRowAndTheHandleIsInNoRow() throws Exception {
+        TenantId bob = directory.create(ISSUER, "bob-d11").tenantId();
+        ResolvedAccount bobBox = accounts.create(bob, new NewAccount("Bob box", null, "imap.example.com",
+                mail.imapsPort(), MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "bob", false, false));
+        int before = callRows(tenantAlice.value(), "create_folder");
+        int accountless = accountlessRows(tenantAlice.value());
+        int bobBefore = callRows(bob.value(), "create_folder");
+
+        HttpResponse<String> r = callTool(token("alice", WRITE), "create_folder", createFolderArgs(bobBox.handle()));
+
+        assertThat(r.body()).contains("ACCOUNT_NOT_FOUND");
+        assertOneAccountlessRow(tenantAlice.value(), before, accountless);
+        assertThat(callRows(bob.value(), "create_folder")).isEqualTo(bobBefore); // nothing under the owner's tenant
+        assertNoAuditRowContains(bobBox.handle(), bobBox.account().id().value());
+    }
+
+    @Test
+    void aPrincipalWithoutATenantRowGetsTheRowUnderTheNilUuidAndNoRowNamesThePrincipal() throws Exception {
+        int before = callRows(NIL_TENANT, "create_folder");
+        int accountless = accountlessRows(NIL_TENANT);
+        HttpResponse<String> r = callTool(token("stranger-d11", WRITE), "create_folder",
+                createFolderArgs("acc_CanaryStrangerHandle0123456789"));
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertOneAccountlessRow(NIL_TENANT, before, accountless);
+        assertNoAuditRowContains("stranger-d11", "CanaryStrangerHandle", ISSUER);
+    }
+
+    @Test
+    void aStepOneRejectionWritesNoRowAtAll() throws Exception {
+        int before = count("SELECT count(*) FROM audit_event WHERE tool = 'create_folder'");
+        // missing the required "name": fails argument validation before anything else (D10)
+        HttpResponse<String> r = callTool(token("alice", WRITE), "create_folder",
+                "{\"account\":\"" + aliceAccount.handle() + "\"}");
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.body()).contains("INVALID_ARGUMENT");
+        assertThat(count("SELECT count(*) FROM audit_event WHERE tool = 'create_folder'")).isEqualTo(before);
+    }
+
     @Test
     void threeRefusedLoginsThroughTheWiredPoolFlipTheAccountAndTheNextCallIsRelinkRequired() throws Exception {
         TenantId carol = directory.create(ISSUER, "carol").tenantId();
