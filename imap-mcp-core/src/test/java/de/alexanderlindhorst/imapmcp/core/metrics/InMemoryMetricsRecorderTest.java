@@ -114,6 +114,18 @@ class InMemoryMetricsRecorderTest {
     }
 
     @Test
+    void initializeRateLimitingIsCountedPerHashedTenant() {
+        rec.initializeRateLimited(T1);
+        rec.initializeRateLimited(T1);
+        OperationMetrics o = rec.snapshot().operations().stream()
+                .filter(x -> x.op().equals("rate_limited")).findFirst().orElseThrow();
+        assertThat(o.tool()).isEqualTo("initialize");
+        assertThat(o.tenant()).isEqualTo(logIds.tenant(T1.value()));
+        assertThat(o.count()).isEqualTo(2);
+        MetricsRecorder.NOOP.initializeRateLimited(T1); // default method: discards
+    }
+
+    @Test
     void authFailuresAndTimeoutsCountPerHashedTenantOnly() {
         rec.authFailure(T1);
         rec.authFailure(T1);
