@@ -220,4 +220,27 @@ class LeaseMetricsTest {
         }).handle(new ToolCallContext(new AccountContext(TENANT), "r"), Map.of());
         assertThat(authFailures()).isEqualTo(1);
     }
+
+    @Test
+    void aLoginAnsweredNoUnavailableIsNoAuthFailureAndMapsToUnavailable() throws Exception {
+        try (var proxy = new de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy(
+                greenMail.getImaps().getPort())) {
+            proxy.rejectWithNo("LOGIN", "[UNAVAILABLE] Temporary authentication failure");
+            MailAccount viaProxy = new MailAccount(new AccountId("a"), "label", null, "127.0.0.1", proxy.port(),
+                    Security.IMPLICIT_TLS, Flavor.GENERIC, "u", new SecretRef("env:X"));
+            PoolKey pk = PoolKey.of(new AccountContext(TENANT), new ResolvedAccount(TENANT, viaProxy, "acc_test"));
+            pool = new StorePool(sessions, (t, a) -> Optional.of(new Secret("pw".toCharArray())), new CapabilityCache(),
+                    k -> viaProxy, settings(1), recorder);
+            recorder.attachPool(pool);
+            StoreLeases leases = new StoreLeases(pool, Duration.ofSeconds(10),
+                    new Admission(settings(1), Admission.recording(recorder)), recorder);
+            ToolCallContext ctx = new ToolCallContext(new AccountContext(TENANT), "r");
+            assertThatThrownBy(() -> leases.withLease(pk, ctx, lease -> null)).satisfies(e -> {
+                assertThat(e).isInstanceOf(StoreUnavailableException.class);
+                assertThat(de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper.map(e, "r").error().details())
+                        .containsEntry("reason", "login_unavailable");
+            });
+            assertThat(authFailures()).isZero();
+        }
+    }
 }

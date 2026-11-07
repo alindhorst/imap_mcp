@@ -1,8 +1,8 @@
 package de.alexanderlindhorst.imapmcp.core.imap.pool;
 
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
-import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.MessagingException;
 import java.net.ConnectException;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
@@ -146,12 +146,7 @@ public final class StoreLeases {
     }
 
     private static boolean isAuthFailure(Throwable t) {
-        for (int depth = 0; t != null && depth < 8; depth++, t = t.getCause()) {
-            if (t instanceof AuthenticationFailedException) {
-                return true;
-            }
-        }
-        return false;
+        return LoginRefusal.isCredentialRefusal(t); // a LOGIN NO [UNAVAILABLE] is not an auth failure (D14)
     }
 
     /** Marks the borrow as abandoned; returns the Store if it arrived in the meantime, else throws. */
