@@ -44,7 +44,11 @@ import jakarta.mail.Message;
 import jakarta.mail.Store;
 import jakarta.mail.internet.MimeMessage;
 import java.time.Duration;
+import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
+import de.alexanderlindhorst.imapmcp.core.error.ServerBusyException;
 import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -463,5 +467,111 @@ class EmbeddedDownloadAttachmentToolTest {
 
         assertThat(error(o)).containsEntry("code", "TIMEOUT");
         assertThat(ctx.mutationStarted()).isFalse();
+    }
+
+    PoolKey keyOf(TenantId tenant) {
+        MailAccount acct = new MailAccount(ACCT, "acct", null, "127.0.0.1", proxy.port(), Security.IMPLICIT_TLS,
+                Flavor.GENERIC, "user", new SecretRef("env:x"), true);
+        return PoolKey.of(new AccountContext(tenant), new ResolvedAccount(tenant, acct, "acc_x"));
+    }
+
+    @Test
+    void aTenantAtItsCapGetsServerBusyWithTheTenantScopeWhileAnotherTenantStillHasAPermit() throws Exception {
+        List<String> scopes = new CopyOnWriteArrayList<>();
+        limiter = new InlineLimiter(4, 1, (k, scope) -> scopes.add(k.tenantId().value() + ":" + scope));
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        build((step, ctx) -> {
+            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
+                inside.countDown();
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        ExecutorService ex = Executors.newSingleThreadExecutor();
+        try {
+            Future<ToolOutcome> first = ex.submit(() -> call(h, "2"));
+            assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(error(call(h, "2"))).containsEntry("code", "SERVER_BUSY");
+            assertThat(scopes).containsExactly("tenant-a:download_tenant");
+            limiter.tryAcquire(keyOf(B)).close(); // another tenant is unaffected
+
+            release.countDown();
+            assertThat(ok(first.get(10, TimeUnit.SECONDS))).containsEntry("delivery", "embedded");
+            assertThat(ok(call(h, "2"))).containsEntry("delivery", "embedded");
+        } finally {
+            release.countDown();
+            ex.shutdownNow();
+        }
+    }
+
+    @Test
+    void theReplicaScopeIsReportedWhenTheReplicaCapIsReached() throws Exception {
+        List<String> scopes = new CopyOnWriteArrayList<>();
+        limiter = new InlineLimiter(1, 1, (k, scope) -> scopes.add(k.tenantId().value() + ":" + scope));
+        build(null);
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        try (InlineLimiter.Permit other = limiter.tryAcquire(keyOf(B))) {
+            assertThat(error(call(h, "2"))).containsEntry("code", "SERVER_BUSY");
+        }
+        assertThat(scopes).containsExactly("tenant-a:download_replica");
+    }
+
+    @Test
+    void bothPermitsAreFreedWhenTheCallFailsOrThrows() throws Exception {
+        limiter = new InlineLimiter(1, 1);
+        build((step, ctx) -> {
+            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
+                throw new IllegalStateException("boom");
+            }
+        });
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        for (int i = 0; i < 3; i++) {
+            try {
+                call(h, "2");
+            } catch (IllegalStateException expected) {
+                // the executor maps it in production; here only the release matters
+            }
+        }
+        limiter.tryAcquire(keyOf(A)).close();
+    }
+
+    @Test
+    void aDeadlineFreesTheTenantPermitToo() throws Exception {
+        limiter = new InlineLimiter(2, 1);
+        CountDownLatch inside = new CountDownLatch(1);
+        build((step, ctx) -> {
+            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
+                inside.countDown();
+                try {
+                    Thread.sleep(30_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
+        ToolExecutor executor = new ToolExecutor(Duration.ofMillis(800), new LogIds(KEYS));
+        ToolOutcome o = executor.wrap(DownloadAttachmentTool.EMBEDDED_DEFINITION, tool)
+                .handle(new ToolCallContext(new AccountContext(A), "rid"),
+                        Map.of("account", acctHandle, "message", h, "part", "2"));
+        assertThat(error(o)).containsEntry("code", "TIMEOUT");
+        assertThat(inside.await(5, TimeUnit.SECONDS)).isTrue();
+        long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        boolean free = false;
+        while (!free && System.nanoTime() < end) {
+            try {
+                limiter.tryAcquire(keyOf(A)).close();
+                free = true;
+            } catch (ServerBusyException e) {
+                Thread.sleep(25);
+            }
+        }
+        assertThat(free).as("the tenant permit is released when the abandoned worker unwinds").isTrue();
     }
 }
