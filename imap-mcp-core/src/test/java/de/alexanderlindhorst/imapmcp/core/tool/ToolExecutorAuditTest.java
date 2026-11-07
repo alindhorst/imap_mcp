@@ -169,4 +169,37 @@ class ToolExecutorAuditTest {
         audit.failBegin = false;
         assertThat(audit.order).isEmpty();
     }
+
+    @Test
+    void aStepOneRejectionWritesNoRowEvenWithAResolvedAccount() {
+        ToolOutcome out = executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("acc-1"));
+            cx.rejectArguments();
+            return new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidArgument(
+                    "handles", "out_of_range", 100, "r1"));
+        }).handle(ctx(), Map.of());
+        assertThat(out).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(audit.order).isEmpty();
+    }
+
+    @Test
+    void aLaterInvalidArgumentWithoutTheMarkerStillWritesItsRow() {
+        executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) -> {
+            cx.bindAccount(new de.alexanderlindhorst.imapmcp.core.tenancy.AccountId("acc-1"));
+            return new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.invalidArgument(
+                    "handles[1]", "duplicate", null, "r1"));
+        }).handle(ctx(), Map.of());
+        assertThat(audit.completions).singleElement()
+                .satisfies(c -> assertThat(c.errorCode()).isEqualTo("INVALID_ARGUMENT"));
+    }
+
+    @Test
+    void callAuditTellsAStepOneRejectionFromLaterErrors() {
+        ToolCallContext cx = ctx();
+        cx.attachAudit(audit, "move_messages");
+        assertThat(cx.audit().argumentsRejected()).isFalse();
+        cx.rejectArguments();
+        assertThat(cx.audit().argumentsRejected()).isTrue();
+        assertThat(cx.argumentsRejected()).isTrue();
+    }
 }

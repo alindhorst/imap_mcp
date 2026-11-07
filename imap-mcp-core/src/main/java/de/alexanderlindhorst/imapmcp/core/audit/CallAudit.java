@@ -48,6 +48,10 @@ public final class CallAudit {
      * Writes the rows (one per item, or one when there are none). Only the first call per call does anything, and
      * none after {@link #recordFailure} (the executor's deadline row is written; a late worker adds no item rows).
      */
+    public synchronized boolean argumentsRejected() {
+        return false;
+    }
+
     public synchronized void begin(List<ItemRef> items) throws AuditWriteException {
         if (!enabled() || entry != null || failureRecorded) {
             return;

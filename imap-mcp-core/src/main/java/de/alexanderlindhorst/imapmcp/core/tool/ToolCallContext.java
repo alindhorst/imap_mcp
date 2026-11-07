@@ -56,6 +56,14 @@ public final class ToolCallContext {
         this.audit = new CallAudit(log, () -> new CallInfo(accountContext.tenantId(), boundAccountId, requestId, tool));
     }
 
+    /** Stub (red commit): the call failed check-order step 1. */
+    public void rejectArguments() {
+    }
+
+    public boolean argumentsRejected() {
+        return false;
+    }
+
     /** The call's audit record; a no-op object when no audit log is attached. */
     public CallAudit audit() {
         return audit;

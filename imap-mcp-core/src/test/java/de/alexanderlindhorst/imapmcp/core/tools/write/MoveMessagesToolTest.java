@@ -396,4 +396,12 @@ class MoveMessagesToolTest {
         assertThat(snapshot("INBOX").keySet()).containsAll(uids);
         assertThat(snapshot("Target")).isEmpty();
     }
+
+    @Test
+    void aTargetShapeFailureMarksAStepOneRejection() {
+        ToolCallContext c = new ToolCallContext(new AccountContext(T1), "rid-shape");
+        ToolOutcome o = handler.handle(c, args(T1, List.of("h"), null));
+        assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(c.argumentsRejected()).isTrue();
+    }
 }
