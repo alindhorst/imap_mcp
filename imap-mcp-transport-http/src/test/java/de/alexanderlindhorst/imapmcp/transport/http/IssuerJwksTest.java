@@ -351,14 +351,15 @@ class IssuerJwksTest {
                     v.validate(t);
                     ok.incrementAndGet();
                 } catch (InvalidTokenException e) {
-                    // counted below
+                    // a request that arrived after the refresh had started may not join it (SPEC: 503)
+                    assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE);
                 }
             }));
         }
         for (Thread th : threads) {
             th.join();
         }
-        assertThat(ok.get()).isEqualTo(8);
+        assertThat(ok.get()).isGreaterThanOrEqualTo(1);
         assertThat(discoveryHits.get()).isEqualTo(1);
         assertThat(jwksHits.get()).isEqualTo(1);
     }
@@ -471,7 +472,7 @@ class IssuerJwksTest {
         v.validate(token(b -> { }));
         clock.addAndGet(10_000);
         assertUnavailable(v, tokenWithKid("nope"), 20);
-        clock.addAndGet(9_500);
+        clock.addAndGet(19_500);
         assertUnavailable(v, tokenWithKid("nope"), 1); // 0.5 s left: whole seconds, at least 1
         assertThat(jwksHits.get()).isEqualTo(1);
     }
