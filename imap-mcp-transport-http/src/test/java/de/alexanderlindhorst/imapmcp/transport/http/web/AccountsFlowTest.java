@@ -79,6 +79,16 @@ class AccountsFlowTest {
         idp.close();
     }
 
+    final java.util.concurrent.atomic.AtomicInteger keysUnavailable = new java.util.concurrent.atomic.AtomicInteger();
+    final de.alexanderlindhorst.imapmcp.transport.http.KeysUnavailableReporter reporter =
+            new de.alexanderlindhorst.imapmcp.transport.http.KeysUnavailableReporter(
+                    new de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder() {
+                        @Override
+                        public void oauthKeysUnavailable() {
+                            keysUnavailable.incrementAndGet();
+                        }
+                    }, System::currentTimeMillis);
+
     /** Replaces the key source of the ID-token validation when set (D16 tests). */
     com.nimbusds.jose.jwk.source.JWKSource<com.nimbusds.jose.proc.SecurityContext> keysOverride;
 
@@ -101,7 +111,7 @@ class AccountsFlowTest {
                 : new ImmutableJWKSet<>(new JWKSet(idp.key.toPublicJWK())));
         server = HttpLocalServer.builder().port(port)
                 .webSurface(WebSurface.of(config, provider, pending, sessions, tenants, new LinkingPagesTest.FakeLinker(),
-                        Clock.systemUTC())).build();
+                        Clock.systemUTC(), reporter)).build();
         server.start();
     }
 
@@ -488,6 +498,9 @@ class AccountsFlowTest {
         assertThat(audit.events).isEmpty();
         assertThat(pending.size()).isZero(); // the state was burned as before
         assertSecurityHeaders(r); // no-store and CSP
+        assertThat(keysUnavailable.get()).isEqualTo(1); // counted replica-wide like the /mcp 503s
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN)
+                .anySatisfy(e -> assertThat(e.getFormattedMessage()).contains("keys_unavailable"));
         // replaying the same state gets the ordinary refusal
         idp.nonce = s.query().get("nonce");
         assertThat(get("/accounts/callback?code=c&state=" + s.state(), s.bindingCookie()).status()).isEqualTo(400);
