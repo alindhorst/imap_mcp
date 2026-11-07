@@ -408,7 +408,7 @@ class IssuerJwksTest {
         assertThat(count(ch.qos.logback.classic.Level.WARN)).isEqualTo(1);
         clock.addAndGet(54 * 60_000); // 59 min after the fetch
         assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
-        assertThat(stale.get()).isEqualTo(2);
+        assertThat(stale.get()).isEqualTo(1);
         clock.addAndGet(2 * 60_000); // 61 min
         assertUnavailable(v, token(b -> { }), 30);
         assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1);
