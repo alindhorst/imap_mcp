@@ -27,6 +27,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
@@ -324,12 +325,16 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
      */
     private byte[] fetch(URI uri, String what) throws Failure, InterruptedException {
         AtomicReference<InputStream> open = new AtomicReference<>();
+        AtomicBoolean timedOut = new AtomicBoolean();
         CompletableFuture<HttpResponse<InputStream>> sent = http.sendAsync(HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofMillis(TIMEOUT_MS)).header("Accept", "application/json").GET().build(),
                 HttpResponse.BodyHandlers.ofInputStream());
         CompletableFuture<byte[]> read = sent.thenApply(res -> {
             open.set(res.body());
             try (InputStream in = res.body()) {
+                if (timedOut.get()) { // the deadline fired before the stream was registered: nobody closes it but us
+                    throw new CompletionException(new Failure(what + "_timeout", -1));
+                }
                 if (res.statusCode() != 200) {
                     throw new CompletionException(new Failure(what + "_status", res.statusCode()));
                 }
@@ -345,6 +350,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         try {
             return read.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
+            timedOut.set(true); // before the close, so a late-registered stream is closed by the reader
             read.cancel(true);
             sent.cancel(true);
             closeQuietly(open.get());
