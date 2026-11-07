@@ -102,7 +102,7 @@ public final class HttpOidcProvider implements OidcProvider {
         } catch (InvalidTokenException ex) {
             LOG.debug("id token rejected ({})", ex.category());
             throw new OidcException(InvalidTokenException.KEYS_UNAVAILABLE.equals(ex.category())
-                    ? OidcException.UNAVAILABLE : OidcException.INVALID_TOKEN);
+                    ? OidcException.KEYS_UNAVAILABLE : OidcException.INVALID_TOKEN);
         }
     }
 

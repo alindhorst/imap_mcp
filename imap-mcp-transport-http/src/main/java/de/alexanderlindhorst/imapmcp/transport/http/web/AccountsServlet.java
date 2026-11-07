@@ -197,6 +197,10 @@ public final class AccountsServlet extends HttpServlet {
         } catch (OidcException e) {
             if (OidcException.INVALID_TOKEN.equals(e.kind())) {
                 badRequest(res);
+            } else if (OidcException.KEYS_UNAVAILABLE.equals(e.kind())) {
+                // D16: the state is burned and nothing is created; the user retries later
+                writePage(res, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Sign-in unavailable",
+                        "<p>Sign-in is not available right now. Try again later.</p>");
             } else {
                 writePage(res, HttpServletResponse.SC_BAD_GATEWAY, "Sign-in failed",
                         "<p>The identity provider did not complete the sign-in. Try again later.</p>");
