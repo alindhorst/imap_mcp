@@ -22,7 +22,9 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.charset.Charset;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
@@ -92,12 +94,22 @@ final class SessionBindingFilter implements Filter {
             }
             ServletRequest in = req;
             if ("POST".equals(request.getMethod())) {
+                if (!utf8(request.getCharacterEncoding())) {
+                    response.setStatus(HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE); // JSON-RPC bodies are UTF-8
+                    return;
+                }
                 byte[] body = readBounded(request);
                 if (body == null) {
                     response.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
                     return;
                 }
-                if (carriesInitialize(body)) {
+                String text = decodeUtf8(body);
+                if (text == null) {
+                    // not valid UTF-8: Jackson would reject it, but the SDK may decode leniently, so it is not passed on
+                    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                    return;
+                }
+                if (carriesInitialize(text)) {
                     // the SDK would start a new session for it, and only our registry entry could be ended again
                     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
                     response.setContentType("application/json");
@@ -107,7 +119,9 @@ final class SessionBindingFilter implements Filter {
                 }
                 in = new ReplayedRequest(request, body);
             }
-            ServletResponse out = res;
+            // safety net: a new session id the SDK puts on the response is bound and counted, whatever the request
+            ServletResponse out = "POST".equals(request.getMethod())
+                    ? new RegisteringResponse(response, registry, principal, id) : res;
             try {
                 chain.doFilter(in, out);
             } finally {
@@ -142,7 +156,7 @@ final class SessionBindingFilter implements Filter {
             response.setHeader("Retry-After", RETRY_AFTER_SECONDS);
             return;
         }
-        RegisteringResponse wrapped = new RegisteringResponse(response, registry, principal);
+        RegisteringResponse wrapped = new RegisteringResponse(response, registry, principal, null);
         try {
             chain.doFilter(req, wrapped);
         } finally {
@@ -184,13 +198,27 @@ final class SessionBindingFilter implements Filter {
     /** The whole body, or null when it exceeds {@code maxRequestBytes}. */
     private byte[] readBounded(HttpServletRequest request) throws IOException {
         try (InputStream in = request.getInputStream()) {
-            byte[] body = in.readNBytes(maxRequestBytes + 1);
+            byte[] body = in.readNBytes((int) Math.min((long) maxRequestBytes + 1, Integer.MAX_VALUE - 8));
             return body.length > maxRequestBytes ? null : body;
         }
     }
 
+    private static boolean utf8(String encoding) {
+        return encoding == null || "UTF-8".equalsIgnoreCase(encoding);
+    }
+
+    /** Strict decoding; null when the bytes are not valid UTF-8. */
+    private static String decodeUtf8(byte[] body) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(body)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
+        }
+    }
+
     /** True when the body is a JSON-RPC message, or a batch with a message, whose method is {@code initialize}. */
-    private boolean carriesInitialize(byte[] body) {
+    private boolean carriesInitialize(String body) {
         Object parsed;
         try {
             parsed = jsonMapper.readValue(body, Object.class);
@@ -248,10 +276,13 @@ final class SessionBindingFilter implements Filter {
         }
 
         @Override
+        public String getCharacterEncoding() {
+            return "UTF-8"; // what was validated above, also when the request named none
+        }
+
+        @Override
         public BufferedReader getReader() {
-            String enc = getCharacterEncoding();
-            Charset cs = enc == null ? StandardCharsets.UTF_8 : Charset.forName(enc);
-            return new BufferedReader(new InputStreamReader(new ByteArrayInputStream(body), cs));
+            return new BufferedReader(new InputStreamReader(new ByteArrayInputStream(body), StandardCharsets.UTF_8));
         }
     }
 
@@ -266,12 +297,15 @@ final class SessionBindingFilter implements Filter {
     private static final class RegisteringResponse extends HttpServletResponseWrapper {
         private final SessionRegistry registry;
         private final String principal;
+        private final String knownSessionId; // the id the request carried, or null (a reserved initialize)
         private final AtomicBoolean settled = new AtomicBoolean();
 
-        RegisteringResponse(HttpServletResponse response, SessionRegistry registry, String principal) {
+        RegisteringResponse(HttpServletResponse response, SessionRegistry registry, String principal,
+                String knownSessionId) {
             super(response);
             this.registry = registry;
             this.principal = principal;
+            this.knownSessionId = knownSessionId;
         }
 
         @Override
@@ -287,13 +321,18 @@ final class SessionBindingFilter implements Filter {
         }
 
         private void capture(String name, String value) {
-            if (SESSION_HEADER.equalsIgnoreCase(name) && value != null && settled.compareAndSet(false, true)) {
-                registry.register(value, principal);
+            if (SESSION_HEADER.equalsIgnoreCase(name) && value != null && !value.equals(knownSessionId)
+                    && settled.compareAndSet(false, true)) {
+                if (knownSessionId == null) {
+                    registry.register(value, principal);
+                } else {
+                    registry.registerUnreserved(value, principal);
+                }
             }
         }
 
         void finish() {
-            if (settled.compareAndSet(false, true)) {
+            if (knownSessionId == null && settled.compareAndSet(false, true)) {
                 registry.release(principal);
             }
         }

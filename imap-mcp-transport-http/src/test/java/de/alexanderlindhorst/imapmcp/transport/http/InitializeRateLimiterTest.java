@@ -125,6 +125,24 @@ class InitializeRateLimiterTest {
     }
 
     @Test
+    void aFullTableRefusesANewcomerWithTheTimeUntilTheEarliestBucketIsFullAgain() {
+        TestClock clock = new TestClock();
+        InitializeRateLimiter limiter = new InitializeRateLimiter(clock, 10, 3); // a token every 6 s
+        limiter.tryAcquire("p0"); // full again at +6 s
+        clock.now = clock.now.plusSeconds(2);
+        limiter.tryAcquire("p1"); // full again at +8 s
+        limiter.tryAcquire("p2");
+
+        assertThat(limiter.tryAcquire("newcomer")).isEqualTo(4); // p0 is full again in 4 s
+        clock.now = clock.now.plusSeconds(3);
+        assertThat(limiter.tryAcquire("newcomer")).isEqualTo(1);
+        assertThat(limiter.trackedPrincipals()).isEqualTo(3);
+        clock.now = clock.now.plusSeconds(1); // p0 is full again: it is dropped and the newcomer fits
+        assertThat(limiter.tryAcquire("newcomer")).isZero();
+        assertThat(limiter.trackedPrincipals()).isEqualTo(3);
+    }
+
+    @Test
     void theDefaultBoundIs10000() {
         TestClock clock = new TestClock();
         InitializeRateLimiter limiter = new InitializeRateLimiter(clock, 10);

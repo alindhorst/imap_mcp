@@ -191,4 +191,15 @@ class SessionRegistryTest {
         r.remove("s1");
         assertThat(ended).containsExactly("s1");
     }
+
+    @Test
+    void anUnreservedSessionIsRegisteredAgainstThePerPrincipalCap() {
+        SessionRegistry r = registry(2, 100);
+        open(r, "alice", "s1");
+        r.registerUnreserved("s2", "alice");
+        r.registerUnreserved("s3", "alice");
+        assertThat(ended).containsExactly("s1");
+        assertThat(r.touch("s3", "alice")).isTrue();
+        assertThat(r.tryReserve("alice")).isTrue(); // the pending counter was not consumed
+    }
 }
