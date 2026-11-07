@@ -4,6 +4,7 @@ import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader.Section;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
 import de.alexanderlindhorst.imapmcp.store.crypto.VaultAuth;
 import de.alexanderlindhorst.imapmcp.store.crypto.VaultConfig;
+import de.alexanderlindhorst.imapmcp.transport.http.OAuthResourceConfig;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -121,6 +122,9 @@ public final class PublicConfigLoader {
     private static PublicConfig.Oauth oauth(Section s) {
         String issuer = httpsUri(s, "issuer");
         String resource = httpsUri(s, "resource");
+        if (!OAuthResourceConfig.hasMcpPath(URI.create(resource).getRawPath())) {
+            throw new ConfigException(s.path("resource") + ": path must end with /mcp (no trailing slash)");
+        }
         String subjectClaim = s.string("subjectClaim", "sub");
         String requiredRole = s.optionalString("requiredRole");
         if (requiredRole != null && requiredRole.isBlank()) {

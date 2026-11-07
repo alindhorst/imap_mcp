@@ -8,7 +8,7 @@ import java.util.Objects;
 /**
  * The {@code oauth.*} settings of {@code http-public} that the resource server needs (SPEC 5.3, 5.7): the
  * issuer, the canonical resource URI (configured, never derived from request headers) and the subject claim.
- * The resource URI is {@code https} without user info, query or fragment.
+ * The resource URI is {@code https} without user info, query or fragment, and its path ends with {@code /mcp}.
  */
 public record OAuthResourceConfig(String issuer, String resource, String subjectClaim,
         List<String> scopesSupported) {
@@ -26,6 +26,13 @@ public record OAuthResourceConfig(String issuer, String resource, String subject
         scopesSupported = List.copyOf(Objects.requireNonNull(scopesSupported, "scopesSupported"));
     }
 
+    static final String PATH_MESSAGE = "oauth.resource: path must end with /mcp (no trailing slash)";
+
+    /** The path ends with {@code /mcp}: {@code /mcp} or {@code /x/mcp}; a trailing slash is never allowed. */
+    public static boolean hasMcpPath(String rawPath) {
+        return rawPath != null && rawPath.endsWith("/mcp");
+    }
+
     private static URI parse(String resource) {
         URI u;
         try {
@@ -38,13 +45,15 @@ public record OAuthResourceConfig(String issuer, String resource, String subject
             throw new IllegalArgumentException(
                     "oauth.resource must be an https URI without user info, query or fragment");
         }
+        if (!hasMcpPath(u.getRawPath())) {
+            throw new IllegalArgumentException(PATH_MESSAGE);
+        }
         return u;
     }
 
     /** RFC 9728 metadata path for this resource: the well-known root followed by the resource's own path. */
     public String metadataPath() {
-        String path = parse(resource).getRawPath();
-        return path == null || path.isEmpty() || path.equals("/") ? METADATA_ROOT : METADATA_ROOT + path;
+        return METADATA_ROOT + parse(resource).getRawPath();
     }
 
     /** Absolute metadata URL as announced in {@code resource_metadata}; built from the configuration only. */
