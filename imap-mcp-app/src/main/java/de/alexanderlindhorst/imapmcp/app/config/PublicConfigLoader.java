@@ -364,9 +364,17 @@ public final class PublicConfigLoader {
         }
         long inlineMax = d.size("inlineMaxBytes", INLINE_DEFAULT, INLINE_MAX);
         int inlineConcurrency = d.integer("inlineConcurrency", 4, 1, 1000);
+        // D17: the per-tenant cap defaults to min(2, inlineConcurrency); an explicit value may not exceed the replica cap
+        boolean perTenantSet = d.take("inlineConcurrencyPerTenant") != null;
+        int perTenant = d.integer("inlineConcurrencyPerTenant", Math.min(2, inlineConcurrency), 1, 1000);
+        if (perTenantSet && perTenant > inlineConcurrency) {
+            throw new ConfigException(d.path("inlineConcurrencyPerTenant") + ": must not exceed "
+                    + d.path("inlineConcurrency") + " (" + inlineConcurrency + ")");
+        }
         d.finish();
         s.finish();
-        return new PublicConfig.Tools(deadline, maxChars, maxBody, maxFolders, since, inlineMax, inlineConcurrency);
+        return new PublicConfig.Tools(deadline, maxChars, maxBody, maxFolders, since, inlineMax, inlineConcurrency,
+                perTenant);
     }
 
     // ---- named env overrides (the same names as the single-tenant modes) ----

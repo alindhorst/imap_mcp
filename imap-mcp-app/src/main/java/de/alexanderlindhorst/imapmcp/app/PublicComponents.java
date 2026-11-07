@@ -24,6 +24,7 @@ import de.alexanderlindhorst.imapmcp.core.linking.AccountLinking;
 import de.alexanderlindhorst.imapmcp.core.linking.ProbeRateLimiter;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory;
 import de.alexanderlindhorst.imapmcp.core.net.SsrfPolicy;
@@ -254,10 +255,11 @@ public final class PublicComponents implements AutoCloseable {
             tools.put(GetMessageTool.definition(t.maxCharsCap()), new GetMessageTool(account, locator, leases,
                     new BodyWindowReader(t.maxBodyPartBytes()), t.maxCharsCap()));
             tools.put(ListAttachmentsTool.DEFINITION, new ListAttachmentsTool(account, locator, leases));
-            // one limiter per replica (not per session or call): at most inlineConcurrency downloads run at once
+            // one limiter per replica (not per session or call): at most inlineConcurrency downloads run at once, and
+            // inlineConcurrencyPerTenant of one tenant (D17); refusals are counted as busy rejections
             tools.put(DownloadAttachmentTool.EMBEDDED_DEFINITION, DownloadAttachmentTool.embedded(account, locator,
                     leases, new DownloadAttachmentTool.InlineSettings(t.inlineMaxBytes()),
-                    new InlineLimiter(t.inlineConcurrency())));
+                    inlineLimiter(t, metrics)));
             // the five write tools are always registered; each call is gated by the account (read_only) and the token
             tools.put(SetFlagsTool.DEFINITION, new SetFlagsTool(account, locator, leases, clock));
             tools.put(MoveMessagesTool.DEFINITION, new MoveMessagesTool(preflight, leases, handles, clock));
@@ -437,6 +439,11 @@ public final class PublicComponents implements AutoCloseable {
     /** 12 hex characters of HMAC-SHA256 under the key over a fixed label (so replicas can compare keys). */
     static String fingerprint(byte[] key) {
         return HexFormat.of().formatHex(Macs.hmac(key, FINGERPRINT_LABEL)).substring(0, 12);
+    }
+
+    /** The embedded download's limiter (D17): replica and per-tenant caps from the configuration, refusals as metrics. */
+    static InlineLimiter inlineLimiter(PublicConfig.Tools t, MetricsRecorder metrics) {
+        return new InlineLimiter(t.inlineConcurrency(), t.inlineConcurrencyPerTenant(), metrics::busyRejection);
     }
 
     /** The tenant lookup used by the HTTP layer; a read-only view of the tenant directory (no creation). */
