@@ -175,6 +175,25 @@ class HttpPublicPurgeIT {
         }
     }
 
+    /** E19: the stateful transport's error replies carry no exception text, class names or request content. */
+    @Test
+    void statefulSdkErrorBodiesCarryNoInternals() throws Exception {
+        String token = token("alice", BOTH);
+        for (String body : new String[] {"{not json", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":{}}",
+                "{\"canary\":\"CANARY-7f3a9c\"}", "[\"CANARY-7f3a9c\"]"}) {
+            HttpResponse<String> r = HTTP.send(HttpRequest
+                    .newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
+                    .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+                    .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertThat(r.body()).as(body).doesNotContain("stackTrace", "className", "fileName", "lineNumber",
+                    "localizedMessage", "org.eclipse.jetty", "tools.jackson", "io.modelcontextprotocol", "Exception",
+                    "McpSchema", "CANARY-7f3a9c", System.getProperty("java.version"));
+            assertThat(r.statusCode()).as(body).isEqualTo(400);
+            assertThat(r.body()).as(body).contains("\"message\":\"Invalid message format\"");
+        }
+    }
+
     // ---- helpers ----
 
     private static String token(String subject, String scope) throws Exception {

@@ -4,10 +4,10 @@ import de.alexanderlindhorst.imapmcp.app.config.AppConfig;
 import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader;
 import de.alexanderlindhorst.imapmcp.app.logging.LoggingBootstrap;
+import de.alexanderlindhorst.imapmcp.core.mcp.SafeMcpJson;
 import de.alexanderlindhorst.imapmcp.transport.stdio.ProtocolStreams;
 import de.alexanderlindhorst.imapmcp.transport.stdio.StdioServer;
 import de.alexanderlindhorst.imapmcp.transport.stdio.StdioStreams;
-import io.modelcontextprotocol.json.McpJsonDefaults;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Map;
@@ -48,7 +48,7 @@ public final class StdioMain {
             components = AppComponents.create(config, paths, Clock.systemUTC(), System.getenv(),
                     AppComponents.Mode.STDIO);
             // 5. serve until stdin reaches EOF.
-            StdioServer server = StdioServer.start(streams, McpJsonDefaults.getMapper(),
+            StdioServer server = StdioServer.start(streams, SafeMcpJson.mapper(),
                     components.statefulToolSpecs(), AppVersion.serverInfo());
             if (loggingUp) {
                 org.slf4j.LoggerFactory.getLogger("imapmcp.app").info("imap-mcp stdio server started");

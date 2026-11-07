@@ -151,6 +151,14 @@ class HttpPublicIT {
         postgres.stop();
     }
 
+
+    /** E19: error replies of the SDK carry no exception text, class names, request content or JDK version. */
+    static void assertNoInternals(String what, String body) {
+        assertThat(body).as(what).doesNotContain("stackTrace", "className", "fileName", "lineNumber",
+                "localizedMessage", "org.eclipse.jetty", "tools.jackson", "io.modelcontextprotocol", "Exception",
+                "McpSchema", "CANARY-7f3a9c", System.getProperty("java.version"));
+    }
+
     // ---- helpers ----
 
     private static String token(String subject, String scope) throws Exception {
@@ -191,6 +199,19 @@ class HttpPublicIT {
     }
 
     // ---- tests ----
+
+    @Test
+    void sdkErrorBodiesCarryNoInternals() throws Exception {
+        String token = token("alice", "imap-mcp:read imap-mcp:write");
+        for (String body : new String[] {"{not json", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":{}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":{\"a\":1},\"method\":\"tools/list\"}", "{\"canary\":\"CANARY-7f3a9c\"}",
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":{}}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":{}}}"}) {
+            HttpResponse<String> r = rpc(token, body);
+            assertNoInternals(body, r.body());
+            assertThat(r.body()).as(body).contains("\"error\"");
+        }
+    }
 
     @Test
     void noTokenIs401WithTheResourceMetadataChallenge() throws Exception {

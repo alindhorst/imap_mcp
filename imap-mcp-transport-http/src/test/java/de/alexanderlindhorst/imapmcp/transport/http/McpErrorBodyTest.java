@@ -2,11 +2,14 @@ package de.alexanderlindhorst.imapmcp.transport.http;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.modelcontextprotocol.server.McpStatelessServerFeatures;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -61,6 +64,13 @@ class McpErrorBodyTest {
                 .sessionPrincipal(req -> req.getHeader("X-Test-Principal"));
         if (stateful) {
             b.stateful(true).statefulTool(StatefulHttpServerTest.echo());
+        } else {
+            McpSchema.Tool tool = McpSchema.Tool.builder().name("echo").title("Echo")
+                    .description("Echo. Read-only; does not change flags or mark messages as read.")
+                    .inputSchema(new McpSchema.JsonSchema("object", Map.of(), List.of(), false, null, null)).build();
+            b.tool(McpStatelessServerFeatures.SyncToolSpecification.builder().tool(tool)
+                    .callHandler((ctx, request) -> McpSchema.CallToolResult.builder().addTextContent("x").build())
+                    .build());
         }
         server = b.build();
         server.start();

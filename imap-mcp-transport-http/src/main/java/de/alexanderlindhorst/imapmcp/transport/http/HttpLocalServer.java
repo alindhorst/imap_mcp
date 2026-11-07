@@ -1,7 +1,9 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
-import io.modelcontextprotocol.common.McpTransportContext;
 import de.alexanderlindhorst.imapmcp.core.mcp.SafeMcpJson;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
+import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
@@ -16,8 +18,6 @@ import java.net.InetAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
-import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
-import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
