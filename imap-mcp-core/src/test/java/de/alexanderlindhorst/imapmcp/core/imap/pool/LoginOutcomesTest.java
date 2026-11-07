@@ -160,6 +160,17 @@ class LoginOutcomesTest {
     }
 
     @Test
+    void theSharedMatcherDecidesCountingAndMapping() {
+        for (String text : new String[] {"[UNAVAILABLE] x", " [unavailable]", "NO bad", null}) {
+            Throwable t = new AuthenticationFailedException(text);
+            boolean unavailable = de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal.isUnavailable(t);
+            assertThat(StorePoolFactory.isCountedRefusal(t)).isEqualTo(!unavailable);
+            assertThat(de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper.map(t, "r").error().code() ==
+                    de.alexanderlindhorst.imapmcp.core.error.ErrorCode.UPSTREAM_UNAVAILABLE).isEqualTo(unavailable);
+        }
+    }
+
+    @Test
     void onlyRefusalsWithoutUnavailableCount() {
         assertThat(StorePoolFactory.isCountedRefusal(new AuthenticationFailedException("Invalid credentials"))).isTrue();
         assertThat(StorePoolFactory.isCountedRefusal(new AuthenticationFailedException(null))).isTrue();

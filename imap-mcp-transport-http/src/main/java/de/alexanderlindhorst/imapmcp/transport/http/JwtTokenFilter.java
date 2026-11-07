@@ -54,9 +54,8 @@ public final class JwtTokenFilter implements Filter {
     /** With a reporter shared with the linking surface's callback. */
     public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, KeysUnavailableReporter reporter) {
         this.validator = Objects.requireNonNull(validator, "validator");
-        String metadata = ", resource_metadata=\"" + config.metadataUrl() + "\"";
-        this.challengeMissing = "Bearer realm=\"imap-mcp\"" + metadata;
-        this.challengeInvalid = "Bearer realm=\"imap-mcp\", error=\"invalid_token\"" + metadata;
+        this.challengeMissing = config.challenge(null);
+        this.challengeInvalid = config.challenge("invalid_token");
         this.keysUnavailable = Objects.requireNonNull(reporter, "reporter");
     }
 

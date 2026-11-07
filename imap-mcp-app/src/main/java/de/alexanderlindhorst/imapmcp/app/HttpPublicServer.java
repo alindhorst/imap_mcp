@@ -85,10 +85,12 @@ public final class HttpPublicServer {
                 .hostFilter(new HostFilter(h.allowedHosts()))
                 .originFilter(new OriginFilter(h.allowedOrigins()))
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth, keysUnavailable))
-                .principalFilter(new PrincipalContextFilter(tenants))
+                .principalFilter(new PrincipalContextFilter(tenants, oauth))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
                 .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer, keysUnavailable))
+                // deliberate fallback (SPEC 5.3): the root URL that clients probe second; strictly it belongs to
+                // the resource https://<authority>, so `resource` still equals oauth.resource
                 .openServlet(OAuthResourceConfig.METADATA_ROOT, metadata);
         if (!oauth.metadataPath().equals(OAuthResourceConfig.METADATA_ROOT)) {
             builder.openServlet(oauth.metadataPath(), metadata);
