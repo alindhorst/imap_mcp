@@ -52,11 +52,7 @@ public final class CallAudit {
         return log != null && log != AuditLog.NONE;
     }
 
-    /**
-     * Writes the rows (one per item, or one when there are none). Only the first call per call does anything, and
-     * none after {@link #recordFailure} (the executor's deadline row is written; a late worker adds no item rows).
-     */
-    /** Whether the call failed check-order step 1 (D10): such a call gets no row, E5 must not write one either. */
+    /** Whether the call failed check-order step 1 (D10): such a call gets no row. */
     public synchronized boolean argumentsRejected() {
         return argumentsRejected;
     }
@@ -68,6 +64,10 @@ public final class CallAudit {
         }
     }
 
+    /**
+     * Writes the rows (one per item, or one when there are none). Only the first call per call does anything, and
+     * none after {@link #recordFailure} (the executor's deadline row is written; a late worker adds no item rows).
+     */
     public synchronized void begin(List<ItemRef> items) throws AuditWriteException {
         if (!enabled() || entry != null || failureRecorded) {
             return;
