@@ -188,12 +188,15 @@ class ToolExecutorAuditTest {
     }
 
     @Test
-    void aPrincipalWithoutATenantRowGetsNoRowForNow() {
-        // on hold (owner question, D11): rows for TenantId.NONE are switched by CallAudit.ROWS_FOR_TENANT_NONE
+    void aPrincipalWithoutATenantRowGetsTheRowUnderTheNilUuid() {
         executor.wrap(def("move_messages", ToolHints.WRITE_DESTRUCTIVE_IDEMPOTENT), (cx, a) ->
                 new ToolOutcome.Failure(de.alexanderlindhorst.imapmcp.core.error.ToolError.accountNotFound("r1")))
-                .handle(ctxFor(TenantId.NONE), Map.of());
-        assertThat(audit.order).isEmpty();
+                .handle(ctxFor(TenantId.NONE), Map.of("account", CANARY));
+        assertThat(audit.order).containsExactly("begin", "complete");
+        assertThat(audit.calls.get(0).tenant().value()).isEqualTo("00000000-0000-0000-0000-000000000000");
+        assertThat(audit.calls.get(0).account()).isNull();
+        assertThat(audit.completions.get(0).errorCode()).isEqualTo("ACCOUNT_NOT_FOUND");
+        assertThat(audit.calls.toString() + audit.completions).doesNotContain(CANARY);
     }
 
     @Test
