@@ -81,7 +81,10 @@ class McpErrorBodyTest {
             HttpResponse<String> r = post(p.body(), p.contentType(), session);
             String what = p.body() + " / " + p.contentType() + " / session=" + (session != null);
             assertClean(what, r);
-            assertThat(r.statusCode()).as(what).isEqualTo(p.status());
+            // an initialize that carries a session id is refused (400) by the binding filter before the SDK can
+            // object to the content type
+            int expected = session != null && p.status() == 415 ? 400 : p.status();
+            assertThat(r.statusCode()).as(what).isEqualTo(expected);
             if (p.message() != null) {
                 assertThat(r.body()).as(what).contains("\"message\":\"" + p.message() + "\"");
             }
