@@ -8,8 +8,8 @@ import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
+import de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
-import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import java.time.Duration;
@@ -109,18 +109,11 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
 
     /**
      * A LOGIN answered {@code NO} that counts toward a re-link (SPEC 5.3): Angus reports it as an
-     * {@link AuthenticationFailedException}; one whose server text carries {@code [UNAVAILABLE]} is a temporary
-     * server problem, not a credential refusal. The text is only inspected, never logged.
+     * AuthenticationFailedException; one whose server text begins with {@code [UNAVAILABLE]} is a temporary
+     * server problem, not a credential refusal (the shared {@link LoginRefusal} matcher, SPEC 4 D14).
      */
     static boolean isCountedRefusal(Throwable t) {
-        for (int depth = 0; t != null && depth < 8; depth++, t = t.getCause()) {
-            if (t instanceof AuthenticationFailedException) {
-                String text = t.getMessage();
-                // the response code is the first thing in the server's text (RFC 5530)
-                return text == null || !text.strip().toUpperCase(java.util.Locale.ROOT).startsWith("[UNAVAILABLE]");
-            }
-        }
-        return false;
+        return LoginRefusal.isCredentialRefusal(t);
     }
 
     /** The counter update must never change the connect result: a failure is a WARN with the class only. */
