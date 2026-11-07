@@ -21,9 +21,10 @@ public final class CallAudit {
     private static final Logger LOG = LoggerFactory.getLogger(CallAudit.class);
     /**
      * Whether a call of a principal without a tenant row ({@link TenantId#NONE}) that ends before its account is
-     * resolved gets a row. Off: the owner's decision on D11 is pending (metric plus rate-limited WARN proposed).
+     * resolved gets a row under the nil UUID. On, as SPEC v0.23 (5.3, D11) says; the architects propose a metric and
+     * a rate-limited WARN instead, which the owner still has to decide. Switch here.
      */
-    static final boolean ROWS_FOR_TENANT_NONE = false;
+    static final boolean ROWS_FOR_TENANT_NONE = true;
 
     private static final CallAudit DISABLED = new CallAudit(null, () -> null);
 
