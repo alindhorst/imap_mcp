@@ -390,13 +390,13 @@ class EmbeddedDownloadAttachmentToolTest {
         DownloadAttachmentTool first = tool;
         build(null); // a second tool instance, same limiter
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
-        assertThat(limiter.tryAcquire()).isTrue(); // the replica-wide permit is taken elsewhere
+        InlineLimiter.Permit elsewhere = limiter.tryAcquire(keyOf(B)); // the replica-wide permit is taken elsewhere
         try {
             assertThat(error(call(h, "2"))).containsEntry("code", "SERVER_BUSY");
             assertThat(error(first.handle(new ToolCallContext(new AccountContext(A), "rid"),
                     Map.of("account", acctHandle, "message", h, "part", "2")))).containsEntry("code", "SERVER_BUSY");
         } finally {
-            limiter.release();
+            elsewhere.close();
         }
         assertThat(ok(call(h, "2"))).containsEntry("delivery", "embedded");
     }
@@ -440,10 +440,10 @@ class EmbeddedDownloadAttachmentToolTest {
         long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         boolean free = false;
         while (!free && System.nanoTime() < end) {
-            free = limiter.tryAcquire();
-            if (free) {
-                limiter.release();
-            } else {
+            try {
+                limiter.tryAcquire(keyOf(A)).close();
+                free = true;
+            } catch (ServerBusyException e) {
                 Thread.sleep(25);
             }
         }

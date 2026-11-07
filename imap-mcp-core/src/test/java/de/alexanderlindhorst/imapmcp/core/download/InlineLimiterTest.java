@@ -22,12 +22,12 @@ class InlineLimiterTest {
     @Test
     void grantsAtMostMaxAndFreesOnRelease() {
         InlineLimiter l = new InlineLimiter(2);
-        assertThat(l.tryAcquire()).isTrue();
-        assertThat(l.tryAcquire()).isTrue();
-        assertThat(l.tryAcquire()).isFalse();
-        l.release();
-        assertThat(l.tryAcquire()).isTrue();
-        assertThat(l.tryAcquire()).isFalse();
+        InlineLimiter.Permit p1 = l.tryAcquire(key("a"));
+        l.tryAcquire(key("b"));
+        assertThatThrownBy(() -> l.tryAcquire(key("c"))).isInstanceOf(ServerBusyException.class);
+        p1.close();
+        l.tryAcquire(key("c"));
+        assertThatThrownBy(() -> l.tryAcquire(key("d"))).isInstanceOf(ServerBusyException.class);
     }
 
     @Test
