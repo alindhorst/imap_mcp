@@ -105,4 +105,28 @@ class ImapLoginProbeTest {
         }
         assertThat(factory.pinsSockets()).isTrue();
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+            "[UNAVAILABLE] Temporary authentication failure|UNREACHABLE", "  [unavailable] try later|UNREACHABLE",
+            "[AUTHENTICATIONFAILED] Invalid credentials|AUTH_FAILED", "Invalid credentials|AUTH_FAILED"})
+    void aLoginAnsweredNoUnavailableIsUnreachableNotRefusedCredentials(String answer, LoginProbe.Result expected)
+            throws Exception {
+        try (var proxy = new de.alexanderlindhorst.imapmcp.core.testsupport.FaultingImapProxy(
+                greenMail.getImaps().getPort())) {
+            proxy.rejectWithNo("LOGIN", answer);
+            int port = proxy.port();
+            PinnedSocketFactory sockets = new PinnedSocketFactory(SsrfPolicy.of(List.of(), true, List.of()),
+                    h -> new InetAddress[] {InetAddress.getByAddress(h, address)}, a -> a.getAddress()[0] == 10,
+                    p -> p == port);
+            try (ImapSessionFactory viaProxy = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> {
+                p.put("mail.imaps.ssl.trust", "*");
+                p.put("mail.imaps.ssl.checkserveridentity", "false");
+                return p;
+            }, false, sockets)) {
+                assertThat(new ImapLoginProbe(viaProxy).probe(account(port, "user"), "pw".toCharArray()))
+                        .isEqualTo(expected);
+            }
+        }
+    }
 }
