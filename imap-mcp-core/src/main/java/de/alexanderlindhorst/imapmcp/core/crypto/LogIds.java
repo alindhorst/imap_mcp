@@ -22,6 +22,11 @@ public final class LogIds {
         return hash("account:", accountId);
     }
 
+    /** Stub (red commit): the hashed principal of SPEC 5.3 (D11, v0.24). */
+    public String principal(String issuer, String subject) {
+        return "";
+    }
+
     private String hash(String domain, String id) {
         byte[] mac = Macs.hmac(logKey, (domain + id).getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(mac).substring(0, HEX_CHARS);

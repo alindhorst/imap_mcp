@@ -46,6 +46,12 @@ public final class PrincipalContextFilter implements Filter {
     private final String challengeInsufficientScope;
 
     public PrincipalContextFilter(PrincipalTenants tenants, OAuthResourceConfig config) {
+        this(tenants, config, null);
+    }
+
+    /** Stub (red commit): {@code logIds} hashes the principal without a tenant row. */
+    public PrincipalContextFilter(PrincipalTenants tenants, OAuthResourceConfig config,
+            de.alexanderlindhorst.imapmcp.core.crypto.LogIds logIds) {
         this.tenants = Objects.requireNonNull(tenants, "tenants");
         this.challengeInsufficientScope = config.challenge("insufficient_scope");
     }

@@ -11,7 +11,11 @@ import java.util.Set;
  * call by the tools that need one ({@link #hasScope}). Null means the context is not scope-limited (the single-tenant
  * modes, which have no tokens with scopes); an empty set grants nothing.
  */
-public record AccountContext(TenantId tenantId, Set<String> scopes) {
+public record AccountContext(TenantId tenantId, Set<String> scopes, String principalLogId) {
+
+    public AccountContext(TenantId tenantId, Set<String> scopes) {
+        this(tenantId, scopes, null);
+    }
 
     public AccountContext {
         Objects.requireNonNull(tenantId, "tenantId");
