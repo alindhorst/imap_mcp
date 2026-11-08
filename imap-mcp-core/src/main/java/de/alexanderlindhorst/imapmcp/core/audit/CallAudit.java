@@ -19,13 +19,6 @@ import org.slf4j.LoggerFactory;
 public final class CallAudit {
 
     private static final Logger LOG = LoggerFactory.getLogger(CallAudit.class);
-    /**
-     * Whether a call of a principal without a tenant row ({@link TenantId#NONE}) that ends before its account is
-     * resolved gets a row under the nil UUID. On, as SPEC v0.23 (5.3, D11) says; the architects propose a metric and
-     * a rate-limited WARN instead, which the owner still has to decide. Switch here.
-     */
-    static final boolean ROWS_FOR_TENANT_NONE = true;
-
     private static final CallAudit DISABLED = new CallAudit(null, () -> null);
 
     private final AuditLog log;
@@ -129,8 +122,8 @@ public final class CallAudit {
             return;
         }
         CallInfo info = call.get().withConfirmation(confirmation);
-        if (info.account() == null && !rowWithoutAccount(info)) {
-            return;
+        if (TenantId.NONE.equals(info.tenant())) {
+            return; // no tenant row: counted and warned about by the executor, never audited (D11, v0.24)
         }
         attempted = true;
         failureRecorded = true;
@@ -140,10 +133,6 @@ public final class CallAudit {
             LOG.error("audit record failed tool={} request_id={} error_code={}", info.tool(), info.requestId(),
                     errorCode);
         }
-    }
-
-    private static boolean rowWithoutAccount(CallInfo info) {
-        return ROWS_FOR_TENANT_NONE || !TenantId.NONE.equals(info.tenant());
     }
 
     /**

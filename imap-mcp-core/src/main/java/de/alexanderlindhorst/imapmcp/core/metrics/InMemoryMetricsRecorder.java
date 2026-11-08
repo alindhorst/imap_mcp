@@ -149,6 +149,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void writeWithoutTenant(String tool) {
+        operation(TenantId.NONE, tool, "write_without_tenant", Duration.ZERO); // replica-wide: no tenant
+    }
+
+    @Override
     public void keyServiceUnavailable(TenantId tenant) {
         operation(tenant, "credentials", "key_service_unavailable", Duration.ZERO);
     }

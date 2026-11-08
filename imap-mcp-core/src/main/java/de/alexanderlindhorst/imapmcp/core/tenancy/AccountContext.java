@@ -10,6 +10,10 @@ import java.util.Set;
  * <p>{@code scopes} are the OAuth scopes of the validated token in {@code http-public} (SPEC 5.3, D3), checked per
  * call by the tools that need one ({@link #hasScope}). Null means the context is not scope-limited (the single-tenant
  * modes, which have no tokens with scopes); an empty set grants nothing.
+ *
+ * <p>{@code principalLogId} is set only by {@code http-public} for a principal without a tenant row
+ * ({@link TenantId#NONE}): the hashed principal (SPEC 5.3, D11), opaque, for one WARN. It is never a key, a
+ * lookup or a selector, and never the raw issuer or subject; null everywhere else.
  */
 public record AccountContext(TenantId tenantId, Set<String> scopes, String principalLogId) {
 

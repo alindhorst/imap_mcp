@@ -347,7 +347,6 @@ class HttpPublicIT {
 
     // ---- D11 (SPEC 5.3, 5.8): call rows without a resolved account; D10: no row for a step-1 rejection ----
 
-    private static final String NIL_TENANT = "00000000-0000-0000-0000-000000000000";
     private static final String WRITE = "imap-mcp:read imap-mcp:write";
 
     private int callRows(String tenant, String tool) throws Exception {
@@ -415,14 +414,34 @@ class HttpPublicIT {
         assertNoAuditRowContains(bobBox.handle(), bobBox.account().id().value());
     }
 
+    private long withoutTenantCount() {
+        return components.metrics().snapshot().operations().stream()
+                .filter(o -> o.tool().equals("create_folder") && o.op().equals("write_without_tenant"))
+                .mapToLong(o -> o.count()).sum();
+    }
+
     @Test
-    void aPrincipalWithoutATenantRowGetsTheRowUnderTheNilUuidAndNoRowNamesThePrincipal() throws Exception {
-        int before = callRows(NIL_TENANT, "create_folder");
-        int accountless = accountlessRows(NIL_TENANT);
-        HttpResponse<String> r = callTool(token("stranger-d11", WRITE), "create_folder",
-                createFolderArgs("acc_CanaryStrangerHandle0123456789"));
-        assertThat(r.statusCode()).isEqualTo(200);
-        assertOneAccountlessRow(NIL_TENANT, before, accountless);
+    void aPrincipalWithoutATenantRowGetsNoRowOnlyTheMetricAndAWarnWithoutTheCanaries() throws Exception {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("de.alexanderlindhorst.imapmcp");
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            int rowsBefore = count("SELECT count(*) FROM audit_event");
+            long metricBefore = withoutTenantCount();
+            HttpResponse<String> r = callTool(token("stranger-d11", WRITE), "create_folder",
+                    createFolderArgs("acc_CanaryStrangerHandle0123456789"));
+            assertThat(r.statusCode()).isEqualTo(200);
+            assertThat(r.body()).contains("ACCOUNT_NOT_FOUND");
+            assertThat(count("SELECT count(*) FROM audit_event")).isEqualTo(rowsBefore); // no row of any tenant
+            assertThat(withoutTenantCount()).isEqualTo(metricBefore + 1);
+            String logs = appender.list.stream().map(e -> e.getFormattedMessage() + e.getMDCPropertyMap())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertThat(logs).doesNotContain("stranger-d11").doesNotContain("CanaryStrangerHandle")
+                    .doesNotContain(ISSUER);
+        } finally {
+            logger.detachAppender(appender);
+        }
         assertNoAuditRowContains("stranger-d11", "CanaryStrangerHandle", ISSUER);
     }
 
