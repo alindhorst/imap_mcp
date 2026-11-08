@@ -122,9 +122,28 @@ public final class PublicConfigLoader {
         return new PublicConfig.Db(url, username, password, max);
     }
 
+    /** Raw path of {@code oauth.resource} (SPEC 5.3): ASCII path characters, no empty or dot segments, ends in /mcp. */
+    private static final Pattern RESOURCE_PATH = Pattern.compile("^(/[A-Za-z0-9._~!$&'()+,=:@-]+)*/mcp$");
+
+    private static boolean hasMcpPath(String rawPath) {
+        if (rawPath == null || !RESOURCE_PATH.matcher(rawPath).matches()) {
+            return false;
+        }
+        for (String segment : rawPath.split("/")) {
+            if (segment.equals(".") || segment.equals("..")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static PublicConfig.Oauth oauth(Section s) {
         String issuer = httpsUri(s, "issuer");
         String resource = httpsUri(s, "resource");
+        URI resourceUri = URI.create(resource);
+        if (resourceUri.getRawAuthority().endsWith(":") || !hasMcpPath(resourceUri.getRawPath())) {
+            throw new ConfigException(s.path("resource") + ": path must end with /mcp (no trailing slash)");
+        }
         String subjectClaim = s.string("subjectClaim", "sub");
         String requiredRole = s.optionalString("requiredRole");
         if (requiredRole != null && requiredRole.isBlank()) {
