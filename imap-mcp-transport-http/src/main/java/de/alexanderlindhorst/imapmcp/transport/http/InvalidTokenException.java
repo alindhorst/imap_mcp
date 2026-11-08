@@ -11,8 +11,22 @@ public final class InvalidTokenException extends Exception {
     /** The signing keys could not be obtained (identity provider unreachable); not the token's fault. */
     public static final String KEYS_UNAVAILABLE = "keys_unavailable";
 
+    /** Seconds a client should wait before retrying, for {@link #KEYS_UNAVAILABLE} (SPEC 5.3: 30 by default). */
+    public static final int DEFAULT_RETRY_AFTER_SECONDS = 30;
+
+    private final int retryAfterSeconds;
+
     public InvalidTokenException(String category) {
+        this(category, DEFAULT_RETRY_AFTER_SECONDS);
+    }
+
+    public InvalidTokenException(String category, int retryAfterSeconds) {
         super(category, null, false, false);
+        this.retryAfterSeconds = retryAfterSeconds;
+    }
+
+    public int retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 
     public String category() {

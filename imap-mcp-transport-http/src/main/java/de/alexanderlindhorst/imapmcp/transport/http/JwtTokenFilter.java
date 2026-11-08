@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -21,7 +22,8 @@ import org.slf4j.LoggerFactory;
  * {@link BearerTokenFilter}. The access token is read only from the {@code Authorization} header; on success the
  * validated {@link JwtPrincipal} is stored as request attribute {@link #PRINCIPAL_ATTRIBUTE} (the tenant is
  * derived from it later, never from anything the client sends). Failures are {@code 401} with a challenge that
- * names the RFC 9728 metadata URL, built from configuration only. Tokens are never logged.
+ * names the RFC 9728 metadata URL, built from configuration only; when the signing keys cannot be had (D16) the
+ * answer is {@code 503} with {@code Retry-After} and no challenge. Tokens are never logged.
  */
 public final class JwtTokenFilter implements Filter {
 
@@ -35,18 +37,30 @@ public final class JwtTokenFilter implements Filter {
     private final String challengeMissing;
     private final String challengeInvalid;
     private final LongSupplier clockMillis;
+    private final MetricsRecorder metrics;
     private final AtomicLong lastKeysWarn = new AtomicLong(Long.MIN_VALUE);
 
     public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config) {
-        this(validator, config, System::currentTimeMillis);
+        this(validator, config, MetricsRecorder.NOOP);
+    }
+
+    /** With the replica-wide counter {@code oauth_keys_unavailable} (SPEC 5.6). */
+    public JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, MetricsRecorder metrics) {
+        this(validator, config, metrics, System::currentTimeMillis);
     }
 
     /** Test seam: a clock for the rate limit of the key-unavailable warning. */
     JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, LongSupplier clockMillis) {
+        this(validator, config, MetricsRecorder.NOOP, clockMillis);
+    }
+
+    private JwtTokenFilter(JwtValidator validator, OAuthResourceConfig config, MetricsRecorder metrics,
+            LongSupplier clockMillis) {
         this.validator = Objects.requireNonNull(validator, "validator");
         this.challengeMissing = config.challenge(null);
         this.challengeInvalid = config.challenge("invalid_token");
         this.clockMillis = clockMillis;
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     @Override
@@ -69,11 +83,14 @@ public final class JwtTokenFilter implements Filter {
             principal = validator.validate(token);
         } catch (InvalidTokenException e) {
             if (InvalidTokenException.KEYS_UNAVAILABLE.equals(e.category())) {
+                // D16: not an invalid token, so no challenge (a client would re-authorize instead of retrying)
                 warnKeysUnavailable();
+                metrics.oauthKeysUnavailable();
+                unavailable(response, e.retryAfterSeconds());
             } else {
                 LOG.debug("Token rejected: {}", e.category());
+                reject(response, challengeInvalid);
             }
-            reject(response, challengeInvalid);
             return;
         }
         request.setAttribute(PRINCIPAL_ATTRIBUTE, principal);
@@ -96,6 +113,14 @@ public final class JwtTokenFilter implements Filter {
         }
         String token = header.substring(SCHEME.length());
         return token.chars().anyMatch(Character::isWhitespace) ? null : token;
+    }
+
+    private static void unavailable(HttpServletResponse res, int retryAfterSeconds) throws IOException {
+        res.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        res.setHeader("Retry-After", Integer.toString(Math.max(1, retryAfterSeconds)));
+        res.setContentType("application/json");
+        res.setCharacterEncoding("UTF-8");
+        res.getWriter().write(PrincipalContextFilter.UNAVAILABLE_BODY);
     }
 
     private static void reject(HttpServletResponse res, String challenge) throws IOException {

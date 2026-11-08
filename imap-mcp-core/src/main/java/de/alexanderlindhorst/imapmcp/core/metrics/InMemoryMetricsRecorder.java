@@ -154,6 +154,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void oauthKeysUnavailable() {
+        operation(TenantId.NONE, "oauth", "keys_unavailable", Duration.ZERO); // replica-wide: no tenant
+    }
+
+    @Override
     public void initializeRateLimited(TenantId tenant) {
         operation(tenant, "initialize", "rate_limited", Duration.ZERO);
     }

@@ -13,6 +13,7 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
+import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.core.tool.ToolDefinition;
@@ -117,6 +118,14 @@ class JwtTokenFilterTest {
                 HttpResponse.BodyHandlers.ofString());
     }
 
+    void assertUnavailable(HttpResponse<String> r, String retryAfter) {
+        assertThat(r.statusCode()).isEqualTo(503);
+        assertThat(r.headers().allValues("Retry-After")).containsExactly(retryAfter);
+        assertThat(r.headers().firstValue("WWW-Authenticate")).isEmpty();
+        assertThat(r.headers().firstValue("Content-Type").orElse("")).startsWith("application/json");
+        assertThat(r.body()).isEqualTo(PrincipalContextFilter.UNAVAILABLE_BODY);
+    }
+
     void assertUnauthorized(HttpResponse<String> r, String wwwAuthenticate) {
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(r.headers().allValues("WWW-Authenticate")).containsExactly(wwwAuthenticate);
@@ -180,18 +189,77 @@ class JwtTokenFilterTest {
     }
 
     @Test
-    void unavailableSigningKeysAre401AndLoggedWithoutTheToken() throws Exception {
+    void unavailableSigningKeysAre503WithRetryAfterNoChallengeAndLoggedWithoutTheToken() throws Exception {
         start(new JWKSource<>() {
             @Override
             public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
                 throw new KeySourceException("down");
             }
         });
-        assertUnauthorized(post("", "Bearer " + keys.rs256(b -> { })), INVALID);
+        String token = keys.rs256(b -> { });
+        assertUnavailable(post("", "Bearer " + token), "30");
         assertThat(logs.list).anySatisfy(e -> {
             assertThat(e.getLevel()).isEqualTo(Level.WARN);
-            assertThat(e.getFormattedMessage()).contains("keys_unavailable");
+            assertThat(e.getFormattedMessage()).contains("keys_unavailable").doesNotContain(token);
         });
+    }
+
+    @Test
+    void retryAfterIsTheRestOfTheRefreshIntervalWhenTheSourceSaysSo() throws Exception {
+        start((selector, context) -> {
+            throw new KeysUnavailableException(12);
+        });
+        assertUnavailable(post("", "Bearer " + keys.rs256(b -> { })), "12");
+    }
+
+    @Test
+    void retryAfterIsAtLeastOneSecond() throws Exception {
+        start((selector, context) -> {
+            throw new KeysUnavailableException(0);
+        });
+        assertUnavailable(post("", "Bearer " + keys.rs256(b -> { })), "1");
+    }
+
+    @Test
+    void aRateLimitedKeyFetchIs503NotA401() throws Exception {
+        start((selector, context) -> {
+            throw new com.nimbusds.jose.jwk.source.RateLimitReachedException();
+        });
+        assertUnavailable(post("", "Bearer " + keys.rs256(b -> { })), "30");
+    }
+
+    @Test
+    void typAndAlgFailuresAreStill401WhileTheKeysAreUnavailable() throws Exception {
+        start((selector, context) -> {
+            throw new KeysUnavailableException(30);
+        });
+        assertUnauthorized(post("", "Bearer " + keys.rs256WithType("dpop+jwt")), INVALID);
+        assertUnauthorized(post("", "Bearer " + TestTokens.none(b -> { })), INVALID);
+        assertUnauthorized(post("", "Bearer garbage"), INVALID);
+        assertUnauthorized(post(""), MISSING);
+    }
+
+    @Test
+    void everyKeysUnavailable503IsCountedReplicaWide() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger counted = new java.util.concurrent.atomic.AtomicInteger();
+        OAuthResourceConfig cfg = TestTokens.config();
+        JwtValidator down = new JwtValidator(cfg, (selector, ctx) -> {
+            throw new KeySourceException("down");
+        });
+        MetricsRecorder metrics = new MetricsRecorder() {
+            @Override
+            public void oauthKeysUnavailable() {
+                counted.incrementAndGet();
+            }
+        };
+        server = HttpLocalServer.builder().port(0).bearerFilter(new JwtTokenFilter(down, cfg, metrics))
+                .principalFilter((rq, rs, ch) -> ch.doFilter(rq, rs)).build();
+        server.start();
+        String t = keys.rs256(b -> { });
+        post("", "Bearer " + t);
+        post("", "Bearer " + t);
+        post("", "Bearer garbage");
+        assertThat(counted.get()).isEqualTo(2);
     }
 
     @Test
@@ -218,7 +286,7 @@ class JwtTokenFilterTest {
         server.start();
         String t = keys.rs256(b -> { });
         for (int i = 0; i < 5; i++) {
-            assertUnauthorized(post("", "Bearer " + t), INVALID);
+            assertUnavailable(post("", "Bearer " + t), "30");
         }
         assertThat(logs.list.stream().filter(e -> e.getLevel() == Level.WARN)).hasSize(1);
         now.addAndGet(61_000);

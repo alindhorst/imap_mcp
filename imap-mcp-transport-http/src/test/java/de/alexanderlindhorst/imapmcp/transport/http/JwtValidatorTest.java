@@ -139,12 +139,50 @@ class JwtValidatorTest {
     }
 
     @Test
-    void rateLimitedKeyRefreshIsRejectedNotKeysUnavailable() {
+    void rateLimitedKeyRefreshIsAKeyAvailabilityOutcomeNotAnInvalidToken() {
         JwtValidator limited = new JwtValidator(TestTokens.config(), (selector, ctx) -> {
             throw new com.nimbusds.jose.jwk.source.RateLimitReachedException();
         });
         assertThatThrownBy(() -> limited.validate(keys.rs256(b -> { }))).isInstanceOfSatisfying(
-                InvalidTokenException.class, e -> assertThat(e.category()).isEqualTo(InvalidTokenException.REJECTED));
+                InvalidTokenException.class, e -> {
+                    assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE);
+                    assertThat(e.retryAfterSeconds()).isEqualTo(30);
+                });
+    }
+
+    @Test
+    void aKeysUnavailableExceptionCarriesItsRetryAfterToTheCaller() {
+        JwtValidator down = new JwtValidator(TestTokens.config(), (selector, ctx) -> {
+            throw new KeysUnavailableException(7);
+        });
+        assertThatThrownBy(() -> down.validate(keys.rs256(b -> { }))).isInstanceOfSatisfying(
+                InvalidTokenException.class, e -> {
+                    assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE);
+                    assertThat(e.retryAfterSeconds()).isEqualTo(7);
+                });
+    }
+
+    @Test
+    void typAndAlgAreDecidedBeforeTheKeyDecision() {
+        JwtValidator down = new JwtValidator(TestTokens.config(), (selector, ctx) -> {
+            throw new KeysUnavailableException(30);
+        });
+        for (String token : new String[] {keys.rs256WithType("dpop+jwt"), TestTokens.none(b -> { }),
+                keys.hs256(new byte[32], b -> { })}) {
+            assertThatThrownBy(() -> down.validate(token)).isInstanceOfSatisfying(InvalidTokenException.class,
+                    e -> assertThat(e.category()).isNotEqualTo(InvalidTokenException.KEYS_UNAVAILABLE));
+        }
+    }
+
+    @Test
+    void theKeyDecisionPrecedesSignatureAndClaims() {
+        JwtValidator down = new JwtValidator(TestTokens.config(), (selector, ctx) -> {
+            throw new KeysUnavailableException(30);
+        });
+        // an expired token with a valid shape: the key decision cannot be made, so it is 503 not 401
+        assertThatThrownBy(() -> down.validate(keys.rs256(b -> b.expirationTime(TestTokens.in(-3600)))))
+                .isInstanceOfSatisfying(InvalidTokenException.class,
+                        e -> assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE));
     }
 
     @Test

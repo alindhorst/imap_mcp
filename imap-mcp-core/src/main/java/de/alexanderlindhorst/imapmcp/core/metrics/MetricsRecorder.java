@@ -43,6 +43,9 @@ public interface MetricsRecorder {
     /** The key service (for example Vault Transit) was unreachable while unwrapping a credential key. */
     default void keyServiceUnavailable(TenantId tenant) { }
 
+    /** A request was answered {@code 503} because the issuer's signing keys are unavailable (D16); replica-wide. */
+    default void oauthKeysUnavailable() { }
+
     /** An {@code initialize} was refused by the per-principal rate limit (SPEC 4, D12). */
     default void initializeRateLimited(TenantId tenant) { }
 }
