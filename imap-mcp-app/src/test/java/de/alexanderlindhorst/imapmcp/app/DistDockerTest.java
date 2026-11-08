@@ -249,7 +249,7 @@ class DistDockerTest {
             {"mail.example.org", "idp", "a@example.org", "imap.example.org"},
             {"mail.example.org", "idp.example.org", "a b@example.org", "imap.example.org"},
             {"mail.example.org", "idp.example.org", "a&b@example.org", "imap.example.org"},
-            {"mail.example.org", "idp.example.org", "a@example.org", "imap.example.org,bad host.example.org"},
+            {"mail.example.org", "idp.example.org", "a@example.org", "imap.example.org,bad_host.example.org"},
         };
         for (String[] b : bad) {
             ProcessBuilder pb = new ProcessBuilder("bash", dir.resolve("setup.sh").toString()).directory(dir.toFile())
