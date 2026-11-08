@@ -1,0 +1,60 @@
+# Local variant: own certificates from a local CA (setup.sh --local) on port HTTPS_PORT; no ACME, no redirects.
+# No access log (the OAuth callback carries codes in the query string), no encode (it would buffer streams).
+{
+	auto_https off
+	servers {
+		timeouts {
+			read_header 10s
+			read_body   30s
+			idle        2m
+		}
+	}
+	# The Caddy admin API stays on localhost:2019 inside the container and is never published.
+}
+
+(edge) {
+	header {
+		Strict-Transport-Security "max-age=86400"
+		-Server
+	}
+}
+
+{$MCP_HOST}:{$HTTPS_PORT} {
+	import edge
+	tls /etc/caddy/certs/leaf.crt /etc/caddy/certs/leaf.key
+	request_body {
+		max_size 2MB
+	}
+	route {
+		@app path /mcp /accounts /accounts/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
+		reverse_proxy @app app:8080 {
+			flush_interval -1
+			stream_close_delay 5m
+			transport http {
+				dial_timeout 5s
+				read_timeout 15m
+			}
+		}
+		respond 404
+	}
+}
+
+{$IDP_HOST}:{$HTTPS_PORT} {
+	import edge
+	tls /etc/caddy/certs/leaf.crt /etc/caddy/certs/leaf.key
+	request_body {
+		max_size 1MB
+	}
+	route {
+		@denied path_regexp (?i)^/(admin|metrics|health)(/|$)|^/realms/master(/|$)|^/realms/[^/]+/(clients-registrations|account)(/|$)
+		respond @denied 404
+		@kc path /realms/* /resources/* /.well-known/*
+		reverse_proxy @kc keycloak:8080 {
+			transport http {
+				dial_timeout 5s
+				read_timeout 60s
+			}
+		}
+		respond 404
+	}
+}

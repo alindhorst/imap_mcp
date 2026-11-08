@@ -1,0 +1,34 @@
+# Template of app/config.yaml (rendered by setup.sh, which replaces the example.com host names).
+# Secrets are env references only; compose passes them from .env.
+db:
+  url: jdbc:postgresql://postgres:5432/imapmcp
+  username: imapmcp
+  password: env:IMAPMCP_DB_PASSWORD
+oauth:
+  issuer: https://idp.example.com/realms/imap-mcp
+  resource: https://mail.example.com/mcp
+  requiredRole: imap-mcp-user
+  webClientId: imap-mcp-web
+  webClientSecret: env:WEB_CLIENT_SECRET
+public:
+  baseUrl: https://mail.example.com
+security:
+  handleKeys:
+    - id: 1
+      key: env:HANDLE_KEY_1
+  signingKeyId: 1
+ssrf:
+  # IMAP hosts a user may link; setup.sh replaces this line from IMAP_HOSTS
+  allowedHosts: ["imap.example.com"]
+kms:
+  provider: local
+  local:
+    currentKekId: kek-1
+    keks:
+      - id: kek-1
+        key: env:KEK_1
+http:
+  # keep both off until the owner checklist in README.md has passed
+  stateful: false
+purge:
+  enabled: false

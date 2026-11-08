@@ -449,6 +449,8 @@ Every test is skipped, with a reason, when its credentials are not set.
 
 The multi-tenant mode for a hosted deployment (what a Claude connector needs): `java -jar imap-mcp.jar --mode http-public --config <file>`. This server is an OAuth 2.1 resource server only; the identity provider (for example Keycloak) is separate and must put the resource URI into the access token's `aud` claim (RFC 8707). Mail accounts are linked per user in the linking surface, not in the config file; a configured `accounts` list fails startup.
 
+A container-based test environment (Postgres, Keycloak with a ready realm, the app and an optional Caddy TLS proxy) for trying http-public on the public web, including with the Claude connector, is in [`dist/docker`](dist/docker/README.md).
+
 ```yaml http-public
 db:
   url: jdbc:postgresql://db.internal:5432/imapmcp   # no password in the URL
