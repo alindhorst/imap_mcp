@@ -120,6 +120,7 @@ public final class SetFlagsTool implements ToolHandler {
         String account = (String) args.get("account");
         Parsed parsed = parse(args, ctx.requestId());
         if (!parsed.valid()) {
+            ctx.rejectArguments(); // step 1 (D10)
             return fail(parsed.error(), start);
         }
         WritePreflight.Result.Ok checked;

@@ -194,6 +194,10 @@ public final class PublicComponents implements AutoCloseable {
             LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
                     + "login of the linking surface. Development only.");
         }
+        if (config.http().initializeRateSet() && !config.http().stateful()) {
+            LOG.warn("http.initializeRatePerMinute is set, but http.stateful is false: the initialize rate limit "
+                    + "applies to the stateful transport only and has no effect");
+        }
         RefCredentialStore refs = RefCredentialStore.withEnvAndKeyring(CONFIG_OWNER, List.of(), env, platform, runner,
                 probe, config.secrets().keyringTimeout());
         KeyRing keys = buildKeyRing(config.security(), refs, paths);
@@ -521,6 +525,11 @@ public final class PublicComponents implements AutoCloseable {
 
     List<ToolDefinition> definitions() {
         return List.copyOf(tools.keySet());
+    }
+
+    /** The metrics recorder shared with the HTTP layer (for the D12 rate-limit counter). */
+    public InMemoryMetricsRecorder metrics() {
+        return metrics;
     }
 
     public Database database() {

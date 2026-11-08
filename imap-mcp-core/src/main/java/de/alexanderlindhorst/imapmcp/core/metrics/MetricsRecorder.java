@@ -32,6 +32,9 @@ public interface MetricsRecorder {
     /** Admission refused the call (SERVER_BUSY); {@code scope} is the lower-case scope name (global, tenant, mailbox). */
     default void busyRejection(PoolKey key, String scope) { }
 
+    /** A mutating call failed check-order step 1 and wrote no audit row (SPEC 5.3 D10, 5.6). */
+    default void writeArgumentRejected(TenantId tenant, String tool) { }
+
     default void timeout(TenantId tenant) { }
 
     /** A stored credential failed to decrypt (integrity failure, not a key-service outage). */
@@ -42,4 +45,7 @@ public interface MetricsRecorder {
 
     /** A request was answered {@code 503} because the issuer's signing keys are unavailable (D16); replica-wide. */
     default void oauthKeysUnavailable() { }
+
+    /** An {@code initialize} was refused by the per-principal rate limit (SPEC 4, D12). */
+    default void initializeRateLimited(TenantId tenant) { }
 }

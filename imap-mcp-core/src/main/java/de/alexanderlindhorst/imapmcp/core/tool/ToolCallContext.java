@@ -30,6 +30,7 @@ public final class ToolCallContext {
     private boolean sealed; // guarded by this, like cancelled
     private volatile boolean mutationStarted; // written under this lock only
     private volatile boolean authFailureCounted;
+    private volatile boolean argumentsRejected;
     private volatile ElicitationChannel elicitation;
     private volatile AccountId boundAccountId;
     private volatile CallAudit audit = CallAudit.disabled();
@@ -54,6 +55,19 @@ public final class ToolCallContext {
         Objects.requireNonNull(log, "log");
         Objects.requireNonNull(tool, "tool");
         this.audit = new CallAudit(log, () -> new CallInfo(accountContext.tenantId(), boundAccountId, requestId, tool));
+    }
+
+    /**
+     * The call fails check-order step 1 (schema and code checks, SPEC 4; D10): the executor counts it as
+     * {@code write_argument_rejected} and the audit writes no row. Set before returning the INVALID_ARGUMENT.
+     */
+    public void rejectArguments() {
+        argumentsRejected = true;
+        audit.argumentsRejected(true);
+    }
+
+    public boolean argumentsRejected() {
+        return argumentsRejected;
     }
 
     /** The call's audit record; a no-op object when no audit log is attached. */

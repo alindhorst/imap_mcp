@@ -97,6 +97,7 @@ public final class MoveMessagesTool implements ToolHandler {
                 ? FolderRole.fromWire(s).orElseThrow() : null;
         ToolError shape = TargetResolver.checkShape(targetFolder, role, rid);
         if (shape != null) {
+            ctx.rejectArguments(); // step 1 (D10)
             return failure(shape, start);
         }
         WritePreflight.Result checked = preflight.check(ctx, account, handleList, null);

@@ -144,6 +144,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void writeArgumentRejected(TenantId tenant, String tool) {
+        operation(tenant, tool, "write_argument_rejected", Duration.ZERO);
+    }
+
+    @Override
     public void keyServiceUnavailable(TenantId tenant) {
         operation(tenant, "credentials", "key_service_unavailable", Duration.ZERO);
     }
@@ -151,6 +156,11 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     @Override
     public void oauthKeysUnavailable() {
         operation(TenantId.NONE, "oauth", "keys_unavailable", Duration.ZERO); // replica-wide: no tenant
+    }
+
+    @Override
+    public void initializeRateLimited(TenantId tenant) {
+        operation(tenant, "initialize", "rate_limited", Duration.ZERO);
     }
 
     @Override
