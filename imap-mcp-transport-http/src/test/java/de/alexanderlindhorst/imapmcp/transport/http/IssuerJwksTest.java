@@ -611,7 +611,7 @@ class IssuerJwksTest {
         v.validate(token);
         jwksDown = true;
         clock.addAndGet(61 * 60_000);
-        v.validate(token); // due refresh fails in the background
+        assertUnavailable(v, token, 30); // past the age ceiling: waits for the refresh, which fails
         Thread.sleep(300);
         for (var e : appender.list) {
             assertThat(e.getFormattedMessage()).doesNotContain(token).doesNotContain(keys.rsa.getKeyID())
@@ -683,5 +683,169 @@ class IssuerJwksTest {
         assertUnavailable(v, tokenWithKid("nope"), 30);
         clock.set(Long.MIN_VALUE / 2);
         assertUnavailable(v, tokenWithKid("nope"), 30);
+    }
+
+    // ---- D16 v0.24: the age ceiling ----
+
+    @Test
+    void aSetPastTheCeilingIsNotUsedEvenWithoutAFailedRefreshAndConcurrentRequestsCauseOneFetch() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        jwksDelayMs = 400;
+        List<Thread> threads = new ArrayList<>();
+        AtomicInteger ok = new AtomicInteger();
+        AtomicInteger waited = new AtomicInteger();
+        for (int i = 0; i < 6; i++) {
+            threads.add(Thread.ofVirtual().start(() -> {
+                try {
+                    long t0 = System.nanoTime();
+                    v.validate(token(b -> { }));
+                    if (Duration.ofNanos(System.nanoTime() - t0).toMillis() >= 300) {
+                        waited.incrementAndGet(); // the old set was not used: every request waited for the fetch
+                    }
+                    ok.incrementAndGet();
+                } catch (InvalidTokenException e) {
+                    // counted below
+                }
+            }));
+        }
+        for (Thread th : threads) {
+            th.join();
+        }
+        assertThat(ok.get()).isEqualTo(6);
+        assertThat(waited.get()).isEqualTo(6);
+        assertThat(jwksHits.get()).isEqualTo(2); // exactly one fetch for the six
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isZero();
+    }
+
+    @Test
+    void afterTheCeilingRefreshTheDecisionIsMadeOnTheFreshSet() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        jwks.set(new JWKSet(List.of(keys.ec.toPublicJWK())).toString()); // rsa-1 is gone
+        assertRejected(v, token(b -> { })); // 401, not 503
+    }
+
+    @Test
+    void aFailedCeilingRefreshIs503DropsTheSetOnceWithTheErrorLineAndNoStaleWarn() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        jwksDown = true;
+        assertUnavailable(v, token(b -> { }), 30);
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1);
+        assertThat(count(ch.qos.logback.classic.Level.WARN)).isZero();
+        // within 30 s of the attempt: 503 with the rest of the interval, without waiting or fetching
+        clock.addAndGet(10_000);
+        long t0 = System.nanoTime();
+        assertUnavailable(v, token(b -> { }), 20);
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofMillis(500));
+        assertThat(jwksHits.get()).isEqualTo(2);
+        // after 30 s a request waits for a new refresh: 200 with the stub back, no further ERROR
+        jwksDown = false;
+        clock.addAndGet(20_000);
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1);
+    }
+
+    @Test
+    void aKnownKidJoinsARefreshInFlightThatStartedBeforeItButAnUnknownKidDoesNot() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        jwksDelayMs = 1500;
+        jwksDown = true; // the refresh in flight fails after its delay
+        AtomicInteger first = new AtomicInteger();
+        Thread a = Thread.ofVirtual().start(() -> {
+            try {
+                v.validate(token(b -> { }));
+                first.incrementAndGet();
+            } catch (InvalidTokenException e) {
+                // asserted below
+            }
+        });
+        for (int i = 0; i < 100 && jwksHits.get() < 2; i++) {
+            Thread.sleep(20); // the refresh of A is in flight now
+        }
+        long t0 = System.nanoTime();
+        assertUnavailable(v, tokenWithKid("nope"), 30); // unknown kid: does not join the older refresh, none may start
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofMillis(800));
+        assertUnavailable(v, token(b -> { }), 30); // a known kid joins it, waits, and the failure is its answer too
+        a.join();
+        assertThat(first.get()).isZero();
+        assertThat(jwksHits.get()).isEqualTo(2);
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1);
+    }
+
+    @Test
+    void aRequestThatReadTheOldSetBeforeAConcurrentRefreshPublishedANewOneGets200() throws Exception {
+        startIdp();
+        IssuerJwks src = source();
+        JwtValidator v = validator(src);
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        AtomicInteger calls = new AtomicInteger();
+        src.afterStateReadForTest = () -> {
+            if (calls.getAndIncrement() == 0) { // only the outer request: a second request refreshes meanwhile
+                try {
+                    assertThat(v.validate(token(b -> b.subject("other"))).subject()).isEqualTo("other");
+                } catch (InvalidTokenException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        };
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+        assertThat(jwksHits.get()).isEqualTo(2); // one refresh served both
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isZero();
+    }
+
+    @Test
+    void aWaitThatEndsEarlyIs503AndDoesNotDropTheSet() throws Exception {
+        startIdp();
+        IssuerJwks src = source();
+        src.waitMsForTest = 300;
+        JwtValidator v = validator(src);
+        v.validate(token(b -> { }));
+        clock.addAndGet(61 * 60_000);
+        jwksDelayMs = 2000;
+        assertUnavailable(v, token(b -> { }), 30);
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isZero(); // the refresh's own outcome decides
+        awaitJwksHits(2);
+        Thread.sleep(2300);
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1"); // the refresh succeeded on its own
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isZero();
+    }
+
+    @Test
+    void atFirstUseDiscoveryAndKeysEach3SecondsLateStillGive200() throws Exception {
+        startIdp();
+        discoveryDelayMs = 3000;
+        jwksDelayMs = 3000;
+        JwtValidator v = validator(source());
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+    }
+
+    @Test
+    void afterAnEarlierFailedRefreshAKnownKidAtTheCeilingStillJoinsARefreshInFlight() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        jwksDown = true;
+        clock.addAndGet(5 * 60_000 + 1);
+        v.validate(token(b -> { }));
+        awaitJwksHits(2); // the refresh failed: the stale window runs
+        clock.addAndGet(54 * 60_000);
+        jwksDelayMs = 1500;
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1"); // below the ceiling; refresh in flight
+        awaitJwksHits(3);
+        clock.addAndGet(2 * 60_000); // now at the ceiling, the refresh started before this request
+        jwksDown = false; // the refresh in flight will succeed
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
     }
 }

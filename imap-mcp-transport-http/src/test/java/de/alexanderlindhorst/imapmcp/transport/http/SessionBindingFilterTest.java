@@ -96,13 +96,38 @@ class SessionBindingFilterTest {
         body[head.length + 2] = '}';
         HttpResponse<String> r = post(body, "application/json");
         assertThat(r.statusCode()).isEqualTo(400);
+        assertThat(r.body()).isEmpty();
         assertThat(reached.get()).isZero();
     }
 
     @Test
-    void aCharsetOtherThanUtf8IsRefusedAndNotPassedOn() throws Exception {
+    void aCharsetOtherThanUtf8IsRefusedWith415AndNotPassedOn() throws Exception {
         HttpResponse<String> r = post(INIT.getBytes(StandardCharsets.UTF_8), "application/json; charset=IBM037");
-        assertThat(r.statusCode()).isIn(400, 415);
+        assertThat(r.statusCode()).isEqualTo(415);
+        assertThat(r.body()).isEmpty();
+        assertThat(reached.get()).isZero();
+    }
+
+    @Test
+    void aBodyAboveTheLimitIsRefusedWith413AndNotPassedOn() throws Exception {
+        byte[] body = ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"x\":\"" + "a".repeat(5000) + "\"}")
+                .getBytes(StandardCharsets.UTF_8);
+        HttpResponse<String> r = post(body, "application/json");
+        assertThat(r.statusCode()).isEqualTo(413);
+        assertThat(r.body()).isEmpty();
+        assertThat(reached.get()).isZero();
+    }
+
+    @Test
+    void aForeignSessionIdWithAnotherCharsetIs404BeforeAnyDecoding() throws Exception {
+        registry.tryReserve("bob");
+        registry.register("s2", "bob");
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/mcp"))
+                .header("Content-Type", "application/json; charset=IBM037").header("X-P", "alice")
+                .header("Mcp-Session-Id", "s2")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(INIT.getBytes(StandardCharsets.UTF_8))).build();
+        HttpResponse<String> r = http.send(req, HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).isEqualTo(404);
         assertThat(reached.get()).isZero();
     }
 
