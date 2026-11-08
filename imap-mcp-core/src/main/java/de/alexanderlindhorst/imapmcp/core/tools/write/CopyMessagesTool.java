@@ -105,6 +105,7 @@ public final class CopyMessagesTool implements ToolHandler {
                 : null;
         ToolError shape = TargetResolver.checkShape(targetFolder, role, rid);
         if (shape != null) {
+            ctx.rejectArguments(); // step 1 (D10)
             return fail(shape, start);
         }
         WritePreflight.Result checked = preflight.check(ctx, accountHandle, inputHandles, targetFolder);

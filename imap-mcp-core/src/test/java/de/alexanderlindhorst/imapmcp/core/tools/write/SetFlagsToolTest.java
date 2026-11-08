@@ -409,4 +409,15 @@ class SetFlagsToolTest {
             return List.of(BulkResult.NOTES.get(4));
         }
     }
+
+    @Test
+    void aCodeCheckFailureMarksAStepOneRejection() {
+        ToolCallContext c = new ToolCallContext(new AccountContext(A), "rid-code");
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("account", "acc_x");
+        args.put("handles", List.of("h"));
+        ToolOutcome o = tool.handle(c, args); // no change at all: INVALID_ARGUMENT before any account step
+        assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(c.argumentsRejected()).isTrue();
+    }
 }

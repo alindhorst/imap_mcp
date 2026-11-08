@@ -21,10 +21,12 @@ import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 
 /**
- * Tenant row by IdP (issuer, subject) (SPEC 5.3, 5.7). Hits are cached per replica for 5 minutes in a bounded
+ * Tenant row by IdP (issuer, subject) (SPEC 5.3, 5.7). Hits are cached per replica for 30 seconds (D13) in a bounded
  * least-recently-used map; misses are never cached, so a tenant created at first login is seen at once. The inputs
  * come from a validated token, but their length is bounded anyway. A disabled tenant stays visible for up to the
- * cache time unless {@link #invalidate} is called.
+ * cache time unless {@link #invalidate} is called. No in-process path changes {@code tenant.status} (v3b has no
+ * admin API): the operator's SQL {@code UPDATE} relies on this time on every replica; a future in-process path must
+ * call {@link #invalidate} after its commit.
  */
 public final class JdbcTenantDirectory {
 
@@ -34,7 +36,7 @@ public final class JdbcTenantDirectory {
 
     private static final Logger LOG = LoggerFactory.getLogger(JdbcTenantDirectory.class);
 
-    public static final Duration CACHE_TTL = Duration.ofMinutes(5);
+    public static final Duration CACHE_TTL = Duration.ofSeconds(30); // D13, fixed
     public static final int DEFAULT_MAX_ENTRIES = 10_000;
 
     private static final int MAX_ISSUER = 512;

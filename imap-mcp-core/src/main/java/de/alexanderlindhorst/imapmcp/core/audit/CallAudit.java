@@ -1,5 +1,6 @@
 package de.alexanderlindhorst.imapmcp.core.audit;
 
+import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,13 @@ import org.slf4j.LoggerFactory;
 public final class CallAudit {
 
     private static final Logger LOG = LoggerFactory.getLogger(CallAudit.class);
+    /**
+     * Whether a call of a principal without a tenant row ({@link TenantId#NONE}) that ends before its account is
+     * resolved gets a row under the nil UUID. On, as SPEC v0.23 (5.3, D11) says; the architects propose a metric and
+     * a rate-limited WARN instead, which the owner still has to decide. Switch here.
+     */
+    static final boolean ROWS_FOR_TENANT_NONE = true;
+
     private static final CallAudit DISABLED = new CallAudit(null, () -> null);
 
     private final AuditLog log;
@@ -27,6 +35,7 @@ public final class CallAudit {
     private boolean completed;
     private boolean attempted;
     private boolean failureRecorded;
+    private boolean argumentsRejected;
     private String confirmation;
     private String tool = "";
     private String requestId = "";
@@ -42,6 +51,18 @@ public final class CallAudit {
 
     public boolean enabled() {
         return log != null && log != AuditLog.NONE;
+    }
+
+    /** Whether the call failed check-order step 1 (D10): such a call gets no row. */
+    public synchronized boolean argumentsRejected() {
+        return argumentsRejected;
+    }
+
+    /** Marks the call as a step-1 rejection; no row is written for it afterwards. Does nothing when disabled. */
+    public synchronized void argumentsRejected(boolean rejected) {
+        if (enabled()) {
+            this.argumentsRejected = rejected;
+        }
     }
 
     /**
@@ -96,17 +117,20 @@ public final class CallAudit {
     }
 
     /**
-     * A whole-call error of a call with a resolved account that ended before any row was begun (read-only account, invalid argument or
-     * handle, ...): one item-less call row with the error code. Not fail-closed: nothing was changed, so a failed
-     * write is one ERROR line and the original error stays. No-op once rows were begun or a begin was attempted.
+     * A whole-call error that ended before any row was begun (read-only account, invalid handle, ...): one
+     * item-less call row with the error code. Without a resolved account (SPEC 5.3, D11: {@code ACCOUNT_NOT_FOUND},
+     * or an internal error or timeout during the account lookup) the row carries the tenant and no account id; the
+     * client's account handle is never stored. Not fail-closed: nothing was changed, so a failed write is one ERROR
+     * line and the original error stays. No-op once rows were begun or a begin was attempted, and for a step-1
+     * rejection (D10).
      */
     public synchronized void recordFailure(String errorCode) {
-        if (!enabled() || attempted) {
+        if (!enabled() || attempted || argumentsRejected) { // step 1: metric only (D10)
             return;
         }
         CallInfo info = call.get().withConfirmation(confirmation);
-        if (info.account() == null) {
-            return; // no resolved account: not covered (SPEC 5.3, open decisions D10, D11)
+        if (info.account() == null && !rowWithoutAccount(info)) {
+            return;
         }
         attempted = true;
         failureRecorded = true;
@@ -116,6 +140,10 @@ public final class CallAudit {
             LOG.error("audit record failed tool={} request_id={} error_code={}", info.tool(), info.requestId(),
                     errorCode);
         }
+    }
+
+    private static boolean rowWithoutAccount(CallInfo info) {
+        return ROWS_FOR_TENANT_NONE || !TenantId.NONE.equals(info.tenant());
     }
 
     /**

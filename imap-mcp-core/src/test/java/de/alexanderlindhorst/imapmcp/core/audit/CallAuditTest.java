@@ -154,11 +154,23 @@ class CallAuditTest {
     }
 
     @Test
-    void recordFailureWritesNothingWithoutAResolvedAccount() {
+    void recordFailureWritesAnAccountlessCallRowForARealTenant() {
         ToolCallContext noAccount = new ToolCallContext(new AccountContext(new TenantId("t1")), "req-3");
         noAccount.attachAudit(log, "move_messages");
         noAccount.audit().recordFailure("ACCOUNT_NOT_FOUND");
-        assertThat(log.order).isEmpty();
+        assertThat(log.order).containsExactly("begin", "complete");
+        assertThat(log.calls.get(0).account()).isNull();
+        assertThat(log.calls.get(0).tenant()).isEqualTo(new TenantId("t1"));
+    }
+
+    @Test
+    void recordFailureWritesTheRowUnderTheNilUuidForAPrincipalWithoutATenantRow() {
+        ToolCallContext none = new ToolCallContext(new AccountContext(TenantId.NONE), "req-4");
+        none.attachAudit(log, "move_messages");
+        none.audit().recordFailure("ACCOUNT_NOT_FOUND");
+        assertThat(log.order).containsExactly("begin", "complete");
+        assertThat(log.calls.get(0).tenant()).isEqualTo(TenantId.NONE);
+        assertThat(log.calls.get(0).account()).isNull();
     }
 
     @Test
