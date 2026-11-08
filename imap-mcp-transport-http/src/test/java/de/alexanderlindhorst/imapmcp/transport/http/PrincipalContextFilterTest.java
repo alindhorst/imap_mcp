@@ -52,6 +52,13 @@ class PrincipalContextFilterTest {
     final List<String> lookups = new CopyOnWriteArrayList<>();
     final AtomicInteger toolCalls = new AtomicInteger();
     final Map<String, PrincipalTenants.Tenant> rows = new java.util.concurrent.ConcurrentHashMap<>();
+    final List<de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext> seen = new CopyOnWriteArrayList<>();
+    final de.alexanderlindhorst.imapmcp.core.crypto.KeyRing ring = new de.alexanderlindhorst.imapmcp.core.crypto.KeyRing(
+            1, Map.of(1, new byte[32]));
+    de.alexanderlindhorst.imapmcp.core.crypto.LogIds logIds() {
+        return new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(ring);
+    }
+
     volatile boolean directoryDown;
     Level oldLevel;
     HttpLocalServer server;
@@ -92,12 +99,14 @@ class PrincipalContextFilterTest {
         server = HttpLocalServer.builder().port(0)
                 .tool(adapter.stateless(WHO, (c, a) -> {
                     toolCalls.incrementAndGet();
+                    seen.add(c.accountContext());
                     return new ToolOutcome.Success(Map.of("tenant", c.accountContext().tenantId().value(),
                             "write", c.accountContext().hasScope(PrincipalContextFilter.WRITE_SCOPE)));
                 }))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
-                .principalFilter(new PrincipalContextFilter(tenants, cfg)).build();
+                .principalFilter(new PrincipalContextFilter(tenants, cfg,
+                        new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(ring))).build();
         server.start();
     }
 
@@ -250,7 +259,7 @@ class PrincipalContextFilterTest {
     void withoutAValidatedPrincipalTheMisconfigurationIs500NotAChallenge() throws Exception {
         PrincipalTenants tenants = (i, s) -> Optional.of(new PrincipalTenants.Tenant(TENANT_A, false));
         server = HttpLocalServer.builder().port(0).bearerFilter((rq, rs, ch) -> ch.doFilter(rq, rs))
-                .principalFilter(new PrincipalContextFilter(tenants, TestTokens.config())).build();
+                .principalFilter(new PrincipalContextFilter(tenants, TestTokens.config(), logIds())).build();
         server.start();
         HttpResponse<String> r = post(null);
         assertThat(r.statusCode()).isEqualTo(500);
@@ -282,7 +291,7 @@ class PrincipalContextFilterTest {
     @Test
     void aPrincipalFilterWithoutAnyTokenFilterDoesNotBuild() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().port(0)
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build())
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config(), logIds())).build())
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -301,7 +310,7 @@ class PrincipalContextFilterTest {
                         c.accountContext().tenantId().value(), "write", false))))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build();
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config(), logIds())).build();
         server.start();
         post(token("stranger", "imap-mcp:read"));
         assertThat(seen.get().scopeLimited()).isTrue(); // also for a principal without a row
@@ -321,5 +330,28 @@ class PrincipalContextFilterTest {
             assertThat(all).doesNotContain(t).doesNotContain("alice").doesNotContain("stranger")
                     .doesNotContain(TestTokens.ISSUER).doesNotContain(TENANT_A.value());
         }
+    }
+
+    @Test
+    void onlyAPrincipalWithoutATenantRowGetsTheHashedPrincipalAsOpaqueLogId() throws Exception {
+        start();
+        assertThat(post(token("alice", "imap-mcp:read")).statusCode()).isEqualTo(200);
+        assertThat(post(token("stranger", "imap-mcp:read")).statusCode()).isEqualTo(200);
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get(0).tenantId()).isEqualTo(TENANT_A);
+        assertThat(seen.get(0).principalLogId()).isNull();
+        assertThat(seen.get(1).tenantId()).isEqualTo(TenantId.NONE);
+        // the expected value is computed here, independently of LogIds: SPEC 5.3
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(ring.activeSubkey("log"), "HmacSHA256"));
+        mac.update("principal:".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        for (String part : new String[] {TestTokens.ISSUER, "stranger"}) {
+            byte[] u = part.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            mac.update(java.nio.ByteBuffer.allocate(4).putInt(u.length).array());
+            mac.update(u);
+        }
+        String expected = java.util.HexFormat.of().formatHex(mac.doFinal()).substring(0, 12);
+        assertThat(seen.get(1).principalLogId()).isEqualTo(expected);
+        assertThat(seen.get(1).toString()).doesNotContain("stranger").doesNotContain(TestTokens.ISSUER);
     }
 }

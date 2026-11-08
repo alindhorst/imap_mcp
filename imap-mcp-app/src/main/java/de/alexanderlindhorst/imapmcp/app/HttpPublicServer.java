@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.app;
 
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfig;
 import de.alexanderlindhorst.imapmcp.transport.http.BearerTokenFilter;
 import de.alexanderlindhorst.imapmcp.transport.http.HealthServlet;
@@ -97,7 +98,7 @@ public final class HttpPublicServer {
                 .hostFilter(new HostFilter(h.allowedHosts()))
                 .originFilter(new OriginFilter(h.allowedOrigins()))
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(oauth, keys), oauth, keysUnavailable))
-                .principalFilter(new PrincipalContextFilter(tenants, oauth))
+                .principalFilter(new PrincipalContextFilter(tenants, oauth, new LogIds(components.keyRing())))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
                 .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer, keysUnavailable));

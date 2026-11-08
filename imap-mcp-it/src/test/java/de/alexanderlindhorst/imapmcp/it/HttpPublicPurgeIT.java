@@ -509,4 +509,23 @@ class HttpPublicPurgeIT {
                 + tenants.get("erin").value() + "'::uuid AND error_code = 'PERMISSION_DENIED' AND ref_hash IS NULL"))
                 .isPositive();
     }
+
+    @Test
+    void aPrincipalWithoutATenantRowCallingPurgeGetsNotFoundNoRowAndTheMetric() throws Exception {
+        int rowsBefore = count("SELECT count(*) FROM audit_event");
+        long metricBefore = components.metrics().snapshot().operations().stream()
+                .filter(o -> o.tool().equals("purge_messages") && o.op().equals("write_without_tenant"))
+                .mapToLong(o -> o.count()).sum();
+        try (McpSyncClient c = client(token("stranger-purge", BOTH),
+                req -> new McpSchema.ElicitResult(McpSchema.ElicitResult.Action.ACCEPT, Map.of()))) {
+            Map<String, Object> r = call(c, "purge_messages",
+                    Map.of("account", "acc_CanaryStrangerPurge0123456789", "handles", List.of("msg_" + "A".repeat(40))));
+            assertThat(map(r, "error")).containsEntry("code", "ACCOUNT_NOT_FOUND");
+        }
+        assertThat(count("SELECT count(*) FROM audit_event")).isEqualTo(rowsBefore);
+        long metricAfter = components.metrics().snapshot().operations().stream()
+                .filter(o -> o.tool().equals("purge_messages") && o.op().equals("write_without_tenant"))
+                .mapToLong(o -> o.count()).sum();
+        assertThat(metricAfter).isEqualTo(metricBefore + 1);
+    }
 }

@@ -52,6 +52,9 @@ public final class ToolExecutor {
     private final MetricsRecorder metrics;
     private final OutcomeListener listener;
     private final AuditLog auditLog;
+    private static final Duration NO_TENANT_WARN_INTERVAL = Duration.ofMinutes(1);
+    private final java.util.concurrent.atomic.AtomicReference<Instant> lastNoTenantWarn =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     /** Told about an executor-produced failure of a write tool; {@code code} is the final code on the wire. */
     @FunctionalInterface
@@ -138,6 +141,8 @@ public final class ToolExecutor {
         }
         if (write && ctx.argumentsRejected() && outcome instanceof ToolOutcome.Failure) {
             metrics.writeArgumentRejected(tenant, toolName); // check-order step 1: counted, never audited (D10)
+        } else if (write && TenantId.NONE.equals(tenant) && outcome instanceof ToolOutcome.Failure f) {
+            writeWithoutTenant(toolName, ctx, f.error().code()); // no audit row, a metric and a rate-limited WARN
         }
         if (write && state.executorProduced.get() && outcome instanceof ToolOutcome.Failure f) {
             reportExecutorOutcome(toolName, ctx, f.error().code(), elapsed);
@@ -158,6 +163,23 @@ public final class ToolExecutor {
             }
         }
         return outcome;
+    }
+
+    /**
+     * A mutating call of a principal without a tenant row (D11, v0.24): counted replica-wide per tool, and at most
+     * one WARN per minute per replica with the tool, request id, error code and the hashed principal (never the
+     * raw issuer or subject, nor the account handle). The only state is the time of the last WARN.
+     */
+    private void writeWithoutTenant(String toolName, ToolCallContext ctx, ErrorCode code) {
+        metrics.writeWithoutTenant(toolName);
+        Instant now = metrics.now();
+        Instant last = lastNoTenantWarn.get();
+        if ((last == null || !now.isBefore(last.plus(NO_TENANT_WARN_INTERVAL)))
+                && lastNoTenantWarn.compareAndSet(last, now)) {
+            String principal = ctx.accountContext().principalLogId();
+            LOG.warn("write call of a principal without a tenant row tool={} request_id={} error_code={} principal={}",
+                    toolName, ctx.requestId(), code, principal == null ? "unknown" : principal);
+        }
     }
 
     /**

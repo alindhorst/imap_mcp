@@ -35,6 +35,9 @@ public interface MetricsRecorder {
     /** A mutating call failed check-order step 1 and wrote no audit row (SPEC 5.3 D10, 5.6). */
     default void writeArgumentRejected(TenantId tenant, String tool) { }
 
+    /** A mutating call of a principal without a tenant row ended in a failure; replica-wide, per tool (D11). */
+    default void writeWithoutTenant(String tool) { }
+
     default void timeout(TenantId tenant) { }
 
     /** A stored credential failed to decrypt (integrity failure, not a key-service outage). */
