@@ -120,7 +120,7 @@ class HttpPublicIT {
         mail.createUser("carol@localhost", "carol", "right");
         // the SSRF-checked connect is pointed at the loopback GreenMail server for host names of the allowlist; IP
         // literals (alice's account) are still refused by the policy itself
-        components = PublicComponents.createForTest(config, paths, Clock.systemUTC(), env, p -> {
+        components = PublicComponents.createForTest(config, paths, SKEWED_CLOCK, env, p -> {
             p.put("mail.imaps.ssl.trust", "*");
             p.put("mail.imaps.ssl.checkserveridentity", "false");
             return p;
@@ -349,6 +349,25 @@ class HttpPublicIT {
 
     private static final String WRITE = "imap-mcp:read imap-mcp:write";
 
+    /** System time plus a skew a test can advance, so the once-per-minute WARN of D11 is not consumed by other tests. */
+    private static final java.util.concurrent.atomic.AtomicLong SKEW_SECONDS = new java.util.concurrent.atomic.AtomicLong();
+    private static final Clock SKEWED_CLOCK = new Clock() {
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return java.time.Instant.now().plusSeconds(SKEW_SECONDS.get());
+        }
+    };
+
     private int callRows(String tenant, String tool) throws Exception {
         return count("SELECT count(*) FROM audit_event WHERE tool = '" + tool + "' AND tenant_id = '" + tenant
                 + "'::uuid");
@@ -414,6 +433,18 @@ class HttpPublicIT {
         assertNoAuditRowContains(bobBox.handle(), bobBox.account().id().value());
     }
 
+    private String expectedPrincipalHash(String subject) throws Exception {
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(components.keyRing().activeSubkey("log"), "HmacSHA256"));
+        mac.update("principal:".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        for (String part : new String[] {ISSUER, subject}) {
+            byte[] u = part.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            mac.update(java.nio.ByteBuffer.allocate(4).putInt(u.length).array());
+            mac.update(u);
+        }
+        return java.util.HexFormat.of().formatHex(mac.doFinal()).substring(0, 12);
+    }
+
     private long withoutTenantCount() {
         return components.metrics().snapshot().operations().stream()
                 .filter(o -> o.tool().equals("create_folder") && o.op().equals("write_without_tenant"))
@@ -422,9 +453,12 @@ class HttpPublicIT {
 
     @Test
     void aPrincipalWithoutATenantRowGetsNoRowOnlyTheMetricAndAWarnWithoutTheCanaries() throws Exception {
+        SKEW_SECONDS.addAndGet(61); // any earlier WARN of this replica is more than a minute old now
         var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("de.alexanderlindhorst.imapmcp");
         var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
         appender.start();
+        var oldLevel = logger.getLevel(); // the IT logging configuration is OFF; without a level the scan below is vacuous
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
         logger.addAppender(appender);
         try {
             int rowsBefore = count("SELECT count(*) FROM audit_event");
@@ -437,10 +471,17 @@ class HttpPublicIT {
             assertThat(withoutTenantCount()).isEqualTo(metricBefore + 1);
             String logs = appender.list.stream().map(e -> e.getFormattedMessage() + e.getMDCPropertyMap())
                     .collect(java.util.stream.Collectors.joining("\n"));
+            // exactly one WARN, with the hashed principal computed here from the key ring (SPEC 5.3 encoding)
+            String expected = expectedPrincipalHash("stranger-d11");
+            assertThat(appender.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("without a tenant row")))
+                    .singleElement().satisfies(e -> assertThat(e.getFormattedMessage())
+                            .contains("principal=" + expected).contains("create_folder"));
             assertThat(logs).doesNotContain("stranger-d11").doesNotContain("CanaryStrangerHandle")
                     .doesNotContain(ISSUER);
         } finally {
             logger.detachAppender(appender);
+            logger.setLevel(oldLevel);
         }
         assertNoAuditRowContains("stranger-d11", "CanaryStrangerHandle", ISSUER);
     }

@@ -55,6 +55,10 @@ class PrincipalContextFilterTest {
     final List<de.alexanderlindhorst.imapmcp.core.tenancy.AccountContext> seen = new CopyOnWriteArrayList<>();
     final de.alexanderlindhorst.imapmcp.core.crypto.KeyRing ring = new de.alexanderlindhorst.imapmcp.core.crypto.KeyRing(
             1, Map.of(1, new byte[32]));
+    de.alexanderlindhorst.imapmcp.core.crypto.LogIds logIds() {
+        return new de.alexanderlindhorst.imapmcp.core.crypto.LogIds(ring);
+    }
+
     volatile boolean directoryDown;
     Level oldLevel;
     HttpLocalServer server;
@@ -255,7 +259,7 @@ class PrincipalContextFilterTest {
     void withoutAValidatedPrincipalTheMisconfigurationIs500NotAChallenge() throws Exception {
         PrincipalTenants tenants = (i, s) -> Optional.of(new PrincipalTenants.Tenant(TENANT_A, false));
         server = HttpLocalServer.builder().port(0).bearerFilter((rq, rs, ch) -> ch.doFilter(rq, rs))
-                .principalFilter(new PrincipalContextFilter(tenants, TestTokens.config())).build();
+                .principalFilter(new PrincipalContextFilter(tenants, TestTokens.config(), logIds())).build();
         server.start();
         HttpResponse<String> r = post(null);
         assertThat(r.statusCode()).isEqualTo(500);
@@ -287,7 +291,7 @@ class PrincipalContextFilterTest {
     @Test
     void aPrincipalFilterWithoutAnyTokenFilterDoesNotBuild() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> HttpLocalServer.builder().port(0)
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build())
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config(), logIds())).build())
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -306,7 +310,7 @@ class PrincipalContextFilterTest {
                         c.accountContext().tenantId().value(), "write", false))))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .bearerFilter(new JwtTokenFilter(new JwtValidator(cfg, new ImmutableJWKSet<>(keys.publicJwks())), cfg))
-                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config())).build();
+                .principalFilter(new PrincipalContextFilter((i, s) -> Optional.empty(), TestTokens.config(), logIds())).build();
         server.start();
         post(token("stranger", "imap-mcp:read"));
         assertThat(seen.get().scopeLimited()).isTrue(); // also for a principal without a row

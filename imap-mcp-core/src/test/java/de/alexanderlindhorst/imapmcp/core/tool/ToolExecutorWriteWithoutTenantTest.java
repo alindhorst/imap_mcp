@@ -173,4 +173,12 @@ class ToolExecutorWriteWithoutTenantTest {
         assertThat(count("move_messages")).isEqualTo(1);
         assertThat(warns()).isEqualTo(1);
     }
+
+    @Test
+    void thePurgeToolIsCountedLikeTheOtherWriteTools() {
+        executor.wrap(de.alexanderlindhorst.imapmcp.core.tools.write.PurgeMessagesTool.DEFINITION, notFound())
+                .handle(none("r1"), Map.of("account", CANARY_HANDLE));
+        assertThat(count("purge_messages")).isEqualTo(1);
+        assertThat(audit.order).isEmpty();
+    }
 }

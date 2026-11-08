@@ -47,13 +47,9 @@ public final class PrincipalContextFilter implements Filter {
     private final LogIds logIds;
     private final String challengeInsufficientScope;
 
-    public PrincipalContextFilter(PrincipalTenants tenants, OAuthResourceConfig config) {
-        this(tenants, config, null);
-    }
-
-    /** {@code logIds} hashes a principal without a tenant row for the WARN of a write call (D11); may be null. */
+    /** {@code logIds} hashes a principal without a tenant row for the WARN of a write call (D11). */
     public PrincipalContextFilter(PrincipalTenants tenants, OAuthResourceConfig config, LogIds logIds) {
-        this.logIds = logIds;
+        this.logIds = Objects.requireNonNull(logIds, "logIds");
         this.tenants = Objects.requireNonNull(tenants, "tenants");
         this.challengeInsufficientScope = config.challenge("insufficient_scope");
     }
@@ -95,7 +91,7 @@ public final class PrincipalContextFilter implements Filter {
         }
         TenantId id = tenant.map(PrincipalTenants.Tenant::id).orElse(TenantId.NONE);
         // only for a principal without a tenant row, and only the hash: opaque, used for one WARN (D11, v0.24)
-        String principalLogId = TenantId.NONE.equals(id) && logIds != null
+        String principalLogId = TenantId.NONE.equals(id)
                 ? logIds.principal(principal.issuer(), principal.subject()) : null;
         request.setAttribute(BearerTokenFilter.ACCOUNT_ATTRIBUTE, new AccountContext(id, scopes, principalLogId));
         chain.doFilter(req, res);
