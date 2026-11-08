@@ -6,6 +6,7 @@ import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
 import de.alexanderlindhorst.imapmcp.core.web.WebSession;
 import de.alexanderlindhorst.imapmcp.core.web.WebSessionStore;
+import de.alexanderlindhorst.imapmcp.transport.http.KeysUnavailableReporter;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,10 +46,13 @@ public final class AccountsServlet extends HttpServlet {
     private final TenantProvisioner tenants;
     private final LinkingPages pages;
     private final Clock clock;
+    private final KeysUnavailableReporter keysUnavailable;
     private final SecureRandom random = new SecureRandom();
 
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
-            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock) {
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
+            KeysUnavailableReporter keysUnavailable) {
+        this.keysUnavailable = java.util.Objects.requireNonNull(keysUnavailable, "keysUnavailable");
         this.config = config;
         this.provider = provider;
         this.pending = pending;
@@ -197,6 +201,11 @@ public final class AccountsServlet extends HttpServlet {
         } catch (OidcException e) {
             if (OidcException.INVALID_TOKEN.equals(e.kind())) {
                 badRequest(res);
+            } else if (OidcException.KEYS_UNAVAILABLE.equals(e.kind())) {
+                // D16: the state is burned and nothing is created; the user retries later
+                keysUnavailable.report();
+                writePage(res, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Sign-in unavailable",
+                        "<p>Sign-in is not available right now. Try again later.</p>");
             } else {
                 writePage(res, HttpServletResponse.SC_BAD_GATEWAY, "Sign-in failed",
                         "<p>The identity provider did not complete the sign-in. Try again later.</p>");

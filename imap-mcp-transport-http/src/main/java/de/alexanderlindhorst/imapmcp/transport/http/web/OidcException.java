@@ -5,6 +5,8 @@ public final class OidcException extends Exception {
 
     /** The IdP could not be reached, answered an error or sent no ID token: answered 502. */
     public static final String UNAVAILABLE = "unavailable";
+    /** The issuer's signing keys cannot be had (D16): answered 503 with a generic page, not a 502. */
+    public static final String KEYS_UNAVAILABLE = "keys_unavailable";
     /** The ID token did not validate: answered 400. */
     public static final String INVALID_TOKEN = "invalid_token";
 
