@@ -58,7 +58,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     private static final int MAX_BYTES = 256 * 1024;
     /** Retry of a failed discovery (v0.18). */
     static final long NEGATIVE_CACHE_MS = 10_000;
-    static final long STALE_WINDOW_MS = 60 * 60_000L;
+    static final long AGE_CEILING_MS = 60 * 60_000L;
     private static final int DEFAULT_RETRY_AFTER_SECONDS = 30;
     /** Monotonic: a wall-clock step must neither shorten the stale window nor open the refresh gate. */
     private static final LongSupplier MONOTONIC_MILLIS = () -> System.nanoTime() / 1_000_000;
@@ -85,6 +85,10 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
 
     /** A refresh in flight; {@code done} completes with whether it succeeded, after the result is published. */
     private record Refresh(long startSequence, CompletableFuture<Boolean> done) { }
+
+    /** Test seams. */
+    volatile Runnable afterStateReadForTest;
+    volatile long waitMsForTest = WAIT_MS;
 
     private volatile State state = new State(null, 0, false);
     private volatile URL jwksUrl; // set once discovery succeeded
@@ -154,23 +158,49 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     @Override
     public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
         long arrival = sequence.incrementAndGet();
-        State st = state;
-        if (st.set != null && st.failed && clockMillis.getAsLong() - st.fetchedAt >= STALE_WINDOW_MS) {
-            st = dropStale(st);
-        }
-        if (st.set != null) {
-            List<JWK> hit = decide(selector, st.set);
-            if (hit != null) {
-                if (st.failed) {
-                    metrics.oauthKeysStale();
-                }
-                if (clockMillis.getAsLong() - st.fetchedAt >= dueAfterMs) {
-                    refreshInBackground();
-                }
-                return hit;
+        for (;;) {
+            List<JWK> keys = decideOnce(selector, arrival);
+            if (keys != RETRY) {
+                return keys;
             }
         }
-        return awaitRefresh(selector, arrival);
+    }
+
+    /** Marks that the key state changed under the request, so that the decision is made again on the new state. */
+    private static final List<JWK> RETRY = java.util.Collections.unmodifiableList(new java.util.ArrayList<>());
+
+    private List<JWK> decideOnce(JWKSelector selector, long arrival) throws KeySourceException {
+        State st = state;
+        Runnable seam = afterStateReadForTest;
+        if (seam != null) {
+            seam.run();
+        }
+        if (st.set == null) {
+            return awaitRefresh(selector, arrival, null, false);
+        }
+        if (clockMillis.getAsLong() - st.fetchedAt >= AGE_CEILING_MS) {
+            // v0.24: a set at the ceiling is never used, also without a failed refresh
+            if (st.failed) {
+                // as in v0.23: after a failed refresh the request finds it and drops it at once; it still joins a
+                // refresh in flight when the old set could decide its token (determined before the drop)
+                boolean known = decide(selector, st.set) != null;
+                dropAtCeiling(st.set);
+                return awaitRefresh(selector, arrival, null, known);
+            }
+            // only a token the old set could decide joins a refresh that started before it arrived
+            return awaitRefresh(selector, arrival, st.set, decide(selector, st.set) != null);
+        }
+        List<JWK> hit = decide(selector, st.set);
+        if (hit != null) {
+            if (st.failed) {
+                metrics.oauthKeysStale();
+            }
+            if (clockMillis.getAsLong() - st.fetchedAt >= dueAfterMs) {
+                refreshInBackground();
+            }
+            return hit;
+        }
+        return awaitRefresh(selector, arrival, st.set, false);
     }
 
     /**
@@ -188,14 +218,14 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         return fit.isEmpty() ? null : fit;
     }
 
-    private State dropStale(State expired) {
+    /** Drops the set that reached the ceiling (identity), never one published since. */
+    private void dropAtCeiling(JWKSet reached) {
         synchronized (lock) {
-            if (state == expired) {
+            if (state.set == reached) {
                 state = new State(null, 0, true);
-                LOG.error("Issuer keys dropped: the stale window of {} minutes ended; every token gets 503 until a "
-                        + "fetch succeeds", STALE_WINDOW_MS / 60_000);
+                LOG.error("Issuer keys dropped: the key set reached the age ceiling of {} minutes; every token gets "
+                        + "503 until a fetch succeeds", AGE_CEILING_MS / 60_000);
             }
-            return state;
         }
     }
 
@@ -207,13 +237,22 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         }
     }
 
-    /** An unknown {@code kid}: wait for a refresh that started after this request arrived, or say 503. */
-    private List<JWK> awaitRefresh(JWKSelector selector, long arrival) throws KeySourceException {
+    /**
+     * Waits for a refresh, or says 503. {@code seen} is the set this request decided on (null: none); under the lock
+     * the state is read again and, when another set was published meanwhile, the decision is made anew. A request
+     * for an unknown {@code kid} waits for a refresh that started after it arrived; with {@code joinOlder} (a token
+     * the set at the age ceiling could decide) any refresh in flight will do.
+     */
+    private List<JWK> awaitRefresh(JWKSelector selector, long arrival, JWKSet seen, boolean joinOlder)
+            throws KeySourceException {
         Refresh refresh;
         synchronized (lock) {
+            if (state.set != seen) {
+                return RETRY;
+            }
             long now = clockMillis.getAsLong();
             if (inFlight != null) {
-                refresh = inFlight.startSequence > arrival ? inFlight : null;
+                refresh = joinOlder || inFlight.startSequence > arrival ? inFlight : null;
             } else {
                 refresh = mayStart(now) ? startRefresh() : null;
             }
@@ -223,9 +262,9 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         }
         boolean ok;
         try {
-            ok = refresh.done.get(WAIT_MS, TimeUnit.MILLISECONDS);
+            ok = refresh.done.get(waitMsForTest, TimeUnit.MILLISECONDS);
         } catch (TimeoutException | ExecutionException e) {
-            ok = false;
+            ok = false; // the refresh runs on and decides alone; nothing is dropped here
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new KeysUnavailableException(DEFAULT_RETRY_AFTER_SECONDS);
@@ -235,7 +274,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
             throw new KeysUnavailableException(DEFAULT_RETRY_AFTER_SECONDS);
         }
         List<JWK> hit = decide(selector, st.set);
-        return hit != null ? hit : List.of(); // still missing after a refresh that started after arrival: 401
+        return hit != null ? hit : List.of(); // still missing after the refresh: 401
     }
 
     /** Caller holds the lock. Before discovery has succeeded the interval is the 10 s of the discovery retry. */
@@ -303,11 +342,19 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     private void failedRefresh(String reason, int status) {
         synchronized (lock) {
             State st = state;
+            if (st.set != null && clockMillis.getAsLong() - st.fetchedAt >= AGE_CEILING_MS) {
+                // a failed refresh of a set at the ceiling: dropped, the ERROR line only (no stale-window WARN)
+                state = new State(null, 0, true);
+                LOG.error("Issuer keys dropped: the key set reached the age ceiling of {} minutes and the refresh "
+                        + "failed (reason={}, status={}); every token gets 503 until a fetch succeeds",
+                        AGE_CEILING_MS / 60_000, reason, status);
+                return;
+            }
             state = new State(st.set, st.fetchedAt, true);
             if (!st.failed) {
                 if (st.set != null) {
                     LOG.warn("Issuer keys unavailable (reason={}, status={}); the last good set stays usable for {} "
-                            + "minutes after its fetch", reason, status, STALE_WINDOW_MS / 60_000);
+                            + "minutes after its fetch", reason, status, AGE_CEILING_MS / 60_000);
                 } else {
                     LOG.warn("Issuer keys unavailable (reason={}, status={}); no key set is held, every token gets "
                             + "503 until a fetch succeeds", reason, status);
