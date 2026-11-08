@@ -275,4 +275,28 @@ class DistDockerTest {
         assertThat(p.waitFor()).isZero();
         assertThat(dir.resolve(".env")).exists();
     }
+
+    /** #418: doc/DEPLOYMENT.md exists, is linked from both READMEs, its relative links resolve, and it stays clean. */
+    @Test
+    void deploymentGuideIsLinkedAndItsLinksResolve() throws IOException {
+        Path guide = Path.of("..", "doc", "DEPLOYMENT.md");
+        String text = read(guide);
+        assertThat(read(Path.of("..", "README.md"))).contains("](doc/DEPLOYMENT.md)");
+        assertThat(read(DOCKER.resolve("README.md"))).contains("](../../doc/DEPLOYMENT.md)");
+        assertThat(text).contains("](../dist/docker/README.md)").contains("](../README.md#").contains("](SPEC.md");
+        Matcher m = Pattern.compile("\\]\\(([^)#\\s]+)(#[^)]*)?\\)").matcher(text);
+        int links = 0;
+        while (m.find()) {
+            if (m.group(1).contains("://")) {
+                continue;
+            }
+            assertThat(guide.resolveSibling(m.group(1))).as(m.group(1)).exists();
+            links++;
+        }
+        assertThat(links).isGreaterThanOrEqualTo(3);
+        assertThat(text).doesNotContain("CLAUDE.md").doesNotContain("imap.trace");
+        assertThat(text.chars().filter(ch -> (ch < 0x20 && ch != '\n' && ch != '\r' && ch != '\t')
+                || (ch >= 0x200B && ch <= 0x200F) || (ch >= 0x202A && ch <= 0x202E) || (ch >= 0x2066 && ch <= 0x2069)
+                || ch == 0xFEFF).count()).isZero();
+    }
 }

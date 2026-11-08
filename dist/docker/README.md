@@ -2,6 +2,8 @@
 
 A container stack to bring up the multi-tenant `http-public` mode on a public host and try it, including with the Claude connector: Postgres, Keycloak (realm imported), the app, and optionally a Caddy TLS proxy with automatic Let's Encrypt certificates. It is a test environment, not a production deployment (local KEK, one replica, one host). Background: README sections "http-public", "Keycloak setup for the Claude connector" and "Reverse proxy" in the repository README, and SPEC 5.3 and 5.7.
 
+The operator's view (what to provide, checks in order, unverified assumptions) is in [`doc/DEPLOYMENT.md`](../../doc/DEPLOYMENT.md).
+
 It works with `docker compose`, `podman compose` (docker-compose provider) and `podman-compose`. Below, `compose` stands for the one you use.
 
 ## Layout
