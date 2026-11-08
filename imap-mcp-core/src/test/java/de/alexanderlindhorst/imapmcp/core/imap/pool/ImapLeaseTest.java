@@ -122,6 +122,18 @@ class ImapLeaseTest {
         return trace.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
     }
 
+    /**
+     * IMAP protocol lines logged by the calling thread. The trace logger is global: Stores of earlier tests
+     * (their LOGOUT on a virtual thread, JavaMail's "DEBUG ..." cleanup chatter on the GC or cleaner threads) log
+     * into this test's appender too, so counting every event is racy. A read of the leased connection that did I/O
+     * would log on the calling thread.
+     */
+    private long wireLinesOfThisThread() {
+        String me = Thread.currentThread().getName();
+        return trace.list.stream().filter(e -> e.getThreadName().equals(me))
+                .map(ILoggingEvent::getFormattedMessage).filter(l -> !l.startsWith("DEBUG")).count();
+    }
+
     private long count(String regex) {
         return lines().stream().filter(l -> l.matches(regex)).count();
     }
@@ -195,11 +207,11 @@ class ImapLeaseTest {
     void capabilitiesReadLeasedConnectionWithoutWireTraffic() throws Exception {
         leases(Duration.ofSeconds(10));
         try (ImapLease lease = leases.lease(key, ctx())) {
-            int before = trace.list.size();
+            long before = wireLinesOfThisThread();
             var caps = lease.capabilities();
             assertThat(caps.move()).isTrue();
             assertThat(caps.uidplus()).isTrue();
-            assertThat(trace.list.size()).isEqualTo(before);
+            assertThat(wireLinesOfThisThread()).isEqualTo(before);
         }
     }
 
@@ -208,12 +220,12 @@ class ImapLeaseTest {
         leases(Duration.ofSeconds(10));
         try (ImapLease lease = leases.lease(key, ctx())) {
             lease.overrideCapabilities(new WriteCapabilities(true, false));
-            int before = trace.list.size();
+            long before = wireLinesOfThisThread();
             var refusal = lease.capabilities().requireUidplus("rid");
             assertThat(refusal).isPresent();
             assertThat(refusal.get().code()).isEqualTo(ErrorCode.UNSUPPORTED);
             assertThat(refusal.get().toMap().toString()).contains("UIDPLUS");
-            assertThat(trace.list.size()).isEqualTo(before);
+            assertThat(wireLinesOfThisThread()).isEqualTo(before);
         }
         assertThat(count("[A-Z]+\\d+ (SELECT|EXAMINE) .*")).isZero();
     }
