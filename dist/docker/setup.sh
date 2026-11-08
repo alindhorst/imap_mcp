@@ -23,12 +23,30 @@ if $LOCAL; then
 else
   : "${MCP_HOST:?set MCP_HOST (public name of the MCP server)}"
   : "${IDP_HOST:?set IDP_HOST (public name of Keycloak)}"
-  : "${ACME_EMAIL:?set ACME_EMAIL (contact address for Let s Encrypt)}"
+  : "${ACME_EMAIL:?set ACME_EMAIL (contact address for ACME)}"
   HTTPS_PORT=${HTTPS_PORT:-443}
   HTTP_PORT=${HTTP_PORT:-80}
   CADDY_SITE=public
 fi
 IMAP_HOSTS=${IMAP_HOSTS:-imap.example.com}
+
+# The values go into .env and into sed expressions: refuse anything but plain host names and an address
+# without whitespace, | or &, before anything is written.
+HOST_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+check_host() { [[ "$2" =~ $HOST_RE ]] || { echo "setup.sh: $1 is not a lower-case host name" >&2; exit 1; }; }
+check_host MCP_HOST "$MCP_HOST"
+check_host IDP_HOST "$IDP_HOST"
+IFS=',' read -r -a imap_list <<< "$IMAP_HOSTS"
+for h in "${imap_list[@]}"; do
+  h=${h//[[:space:]]/}
+  check_host IMAP_HOSTS "${h#\*.}"
+done
+case "$ACME_EMAIL" in
+  *[[:space:]\|\&]*) echo "setup.sh: ACME_EMAIL must not contain whitespace, | or &" >&2; exit 1 ;;
+esac
+case "$HTTPS_PORT$HTTP_PORT" in
+  *[!0-9]*) echo "setup.sh: HTTPS_PORT and HTTP_PORT must be numbers" >&2; exit 1 ;;
+esac
 suffix=""
 [ "$HTTPS_PORT" != "443" ] && suffix=":$HTTPS_PORT"
 
