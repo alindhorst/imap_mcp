@@ -25,6 +25,7 @@ Twelve tools; the five v2 tools are write tools and are not listed when every ac
 
 - [`doc/SPEC.md`](doc/SPEC.md): scope, tools, phasing, architecture. Start here.
 - [`doc/TUTORIAL.md`](doc/TUTORIAL.md): getting started (build, config, keyring, stdio and HTTP setup, pitfalls).
+- [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md): operator guide for the http-public test deployment (what to provide, checks, open assumptions).
 
 ## Project layout
 
