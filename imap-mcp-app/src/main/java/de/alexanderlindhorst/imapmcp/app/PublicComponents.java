@@ -24,7 +24,6 @@ import de.alexanderlindhorst.imapmcp.core.linking.AccountLinking;
 import de.alexanderlindhorst.imapmcp.core.linking.ProbeRateLimiter;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
-import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory;
 import de.alexanderlindhorst.imapmcp.core.net.SsrfPolicy;
@@ -469,10 +468,6 @@ public final class PublicComponents implements AutoCloseable {
     /** The secret of the web client ({@code oauth.webClientSecret}), resolved at each call; the caller closes it. */
     public Supplier<Secret> webClientSecret() {
         return linking.webClientSecret();
-    }
-
-    public MetricsRecorder metrics() {
-        return metrics;
     }
 
     public Clock clock() {
