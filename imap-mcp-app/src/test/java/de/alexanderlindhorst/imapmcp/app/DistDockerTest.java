@@ -233,4 +233,46 @@ class DistDockerTest {
                 .contains("ARG JAR_FILE=jar/imap-mcp.jar");
         assertThat(read(DOCKER.resolve(".dockerignore")).lines().map(String::strip)).contains("*", "!jar/*.jar");
     }
+
+    /** setup.sh validates host names and the ACME address before it writes anything (sed and .env injection). */
+    @Test
+    void setupRefusesInvalidInputsBeforeWritingAnything(@org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+        Path dir = Files.createDirectories(tmp.resolve("docker"));
+        Files.createDirectories(dir.resolve("app"));
+        for (String f : List.of("setup.sh", "config.yaml.example", "Dockerfile")) {
+            Files.copy(DOCKER.resolve(f), dir.resolve(f));
+        }
+        dir.resolve("setup.sh").toFile().setExecutable(true);
+        String[][] bad = {
+            {"mail.example.org|x", "idp.example.org", "a@example.org", "imap.example.org"},
+            {"Mail.example.org", "idp.example.org", "a@example.org", "imap.example.org"},
+            {"mail.example.org", "idp", "a@example.org", "imap.example.org"},
+            {"mail.example.org", "idp.example.org", "a b@example.org", "imap.example.org"},
+            {"mail.example.org", "idp.example.org", "a&b@example.org", "imap.example.org"},
+            {"mail.example.org", "idp.example.org", "a@example.org", "imap.example.org,bad host.example.org"},
+        };
+        for (String[] b : bad) {
+            ProcessBuilder pb = new ProcessBuilder("bash", dir.resolve("setup.sh").toString()).directory(dir.toFile())
+                    .redirectErrorStream(true);
+            pb.environment().put("MCP_HOST", b[0]);
+            pb.environment().put("IDP_HOST", b[1]);
+            pb.environment().put("ACME_EMAIL", b[2]);
+            pb.environment().put("IMAP_HOSTS", b[3]);
+            Process p = pb.start();
+            p.getInputStream().readAllBytes();
+            assertThat(p.waitFor()).as(String.join(" ", b)).isNotZero();
+            assertThat(dir.resolve(".env")).doesNotExist();
+            assertThat(dir.resolve("app").resolve("config.yaml")).doesNotExist();
+        }
+        ProcessBuilder ok = new ProcessBuilder("bash", dir.resolve("setup.sh").toString()).directory(dir.toFile())
+                .redirectErrorStream(true);
+        ok.environment().put("MCP_HOST", "mail.example.org");
+        ok.environment().put("IDP_HOST", "idp.example.org");
+        ok.environment().put("ACME_EMAIL", "a@example.org");
+        ok.environment().put("IMAP_HOSTS", "imap.example.org, *.mail.example.net");
+        Process p = ok.start();
+        p.getInputStream().readAllBytes();
+        assertThat(p.waitFor()).isZero();
+        assertThat(dir.resolve(".env")).exists();
+    }
 }
