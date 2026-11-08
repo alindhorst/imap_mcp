@@ -80,6 +80,7 @@ fi
 
 if $LOCAL; then
   mkdir -p local-ca caddy/local/certs truststore
+  chmod 755 caddy/local/certs
   if [ -e local-ca/ca.crt ]; then
     echo "local CA exists: left unchanged"
   else
