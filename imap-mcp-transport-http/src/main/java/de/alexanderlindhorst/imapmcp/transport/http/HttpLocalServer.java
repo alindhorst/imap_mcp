@@ -1,8 +1,10 @@
 package de.alexanderlindhorst.imapmcp.transport.http;
 
+import de.alexanderlindhorst.imapmcp.core.mcp.SafeMcpJson;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
+import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
@@ -17,8 +19,6 @@ import java.net.InetAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
-import de.alexanderlindhorst.imapmcp.transport.http.web.WebConfig;
-import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -132,7 +132,7 @@ public final class HttpLocalServer {
         private int maxRequestBytes = MAX_REQUEST_BYTES;
         private String serverName = "imap-mcp";
         private String serverVersion = "dev";
-        private McpJsonMapper jsonMapper = McpJsonDefaults.getMapper();
+        private McpJsonMapper jsonMapper = SafeMcpJson.mapper();
         private final List<McpStatelessServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
         private Function<HttpServletRequest, McpTransportContext> contextExtractor = req -> McpTransportContext.EMPTY;
         private Filter hostFilter;
