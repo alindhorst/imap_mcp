@@ -167,7 +167,7 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
     }
 
     /** Marks that the key state changed under the request, so that the decision is made again on the new state. */
-    private static final List<JWK> RETRY = new java.util.ArrayList<>();
+    private static final List<JWK> RETRY = java.util.Collections.unmodifiableList(new java.util.ArrayList<>());
 
     private List<JWK> decideOnce(JWKSelector selector, long arrival) throws KeySourceException {
         State st = state;
@@ -181,8 +181,11 @@ public final class IssuerJwks implements JWKSource<SecurityContext> {
         if (clockMillis.getAsLong() - st.fetchedAt >= AGE_CEILING_MS) {
             // v0.24: a set at the ceiling is never used, also without a failed refresh
             if (st.failed) {
-                dropAtCeiling(st.set); // as in v0.23: after a failed refresh the request finds it and drops it at once
-                return RETRY;
+                // as in v0.23: after a failed refresh the request finds it and drops it at once; it still joins a
+                // refresh in flight when the old set could decide its token (determined before the drop)
+                boolean known = decide(selector, st.set) != null;
+                dropAtCeiling(st.set);
+                return awaitRefresh(selector, arrival, null, known);
             }
             // only a token the old set could decide joins a refresh that started before it arrived
             return awaitRefresh(selector, arrival, st.set, decide(selector, st.set) != null);
