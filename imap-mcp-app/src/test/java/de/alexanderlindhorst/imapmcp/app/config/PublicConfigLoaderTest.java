@@ -280,6 +280,41 @@ class PublicConfigLoaderTest {
     }
 
     @Test
+    void inlineConcurrencyPerTenantDefaultsToTheSmallerOfTwoAndInlineConcurrency() {
+        assertThat(bind(VALID).tools().inlineConcurrencyPerTenant()).isEqualTo(2); // inlineConcurrency defaults to 4
+        assertThat(bind(VALID + "tools:\n  download:\n    inlineConcurrency: 1\n").tools()
+                .inlineConcurrencyPerTenant()).isEqualTo(1);
+        assertThat(bind(VALID + "tools:\n  download:\n    inlineConcurrency: 8\n").tools()
+                .inlineConcurrencyPerTenant()).isEqualTo(2);
+    }
+
+    @Test
+    void anExplicitInlineConcurrencyPerTenantUpToInlineConcurrencyIsBound() {
+        String yaml = VALID + "tools:\n  download:\n    inlineConcurrency: 4\n    inlineConcurrencyPerTenant: 4\n";
+        assertThat(bind(yaml).tools().inlineConcurrencyPerTenant()).isEqualTo(4);
+        assertThat(bind(VALID + "tools:\n  download:\n    inlineConcurrencyPerTenant: 3\n").tools()
+                .inlineConcurrencyPerTenant()).isEqualTo(3);
+    }
+
+    @Test
+    void anExplicitInlineConcurrencyPerTenantAboveInlineConcurrencyFailsStartupNamingThePath() {
+        assertThatThrownBy(() -> bind(VALID + "tools:\n  download:\n    inlineConcurrency: 4\n"
+                + "    inlineConcurrencyPerTenant: 5\n")).isInstanceOf(ConfigException.class)
+                .hasMessageContaining("tools.download.inlineConcurrencyPerTenant")
+                .hasMessageContaining("tools.download.inlineConcurrency");
+        // the default inlineConcurrency of 4 applies when only the per-tenant value is set
+        assertThatThrownBy(() -> bind(VALID + "tools:\n  download:\n    inlineConcurrencyPerTenant: 5\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("tools.download.inlineConcurrencyPerTenant");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-1", "two"})
+    void anInlineConcurrencyPerTenantBelowOneOrNotAnIntegerFailsStartup(String value) {
+        assertThatThrownBy(() -> bind(VALID + "tools:\n  download:\n    inlineConcurrencyPerTenant: " + value + "\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("tools.download.inlineConcurrencyPerTenant");
+    }
+
+    @Test
     void optionalKeysAreBound() {
         String yaml = VALID.replace("requiredRole: imap-mcp-user", "allowWithoutRole: true\n  subjectClaim: oid\n  roleClaim: roles")
                 + "purge:\n  enabled: false\nhttp:\n  stateful: true\ntools:\n  download:\n    inlineMaxBytes: 1MiB\n"

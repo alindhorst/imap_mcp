@@ -23,7 +23,7 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
 
     /** {@code tools.*} of http-public: no download directory; the embedded download has its own cap and limiter. */
     public record Tools(Duration deadline, int maxCharsCap, long maxBodyPartBytes, int maxFolders,
-            int sinceMaxCandidates, long inlineMaxBytes, int inlineConcurrency) {
+            int sinceMaxCandidates, long inlineMaxBytes, int inlineConcurrency, int inlineConcurrencyPerTenant) {
     }
 
     /**
