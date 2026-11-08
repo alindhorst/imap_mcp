@@ -62,7 +62,7 @@ public final class IdTokenValidator {
             throw new InvalidTokenException(InvalidTokenException.MALFORMED);
         } catch (BadJOSEException e) {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);
-        } catch (KeySourceException e) { // includes RateLimitReachedException: keys not obtainable, not the token's fault
+        } catch (KeySourceException e) { // KeysUnavailableException (D16): the key decision cannot be made, not the token's fault
             throw new InvalidTokenException(InvalidTokenException.KEYS_UNAVAILABLE);
         } catch (JOSEException | RuntimeException e) {
             throw new InvalidTokenException(InvalidTokenException.REJECTED);

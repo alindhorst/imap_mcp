@@ -44,6 +44,16 @@ class IssuerJwksTest {
     volatile boolean redirectDiscovery;
     volatile boolean hugeDiscovery;
     volatile long discoveryDelayMs;
+    volatile boolean jwksDown;
+    volatile boolean jwksStall;
+    volatile boolean discoveryStall;
+    volatile boolean hugeJwks;
+    volatile int jwksStatus = 200;
+    final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    volatile long jwksDelayMs;
+    final java.util.concurrent.CopyOnWriteArrayList<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    final java.util.concurrent.atomic.AtomicInteger stale = new AtomicInteger();
     HttpServer idp;
     String issuer;
 
@@ -64,6 +74,10 @@ class IssuerJwksTest {
             if (down) {
                 ex.sendResponseHeaders(503, -1);
                 ex.close();
+                return;
+            }
+            if (discoveryStall) {
+                stall(ex);
                 return;
             }
             if (redirectDiscovery) {
@@ -90,6 +104,44 @@ class IssuerJwksTest {
         });
         idp.createContext("/realms/test/protocol/certs", ex -> {
             jwksHits.incrementAndGet();
+            if (jwksDelayMs > 0) {
+                try {
+                    Thread.sleep(jwksDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (jwksDown) {
+                ex.sendResponseHeaders(503, -1);
+                ex.close();
+                return;
+            }
+            if (jwksStall) {
+                stall(ex);
+                return;
+            }
+            if (hugeJwks) {
+                ex.sendResponseHeaders(200, 0);
+                byte[] chunk = new byte[64 * 1024];
+                java.util.Arrays.fill(chunk, (byte) ' ');
+                try {
+                    for (int i = 0; i < 8; i++) {
+                        ex.getResponseBody().write(chunk);
+                    }
+                    ex.getResponseBody().write(jwks.get().getBytes(StandardCharsets.UTF_8));
+                } catch (IOException ignored) {
+                    // the client gave up reading, as intended
+                }
+                ex.close();
+                return;
+            }
+            if (jwksStatus != 200) {
+                byte[] b = jwks.get().getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(jwksStatus, b.length);
+                ex.getResponseBody().write(b);
+                ex.close();
+                return;
+            }
             if (redirectJwks) {
                 redirect(ex, "/realms/test/target");
                 return;
@@ -100,7 +152,21 @@ class IssuerJwksTest {
             redirectTargetHits.incrementAndGet();
             reply(ex, jwks.get());
         });
+        idp.setExecutor(java.util.concurrent.Executors.newCachedThreadPool()); // a stalled handler must not block others
         idp.start();
+    }
+
+    /** Sends the headers and a first byte, then stalls until the test ends. */
+    void stall(HttpExchange ex) throws IOException {
+        ex.sendResponseHeaders(200, 0);
+        ex.getResponseBody().write(' ');
+        ex.getResponseBody().flush();
+        try {
+            release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        ex.close();
     }
 
     static void redirect(HttpExchange ex, String location) throws IOException {
@@ -117,15 +183,64 @@ class IssuerJwksTest {
         ex.close();
     }
 
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender;
+
+    @org.junit.jupiter.api.BeforeEach
+    void captureLogs() {
+        appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(IssuerJwks.class)).addAppender(appender);
+    }
+
     @AfterEach
     void stop() {
+        release.countDown();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(IssuerJwks.class)).detachAppender(appender);
         if (idp != null) {
             idp.stop(0);
         }
     }
 
     IssuerJwks source() {
-        return IssuerJwks.createForTest(issuer, Duration.ofMinutes(5), Duration.ofSeconds(30), null, true, clock::get);
+        return IssuerJwks.createForTest(issuer, Duration.ofMinutes(5), Duration.ofSeconds(30), null, true, clock::get,
+                new de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder() {
+                    @Override
+                    public void oauthKeysStale() {
+                        stale.incrementAndGet();
+                    }
+                });
+    }
+
+    /** A token signed with the test RSA key but naming another {@code kid}. */
+    String tokenWithKid(String kid) throws Exception {
+        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(kid).build(),
+                TestTokens.claims(b -> b.issuer(issuer)).build());
+        jwt.sign(new RSASSASigner(keys.rsa));
+        return jwt.serialize();
+    }
+
+    void awaitJwksHits(int n) throws Exception {
+        for (int i = 0; i < 100 && jwksHits.get() < n; i++) {
+            Thread.sleep(50);
+        }
+        assertThat(jwksHits.get()).isEqualTo(n);
+        Thread.sleep(100); // let the refresh publish its result
+    }
+
+    void assertUnavailable(JwtValidator v, String token, int retryAfter) {
+        assertThatThrownBy(() -> v.validate(token)).isInstanceOfSatisfying(InvalidTokenException.class, e -> {
+            assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE);
+            assertThat(e.retryAfterSeconds()).isEqualTo(retryAfter);
+        });
+    }
+
+    void assertRejected(JwtValidator v, String token) {
+        assertThatThrownBy(() -> v.validate(token)).isInstanceOfSatisfying(InvalidTokenException.class,
+                e -> assertThat(e.category()).isEqualTo(InvalidTokenException.REJECTED));
+    }
+
+    long count(ch.qos.logback.classic.Level level) {
+        return appender.list.stream().filter(e -> e.getLevel() == level).count();
     }
 
     JwtValidator validator(IssuerJwks source) {
@@ -165,9 +280,9 @@ class IssuerJwksTest {
     @Test
     void unknownKidRefreshesTheCacheOnRotation() throws Exception {
         startIdp();
-        JwtValidator v = validator(IssuerJwks.createForTest(issuer, Duration.ofMinutes(5), Duration.ofMillis(1), null,
-                true, clock::get));
+        JwtValidator v = validator(source());
         v.validate(token(b -> { }));
+        clock.addAndGet(31_000);
         RSAKey fresh = new RSAKeyGenerator(2048).keyID("rsa-2").generate();
         jwks.set(new JWKSet(List.of(fresh.toPublicJWK())).toString());
         SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID("rsa-2").build(),
@@ -286,14 +401,15 @@ class IssuerJwksTest {
                     v.validate(t);
                     ok.incrementAndGet();
                 } catch (InvalidTokenException e) {
-                    // counted below
+                    // a request that arrived after the refresh had started may not join it (SPEC: 503)
+                    assertThat(e.category()).isEqualTo(InvalidTokenException.KEYS_UNAVAILABLE);
                 }
             }));
         }
         for (Thread th : threads) {
             th.join();
         }
-        assertThat(ok.get()).isEqualTo(8);
+        assertThat(ok.get()).isGreaterThanOrEqualTo(1);
         assertThat(discoveryHits.get()).isEqualTo(1);
         assertThat(jwksHits.get()).isEqualTo(1);
     }
@@ -303,5 +419,269 @@ class IssuerJwksTest {
         startIdp();
         idp.stop(0);
         assertKeysUnavailable(validator(source()));
+    }
+
+    // ---- D16 key state machine ----
+
+    @Test
+    void aKnownKidNeverWaitsForADueRefresh() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(5 * 60_000 + 1);
+        jwksDelayMs = 1500;
+        long t0 = System.nanoTime();
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofMillis(1000));
+        awaitJwksHits(2);
+    }
+
+    @Test
+    void noRefreshIsDueBeforeFiveMinutes() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(5 * 60_000 - 1000);
+        v.validate(token(b -> { }));
+        Thread.sleep(200);
+        assertThat(jwksHits.get()).isEqualTo(1);
+    }
+
+    @Test
+    void afterAFailedRefreshTheLastGoodSetStaysUsableFor60MinutesThenKeysAreUnavailable() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        jwksDown = true;
+        clock.addAndGet(5 * 60_000 + 1);
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1"); // triggers the failing refresh
+        awaitJwksHits(2);
+        assertThat(count(ch.qos.logback.classic.Level.WARN)).isEqualTo(1);
+        clock.addAndGet(54 * 60_000); // 59 min after the fetch
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+        awaitJwksHits(3); // the refresh this request started has failed again
+        assertThat(stale.get()).isEqualTo(1);
+        clock.addAndGet(2 * 60_000); // 61 min
+        assertUnavailable(v, token(b -> { }), 30);
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1);
+        assertUnavailable(v, token(b -> { }), 30);
+        assertThat(count(ch.qos.logback.classic.Level.ERROR)).isEqualTo(1); // once
+    }
+
+    @Test
+    void recoveryAfterAnOutageIsLoggedAtInfoAndTheSetIsReplaced() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        jwksDown = true;
+        clock.addAndGet(5 * 60_000 + 1);
+        v.validate(token(b -> { }));
+        awaitJwksHits(2);
+        jwksDown = false;
+        clock.addAndGet(31_000);
+        v.validate(token(b -> { }));
+        awaitJwksHits(3);
+        long infos = appender.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO
+                && e.getFormattedMessage().contains("recovered")).count();
+        assertThat(infos).isEqualTo(1);
+        int staleBefore = stale.get();
+        v.validate(token(b -> { }));
+        assertThat(stale.get()).isEqualTo(staleBefore); // no longer stale
+    }
+
+    @Test
+    void refreshAttemptsStartAtMostEvery30SecondsAlsoInTheStaleWindow() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        jwksDown = true;
+        clock.addAndGet(5 * 60_000 + 1);
+        for (int i = 0; i < 5; i++) {
+            v.validate(token(b -> { }));
+            Thread.sleep(100);
+        }
+        assertThat(jwksHits.get()).isEqualTo(2);
+        clock.addAndGet(30_000);
+        v.validate(token(b -> { }));
+        awaitJwksHits(3);
+    }
+
+    @Test
+    void anUnknownKidAfterASuccessfulLaterRefreshIs401() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(31_000);
+        assertRejected(v, tokenWithKid("nope"));
+        assertThat(jwksHits.get()).isEqualTo(2);
+    }
+
+    @Test
+    void anUnknownKidWhenNoRefreshMayStartYetIs503WithTheRestOfTheInterval() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(10_000);
+        assertUnavailable(v, tokenWithKid("nope"), 20);
+        clock.addAndGet(19_500);
+        assertUnavailable(v, tokenWithKid("nope"), 1); // 0.5 s left: whole seconds, at least 1
+        assertThat(jwksHits.get()).isEqualTo(1);
+    }
+
+    @Test
+    void anUnknownKidWhoseRefreshFailedIs503EvenWithAStaleSet() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        jwksDown = true;
+        clock.addAndGet(31_000);
+        assertUnavailable(v, tokenWithKid("rotated-in-during-the-outage"), 30);
+        assertThat(jwksHits.get()).isEqualTo(2);
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1"); // the known kid still works
+    }
+
+    @Test
+    void aKnownKidWhoseKeyDoesNotFitTheTokenIs401WithoutARefresh() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(31_000);
+        assertRejected(v, tokenWithKid("ec-1")); // an EC key carries that kid; the token says RS256
+        assertThat(jwksHits.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aTokenWithoutKidUsesTheFittingKeysAndAnUnfittingSetCountsAsUnknownKid() throws Exception {
+        startIdp();
+        jwks.set(new JWKSet(List.of(keys.ec.toPublicJWK())).toString());
+        JwtValidator v = validator(source());
+        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).build(),
+                TestTokens.claims(b -> b.issuer(issuer)).build());
+        jwt.sign(new RSASSASigner(keys.rsa));
+        assertRejected(v, jwt.serialize()); // first use: refresh succeeded, no RS256 key: 401
+        assertUnavailable(v, jwt.serialize(), 30); // now the interval holds the next refresh back
+    }
+
+    @Test
+    void concurrentUnknownKidRequestsShareOneRefresh() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(31_000);
+        jwksDelayMs = 400;
+        String t = tokenWithKid("nope");
+        List<Thread> threads = new ArrayList<>();
+        AtomicInteger rejected = new AtomicInteger();
+        for (int i = 0; i < 6; i++) {
+            threads.add(Thread.ofVirtual().start(() -> {
+                try {
+                    v.validate(t);
+                } catch (InvalidTokenException e) {
+                    if (InvalidTokenException.REJECTED.equals(e.category())) {
+                        rejected.incrementAndGet();
+                    }
+                }
+            }));
+        }
+        for (Thread th : threads) {
+            th.join();
+        }
+        assertThat(jwksHits.get()).isEqualTo(2);
+        assertThat(rejected.get()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void aRefreshThatStartedBeforeTheRequestArrivedIsNotJoined() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(5 * 60_000 + 1);
+        jwksDelayMs = 1500;
+        v.validate(token(b -> { })); // starts the due refresh in the background
+        long t0 = System.nanoTime();
+        assertUnavailable(v, tokenWithKid("nope"), 30); // arrived after it started: not joined, none may start
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofMillis(1000));
+    }
+
+    @Test
+    void noKeyMaterialOrTokenIsLogged() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        String token = token(b -> { });
+        v.validate(token);
+        jwksDown = true;
+        clock.addAndGet(61 * 60_000);
+        v.validate(token); // due refresh fails in the background
+        Thread.sleep(300);
+        for (var e : appender.list) {
+            assertThat(e.getFormattedMessage()).doesNotContain(token).doesNotContain(keys.rsa.getKeyID())
+                    .doesNotContain("\"n\"");
+        }
+    }
+
+    @Test
+    void aJwksResponseThatStallsAfterTheHeadersFailsTheFetchWithinTheDeadline() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(31_000);
+        jwksStall = true;
+        long t0 = System.nanoTime();
+        assertUnavailable(v, tokenWithKid("nope"), 30);
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofSeconds(8));
+        assertThat(count(ch.qos.logback.classic.Level.WARN)).isEqualTo(1); // the outage began: failed is set
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1"); // known kid: stale set, no wait
+        // nothing is stuck in flight: the next refresh starts after 30 s and succeeds
+        jwksStall = false;
+        clock.addAndGet(30_000);
+        assertRejected(v, tokenWithKid("nope"));
+        assertThat(jwksHits.get()).isEqualTo(3);
+    }
+
+    @Test
+    void aDiscoveryResponseThatStallsAfterTheHeadersFailsWithinTheDeadlineAndIsRetriedAfter10Seconds() throws Exception {
+        startIdp();
+        discoveryStall = true;
+        JwtValidator v = validator(source());
+        long t0 = System.nanoTime();
+        assertKeysUnavailable(v);
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofSeconds(8));
+        discoveryStall = false;
+        clock.addAndGet(10_000);
+        assertThat(v.validate(token(b -> { })).subject()).isEqualTo("user-1");
+    }
+
+    @Test
+    void aJwksStatusOtherThan200IsAFailedFetchEvenWithAValidBody() throws Exception {
+        startIdp();
+        jwksStatus = 203;
+        assertKeysUnavailable(validator(source()));
+    }
+
+    @Test
+    void aJwksBodyAbove256KiBIsAFailedFetch() throws Exception {
+        startIdp();
+        hugeJwks = true;
+        assertKeysUnavailable(validator(source()));
+    }
+
+    @Test
+    void theWarnWithoutAKeySetDoesNotPromiseAStaleWindow() throws Exception {
+        startIdp();
+        down = true;
+        assertKeysUnavailable(validator(source()));
+        assertThat(appender.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN).singleElement()
+                .satisfies(e -> assertThat(e.getFormattedMessage()).doesNotContain("stays usable"));
+    }
+
+    @Test
+    void theRetryAfterIsClampedToTheIntervalEvenIfTheClockMovesBack() throws Exception {
+        startIdp();
+        JwtValidator v = validator(source());
+        v.validate(token(b -> { }));
+        clock.addAndGet(-5_000);
+        assertUnavailable(v, tokenWithKid("nope"), 30);
+        clock.set(Long.MIN_VALUE / 2);
+        assertUnavailable(v, tokenWithKid("nope"), 30);
     }
 }

@@ -46,6 +46,9 @@ public interface MetricsRecorder {
     /** A request was answered {@code 503} because the issuer's signing keys are unavailable (D16); replica-wide. */
     default void oauthKeysUnavailable() { }
 
+    /** A key decision was made with the stale key set of an outage (D16, counts key decisions, not validated tokens); replica-wide. */
+    default void oauthKeysStale() { }
+
     /** An {@code initialize} was refused by the per-principal rate limit (SPEC 4, D12). */
     default void initializeRateLimited(TenantId tenant) { }
 }

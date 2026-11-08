@@ -43,7 +43,7 @@ public final class HttpPublicMain {
             // the issuer's keys are discovered lazily on the first token (an unreachable identity provider does not
             // stop the service from starting); the issuer must be https (IssuerJwks.create)
             HttpLocalServer server = HttpPublicServer.build(config, components,
-                    IssuerJwks.create(config.oauth().issuer()));
+                    IssuerJwks.create(config.oauth().issuer(), components.metrics()));
             server.start();
             org.slf4j.LoggerFactory.getLogger("imapmcp.app")
                     .info("imap-mcp http-public listening on {}:{}", server.host(), server.port());

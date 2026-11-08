@@ -111,6 +111,15 @@ class InMemoryMetricsRecorderTest {
     }
 
     @Test
+    void oauthKeysStaleIsCountedReplicaWide() {
+        rec.oauthKeysStale();
+        var byOp = new java.util.HashMap<String, OperationMetrics>();
+        rec.snapshot().operations().forEach(o -> byOp.put(o.tool() + "/" + o.op(), o));
+        assertThat(byOp.get("oauth/keys_stale").count()).isEqualTo(1);
+        MetricsRecorder.NOOP.oauthKeysStale(); // default method: discards
+    }
+
+    @Test
     void keyServiceOutagesAreCountedSeparatelyFromDecryptFailures() {
         rec.keyServiceUnavailable(T1);
         rec.decryptFailure(T1);
