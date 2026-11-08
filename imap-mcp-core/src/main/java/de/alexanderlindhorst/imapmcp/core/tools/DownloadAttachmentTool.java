@@ -12,6 +12,7 @@ import de.alexanderlindhorst.imapmcp.core.download.MemorySink;
 import de.alexanderlindhorst.imapmcp.core.download.PartFetcher;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
 import de.alexanderlindhorst.imapmcp.core.error.ImapErrorMapper;
+import de.alexanderlindhorst.imapmcp.core.error.ServerBusyException;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError;
 import de.alexanderlindhorst.imapmcp.core.error.ToolError.StorageReason;
 import de.alexanderlindhorst.imapmcp.core.imap.pool.StoreLeases;
@@ -183,13 +184,14 @@ public final class DownloadAttachmentTool implements ToolHandler {
             return fail(((MessageLocator.Checked.Invalid) checked).error(), start);
         }
         if (inline != null) {
-            if (!limiter.tryAcquire()) { // before any I/O: embedded downloads hold their bytes in memory
+            InlineLimiter.Permit permit;
+            try { // tenant permit, then replica permit; before any I/O: embedded downloads hold their bytes in memory
+                permit = limiter.tryAcquire(ok.key());
+            } catch (ServerBusyException e) {
                 return fail(ToolError.serverBusy(rid), start);
             }
-            try {
+            try (permit) {
                 return withLease(ctx, ok, ref, accountHandle, messageHandle, part, start, new AtomicReference<>());
-            } finally {
-                limiter.release();
             }
         }
         if (!directory.stillAvailable()) {

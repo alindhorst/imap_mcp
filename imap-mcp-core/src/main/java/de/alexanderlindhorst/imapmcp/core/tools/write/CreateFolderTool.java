@@ -180,6 +180,7 @@ public final class CreateFolderTool implements ToolHandler {
         String rid = ctx.requestId();
         Parsed p = parse(args, rid);
         if (p.error() != null) {
+            ctx.rejectArguments(); // step 1: metric only, no audit row (D10)
             return fail(p.error(), start);
         }
         AccountArgument.Result r = accounts.resolve(ctx, p.account());

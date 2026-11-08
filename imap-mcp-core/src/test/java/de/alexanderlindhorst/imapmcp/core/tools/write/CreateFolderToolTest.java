@@ -301,4 +301,16 @@ class CreateFolderToolTest {
         var beta = greenMail.getUserManager().getUserByEmail("beta@localhost");
         assertThat(greenMail.getManagers().getImapHostManager().getFolder(beta, "Leak")).isNull();
     }
+
+    @Test
+    void aStepOneNameRejectionIsMarkedAndAServerSideRefusalIsNot() {
+        RecordingAuditLog audit = new RecordingAuditLog();
+        ToolCallContext bad = new ToolCallContext(new AccountContext(A), "rid-bad");
+        bad.attachAudit(audit, "create_folder");
+        ToolOutcome o = new CreateFolderTool(new AccountArgument(repo), leases, CreateFolderTool.angusDirectory(), commands)
+                .handle(bad, Map.of("account", handleA(), "name", " padded "));
+        assertThat(o).isInstanceOf(ToolOutcome.Failure.class);
+        assertThat(bad.argumentsRejected()).isTrue();
+        assertThat(audit.order).isEmpty();
+    }
 }

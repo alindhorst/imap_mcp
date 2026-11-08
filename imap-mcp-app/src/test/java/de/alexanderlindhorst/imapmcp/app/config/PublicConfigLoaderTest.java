@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** SPEC 5.7 (v0.20): the http-public configuration and its startup failures, each naming the key path. */
 class PublicConfigLoaderTest {
@@ -89,6 +90,12 @@ class PublicConfigLoaderTest {
         assertThat(c.tools().deadline()).isEqualTo(Duration.ofSeconds(90));
         assertThat(c.http().stateful()).isFalse();
         assertThat(c.purgeEnabled()).isFalse();
+    }
+
+    @Test
+    void theResourcePathMayCarryAPrefixBeforeMcp() {
+        assertThat(bind(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/x/mcp"))
+                .oauth().resource()).isEqualTo("https://mail.example.com/x/mcp");
     }
 
     @Test
@@ -246,6 +253,24 @@ class PublicConfigLoaderTest {
     }
 
     @Test
+    void initializeRatePerMinuteDefaultsToTenAndIsBoundWhenSet() {
+        PublicConfig c = bind(VALID);
+        assertThat(c.http().initializeRatePerMinute()).isEqualTo(10);
+        assertThat(c.http().initializeRateSet()).isFalse();
+        PublicConfig set = bind(VALID + "http:\n  stateful: true\n  initializeRatePerMinute: 600\n");
+        assertThat(set.http().initializeRatePerMinute()).isEqualTo(600);
+        assertThat(set.http().initializeRateSet()).isTrue();
+        assertThat(bind(VALID + "http:\n  initializeRatePerMinute: 1\n").http().initializeRatePerMinute()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "601", "-1", "ten", "2.5"})
+    void initializeRatePerMinuteOutsideOneTo600FailsStartupNamingTheKey(String value) {
+        assertThatThrownBy(() -> bind(VALID + "http:\n  stateful: true\n  initializeRatePerMinute: " + value + "\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("http.initializeRatePerMinute");
+    }
+
+    @Test
     void imapTraceTrueFailsStartupWithTheSpecMessageAndFalseIsAccepted() {
         assertThatThrownBy(() -> bind(VALID + "imap:\n  trace: true\n")).isInstanceOf(ConfigException.class)
                 .hasMessage("config.imap.trace: not available in http-public "
@@ -279,6 +304,30 @@ class PublicConfigLoaderTest {
                         "oauth.issuer: must be an https URI"),
                 Arguments.of(VALID.replace("https://mail.example.com/mcp", "http://mail.example.com/mcp"),
                         "oauth.resource: must be an https URI"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/mcp/"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/x"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com//mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/../mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/%2e%2e/mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/x%20y/mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/\u00e4/mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/\u202e/mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com/*/mcp"),
+                        "oauth.resource: path must end with /mcp"),
+                Arguments.of(VALID.replace("https://mail.example.com/mcp", "https://mail.example.com:/mcp"),
+                        "oauth.resource: path must end with /mcp"),
                 Arguments.of(VALID.replace("  requiredRole: imap-mcp-user\n", ""),
                         "oauth.requiredRole: required unless oauth.allowWithoutRole is true"),
                 Arguments.of(without("public"), "public.baseUrl: required"),

@@ -171,10 +171,14 @@ class JdbcLinkedAccountStoreIT {
 
     @Test
     void auditRowsHoldNoHostUserNameOrAddress() throws Exception {
+        // The canaries have an upper-case letter and dashes, which generated ids (lower-case base32) and UUIDs
+        // never contain, so a row's random account id or tenant id cannot contain one by chance.
+        String pw1 = "canary-pw-7Q2x";
+        String pw2 = "canary-pw2-7Q2x";
         TenantId t = AccountSql.newTenant(db.dataSource());
-        ResolvedAccount r = store.create(t, request("Work"), "pw".toCharArray(), 10, "req-1");
+        ResolvedAccount r = store.create(t, request("Work"), pw1.toCharArray(), 10, "req-1");
         store.updateSettings(t, r.account().id(), "Renamed-label", true, false, "req-2");
-        store.relink(t, r.account().id(), "pw2".toCharArray(), "req-3");
+        store.relink(t, r.account().id(), pw2.toCharArray(), "req-3");
         store.unlink(t, r.account().id(), "req-4");
 
         try (Connection c = db.dataSource().getConnection(); var st = c.createStatement();
@@ -184,7 +188,7 @@ class JdbcLinkedAccountStoreIT {
             while (rs.next()) {
                 rows++;
                 assertThat(rs.getString(1)).doesNotContain("secret-host").doesNotContain("secret-user")
-                        .doesNotContain("example.org").doesNotContain("Renamed-label").doesNotContain("pw");
+                        .doesNotContain("example.org").doesNotContain("Renamed-label").doesNotContain(pw1).doesNotContain(pw2);
             }
             assertThat(rows).isEqualTo(4);
         }

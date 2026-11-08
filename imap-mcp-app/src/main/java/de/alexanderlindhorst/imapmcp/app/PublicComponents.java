@@ -24,7 +24,6 @@ import de.alexanderlindhorst.imapmcp.core.linking.AccountLinking;
 import de.alexanderlindhorst.imapmcp.core.linking.ProbeRateLimiter;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
-import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.mime.BodyWindowReader;
 import de.alexanderlindhorst.imapmcp.core.net.PinnedSocketFactory;
 import de.alexanderlindhorst.imapmcp.core.net.SsrfPolicy;
@@ -193,6 +192,10 @@ public final class PublicComponents implements AutoCloseable {
         if (config.oauth().allowWithoutRole()) {
             LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
                     + "login of the linking surface. Development only.");
+        }
+        if (config.http().initializeRateSet() && !config.http().stateful()) {
+            LOG.warn("http.initializeRatePerMinute is set, but http.stateful is false: the initialize rate limit "
+                    + "applies to the stateful transport only and has no effect");
         }
         RefCredentialStore refs = RefCredentialStore.withEnvAndKeyring(CONFIG_OWNER, List.of(), env, platform, runner,
                 probe, config.secrets().keyringTimeout());
@@ -467,10 +470,6 @@ public final class PublicComponents implements AutoCloseable {
         return linking.webClientSecret();
     }
 
-    public MetricsRecorder metrics() {
-        return metrics;
-    }
-
     public Clock clock() {
         return clock;
     }
@@ -521,6 +520,11 @@ public final class PublicComponents implements AutoCloseable {
 
     List<ToolDefinition> definitions() {
         return List.copyOf(tools.keySet());
+    }
+
+    /** The metrics recorder shared with the HTTP layer (for the D12 rate-limit counter). */
+    public InMemoryMetricsRecorder metrics() {
+        return metrics;
     }
 
     public Database database() {

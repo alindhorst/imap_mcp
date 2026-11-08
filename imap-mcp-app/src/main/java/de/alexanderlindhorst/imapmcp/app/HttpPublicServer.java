@@ -22,6 +22,7 @@ import de.alexanderlindhorst.imapmcp.transport.http.web.WebSurface;
 import de.alexanderlindhorst.imapmcp.core.tenancy.Scopes;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -65,6 +66,18 @@ public final class HttpPublicServer {
         return assemble(config, components, keys, allowInsecureHttpIssuer);
     }
 
+    /**
+     * The RFC 9728 metadata document at its path-inserted URL ({@code oauth.resource} always has a path ending in
+     * {@code /mcp}, so that is never the root) and at the root, the fallback clients probe second (SPEC 5.3).
+     */
+    static HttpLocalServer.Builder metadataServlets(HttpLocalServer.Builder builder, OAuthResourceConfig oauth) {
+        ProtectedResourceMetadataServlet metadata = new ProtectedResourceMetadataServlet(oauth);
+        // the root is a deliberate fallback (SPEC 5.3): strictly it belongs to the resource https://<authority>,
+        // so `resource` still equals oauth.resource
+        return builder.openServlet(OAuthResourceConfig.METADATA_ROOT, metadata)
+                .openServlet(oauth.metadataPath(), metadata);
+    }
+
     private static HttpLocalServer assemble(PublicConfig config, PublicComponents components,
             JWKSource<SecurityContext> keys, boolean allowInsecureHttpIssuer) {
         Objects.requireNonNull(keys, "keys");
@@ -74,7 +87,6 @@ public final class HttpPublicServer {
         PublicConfig.Http h = config.http();
         PrincipalTenants tenants = (issuer, subject) -> components.tenantDirectory().find(issuer, subject)
                 .map(t -> new PrincipalTenants.Tenant(t.tenantId(), t.disabled()));
-        ProtectedResourceMetadataServlet metadata = new ProtectedResourceMetadataServlet(oauth);
         // one reporter for /mcp and the linking callback: one counter, one WARN per minute (D16)
         KeysUnavailableReporter keysUnavailable = new KeysUnavailableReporter(components.metrics(),
                 () -> System.nanoTime() / 1_000_000); // monotonic: a wall-clock step must not reopen the WARN
@@ -88,19 +100,16 @@ public final class HttpPublicServer {
                 .principalFilter(new PrincipalContextFilter(tenants, oauth))
                 .contextExtractor(BearerTokenFilter.contextExtractor())
                 .healthServlet(new HealthServlet())
-                .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer, keysUnavailable))
-                // deliberate fallback (SPEC 5.3): the root URL that clients probe second; strictly it belongs to
-                // the resource https://<authority>, so `resource` still equals oauth.resource
-                .openServlet(OAuthResourceConfig.METADATA_ROOT, metadata);
-        if (!oauth.metadataPath().equals(OAuthResourceConfig.METADATA_ROOT)) {
-            builder.openServlet(oauth.metadataPath(), metadata);
-        }
+                .webSurface(webSurface(config, components, keys, allowInsecureHttpIssuer, keysUnavailable));
+        metadataServlets(builder, oauth);
         if (h.stateful()) {
             // Stateful Streamable HTTP (SPEC 4 v3b, D8): sessions are bound to (issuer, subject) of the validated token,
             // never to the tenant (unknown principals share one sentinel tenant); the SDK's server-to-client request
             // timeout is above the longest tool deadline (SPEC 5.5).
             builder.stateful(true).sessionPrincipal(HttpPublicServer::sessionPrincipal)
-                    .sessionEndListener(components.sessionEndListener()).requestTimeout(STATEFUL_REQUEST_TIMEOUT);
+                    .sessionEndListener(components.sessionEndListener()).requestTimeout(STATEFUL_REQUEST_TIMEOUT)
+                    .initializeRateLimit(h.initializeRatePerMinute(), Clock.systemUTC())
+                    .metrics(components.metrics());
             components.statefulToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::statefulTool);
         } else {
             components.statelessToolSpecs(BearerTokenFilter.accountResolver()).forEach(builder::tool);

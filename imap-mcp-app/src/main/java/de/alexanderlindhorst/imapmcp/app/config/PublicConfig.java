@@ -17,7 +17,7 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
     public PublicConfig withPort(int port) {
         return new PublicConfig(imap, pool, secrets, tools,
                 new Http(http.bind(), port, http.allowNonLoopbackBind(), http.allowedHosts(), http.allowedOrigins(),
-                        http.maxRequestBytes(), http.stateful()),
+                        http.maxRequestBytes(), http.stateful(), http.initializeRatePerMinute(), http.initializeRateSet()),
                 db, oauth, pub, ssrf, kms, purgeEnabled, security, logLevel);
     }
 
@@ -26,9 +26,14 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
             int sinceMaxCandidates, long inlineMaxBytes, int inlineConcurrency) {
     }
 
-    /** {@code http.*}: no token (the static token does not exist here); {@code stateful} is the D8 transport switch. */
+    /**
+     * {@code http.*}: no token (the static token does not exist here); {@code stateful} is the D8 transport switch;
+     * {@code initializeRatePerMinute} (D12, 1 to 600, default 10) matters only when stateful, and
+     * {@code initializeRateSet} tells whether it was configured (for the startup WARN).
+     */
     public record Http(String bind, int port, boolean allowNonLoopbackBind, List<String> allowedHosts,
-            List<String> allowedOrigins, long maxRequestBytes, boolean stateful) {
+            List<String> allowedOrigins, long maxRequestBytes, boolean stateful, int initializeRatePerMinute,
+            boolean initializeRateSet) {
     }
 
     public record Db(String url, String username, SecretRef password, int maxPoolSize) {
