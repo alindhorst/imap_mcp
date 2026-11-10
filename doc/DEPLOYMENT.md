@@ -4,6 +4,8 @@ The operator's view of the `http-public` test deployment: what to provide, how t
 
 This is a test environment, not a production deployment.
 
+Tenant model in one sentence: every user who logs in at `/accounts` becomes a tenant with their own mail accounts, which they link themselves; mailboxes are never defined in the app's config and never shared between tenants (details in [TUTORIAL.md](TUTORIAL.md#6-public-multi-tenant-mode-http-public)).
+
 ## 1. What you must provide
 
 - A Linux host with Docker Compose v2 or Podman (rootless works), a public IPv4 address, NTP-synchronized time and about 3 GB of RAM.
