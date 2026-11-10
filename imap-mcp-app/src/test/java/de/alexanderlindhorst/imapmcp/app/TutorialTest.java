@@ -59,6 +59,61 @@ class TutorialTest {
         return blocks;
     }
 
+    // ---- doc helpers; they take the text as a parameter so they can be tested on synthetic input ----
+
+    private static final Pattern SECRET_LIKE = Pattern.compile("\\b(?![A-Z_]+\\b)[A-Za-z0-9_-]{32,}");
+
+    /** The numbers of all numbered level-2 headings, in document order. */
+    static List<Integer> headingNumbers(String doc) {
+        return List.of();
+    }
+
+    /** Fails unless the numbered level-2 headings are numbered 1..n in order. */
+    static void assertSequentialNumbering(String doc) {
+    }
+
+    /** Removes only the {@code #fragment} of markdown link targets; path and URL parts stay. */
+    static String stripLinkFragments(String doc) {
+        return doc;
+    }
+
+    /** The first secret-like token outside link fragments, if any. */
+    static java.util.Optional<String> findSecretLikeToken(String doc) {
+        Matcher m = SECRET_LIKE.matcher(stripLinkFragments(doc));
+        return m.find() ? java.util.Optional.of(m.group()) : java.util.Optional.empty();
+    }
+
+    @Test
+    void numberingCheckRejectsAGap() {
+        assertThatThrownBy(() -> assertSequentialNumbering("## 1. A\n## 2. B\n## 4. C\n"))
+                .isInstanceOf(AssertionError.class);
+    }
+
+    @Test
+    void numberingCheckRejectsADuplicate() {
+        assertThatThrownBy(() -> assertSequentialNumbering("## 1. A\n## 2. B\n## 2. C\n"))
+                .isInstanceOf(AssertionError.class);
+    }
+
+    @Test
+    void numberingCheckIgnoresUnnumberedHeadings() {
+        assertSequentialNumbering("## Intro\n## 1. A\n### sub\n## 2. B\n");
+    }
+
+    @Test
+    void linkFragmentIsNotTreatedAsASecret() {
+        String slug = "a".repeat(10) + "-" + "b".repeat(29);
+        assertThat(findSecretLikeToken("see [x](../README.md#" + slug + ") here")).isEmpty();
+    }
+
+    @Test
+    void bareTokenInUrlPathOrPlainTextStillCounts() {
+        String token = "a".repeat(40);
+        assertThat(findSecretLikeToken("see [x](https://h/" + token + "#frag) here")).contains(token);
+        assertThat(findSecretLikeToken("the token is " + token + " ok")).contains(token);
+        assertThat(findSecretLikeToken("see [x](" + token + ")")).contains(token);
+    }
+
     @Test
     void readmeLinksToTheTutorial() {
         assertThat(readme).contains("](doc/TUTORIAL.md)");
