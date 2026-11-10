@@ -61,8 +61,6 @@ class TutorialTest {
 
     // ---- doc helpers; they take the text as a parameter so they can be tested on synthetic input ----
 
-    private static final Pattern SECRET_LIKE = Pattern.compile("\\b(?![A-Z_]+\\b)[A-Za-z0-9_-]{32,}");
-
     /** The numbers of all numbered level-2 headings, in document order. */
     static List<Integer> headingNumbers(String doc) {
         List<Integer> numbers = new ArrayList<>();
@@ -97,17 +95,6 @@ class TutorialTest {
         return next.find(start + 3) ? doc.substring(start, next.start()) : doc.substring(start);
     }
 
-    /** Removes only the {@code #fragment} of markdown link targets; path and URL parts stay. */
-    static String stripLinkFragments(String doc) {
-        return doc.replaceAll("(\\]\\([^)\\s#]*)#[^)\\s]*\\)", "$1)");
-    }
-
-    /** The first secret-like token outside link fragments, if any. */
-    static java.util.Optional<String> findSecretLikeToken(String doc) {
-        Matcher m = SECRET_LIKE.matcher(stripLinkFragments(doc));
-        return m.find() ? java.util.Optional.of(m.group()) : java.util.Optional.empty();
-    }
-
     @Test
     void numberingCheckRejectsAGap() {
         assertThatThrownBy(() -> assertSequentialNumbering("## 1. A\n## 2. B\n## 4. C\n"))
@@ -128,15 +115,15 @@ class TutorialTest {
     @Test
     void linkFragmentIsNotTreatedAsASecret() {
         String slug = "a".repeat(10) + "-" + "b".repeat(29);
-        assertThat(findSecretLikeToken("see [x](../README.md#" + slug + ") here")).isEmpty();
+        assertThat(DocChecks.findSecretLikeToken("see [x](../README.md#" + slug + ") here")).isEmpty();
     }
 
     @Test
     void bareTokenInUrlPathOrPlainTextStillCounts() {
         String token = "a".repeat(40);
-        assertThat(findSecretLikeToken("see [x](https://h/" + token + "#frag) here")).contains(token);
-        assertThat(findSecretLikeToken("the token is " + token + " ok")).contains(token);
-        assertThat(findSecretLikeToken("see [x](" + token + ")")).contains(token);
+        assertThat(DocChecks.findSecretLikeToken("see [x](https://h/" + token + "#frag) here")).contains(token);
+        assertThat(DocChecks.findSecretLikeToken("the token is " + token + " ok")).contains(token);
+        assertThat(DocChecks.findSecretLikeToken("see [x](" + token + ")")).contains(token);
     }
 
     @Test
@@ -299,7 +286,7 @@ class TutorialTest {
         while (m.find()) {
             assertThat(m.group(1)).isEqualTo("example.com");
         }
-        assertThat(findSecretLikeToken(tutorial)).as("secret-like token outside link fragments").isEmpty();
+        assertThat(DocChecks.findSecretLikeToken(tutorial)).as("secret-like token outside link fragments").isEmpty();
         Matcher pw = Pattern.compile("(?m)^\\s*(password|token):\\s*(\\S+)").matcher(tutorial);
         while (pw.find()) {
             assertThat(pw.group(2)).matches("(env:|file:|keyring:).+");
