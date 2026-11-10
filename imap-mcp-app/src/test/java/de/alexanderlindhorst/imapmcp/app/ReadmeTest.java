@@ -159,7 +159,7 @@ class ReadmeTest {
         while (m.find()) {
             assertThat(m.group(1)).as("address domain in README").isEqualTo("example.com");
         }
-        assertThat(readme).doesNotContainPattern("\\b(?![A-Z_]+\\b)[A-Za-z0-9_-]{32,}");
+        assertThat(DocChecks.findSecretLikeToken(readme)).as("secret-like token outside link fragments").isEmpty();
         Matcher pw = Pattern.compile("(?m)^\\s*(password|token|handleKey):\\s*(\\S+)").matcher(readme);
         while (pw.find()) {
             assertThat(pw.group(2)).as("secret value of " + pw.group(1))
