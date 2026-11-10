@@ -65,16 +65,41 @@ class TutorialTest {
 
     /** The numbers of all numbered level-2 headings, in document order. */
     static List<Integer> headingNumbers(String doc) {
-        return List.of();
+        List<Integer> numbers = new ArrayList<>();
+        Matcher m = Pattern.compile("(?m)^## (\\d+)\\. ").matcher(doc);
+        while (m.find()) {
+            numbers.add(Integer.parseInt(m.group(1)));
+        }
+        return numbers;
     }
 
     /** Fails unless the numbered level-2 headings are numbered 1..n in order. */
     static void assertSequentialNumbering(String doc) {
+        List<Integer> numbers = headingNumbers(doc);
+        List<Integer> expected = java.util.stream.IntStream.rangeClosed(1, numbers.size()).boxed().toList();
+        assertThat(numbers).as("numbered level-2 headings in document order").isEqualTo(expected);
+    }
+
+    /** Start of the numbered level-2 heading whose title starts with {@code title}; the number is not part of the match. */
+    static int headingStart(String doc, String title) {
+        Matcher m = Pattern.compile("(?m)^## \\d+\\. " + Pattern.quote(title)).matcher(doc);
+        assertThat(m.find()).as("tutorial has a numbered level-2 heading titled '%s'", title).isTrue();
+        return m.start();
+    }
+
+    /**
+     * The section body from the title's heading up to the next level-2 heading (or the end). Relies on fenced blocks
+     * in the tutorial containing no line that starts with {@code #}; {@code ### x} stays inside its section.
+     */
+    static String sectionBody(String doc, String title) {
+        int start = headingStart(doc, title);
+        Matcher next = Pattern.compile("(?m)^## ").matcher(doc);
+        return next.find(start + 3) ? doc.substring(start, next.start()) : doc.substring(start);
     }
 
     /** Removes only the {@code #fragment} of markdown link targets; path and URL parts stay. */
     static String stripLinkFragments(String doc) {
-        return doc;
+        return doc.replaceAll("(\\]\\([^)\\s#]*)#[^)\\s]*\\)", "$1)");
     }
 
     /** The first secret-like token outside link fragments, if any. */
@@ -115,6 +140,17 @@ class TutorialTest {
     }
 
     @Test
+    void tutorialSectionsAreNumberedWithoutGaps() {
+        assertSequentialNumbering(tutorial);
+    }
+
+    @Test
+    void missingHeadingFailsWithItsTitle() {
+        assertThatThrownBy(() -> headingStart(tutorial, "No such section")).isInstanceOf(AssertionError.class)
+                .hasMessageContaining("No such section");
+    }
+
+    @Test
     void readmeLinksToTheTutorial() {
         assertThat(readme).contains("](doc/TUTORIAL.md)");
     }
@@ -142,9 +178,9 @@ class TutorialTest {
 
     @Test
     void writeToolsSectionIsDocumentedAndItsYamlLoads(@TempDir Path dir) throws IOException {
-        assertThat(tutorial).contains("## 7. Write tools and read-only accounts");
-        assertThat(tutorial.indexOf("## 7. Write tools")).isGreaterThan(tutorial.indexOf("## 6. After adding"))
-                .isLessThan(tutorial.indexOf("## 8. Permanent deletion"));
+        assertThat(headingStart(tutorial, "Write tools and read-only accounts"))
+                .isGreaterThan(headingStart(tutorial, "After adding"))
+                .isLessThan(headingStart(tutorial, "Permanent deletion"));
         assertThat(tutorial).contains("set_flags", "move_messages", "copy_messages", "delete_messages",
                 "create_folder", "tools/list", "list_accounts", "read_only", "PERMISSION_DENIED", "account_read_only",
                 "move back with the returned handles",
@@ -173,9 +209,9 @@ class TutorialTest {
     /** v3a (#289): the tutorial walks through purge, the session approval, the host timeout and the download setup. */
     @Test
     void v3aSectionExplainsPurgeAndDownloadAndItsYamlLoads(@TempDir Path dir) throws IOException {
-        assertThat(tutorial).contains("## 8. Permanent deletion and downloads");
-        assertThat(tutorial.indexOf("## 8. Permanent deletion")).isGreaterThan(tutorial.indexOf("## 7. Write tools"))
-                .isLessThan(tutorial.indexOf("## 9. Pitfalls at a glance"));
+        assertThat(headingStart(tutorial, "Permanent deletion and downloads"))
+                .isGreaterThan(headingStart(tutorial, "Write tools"))
+                .isLessThan(headingStart(tutorial, "Pitfalls at a glance"));
         assertThat(tutorial).contains("purge_messages", "allowPurge: true", "delete_messages", "Trash",
                 "elicitation", "Allow for this session", "15 minutes", "500 messages", "`already_gone`",
                 "late acceptance still deletes", "tools.deadline", "60s", "download_attachment",
@@ -191,7 +227,7 @@ class TutorialTest {
         Path g = dir.resolve("download.yaml");
         Files.writeString(g, download.getFirst());
         assertThat(ConfigLoader.load(g, Map.of()).tools().download().dir()).isNotNull();
-        String pitfalls = tutorial.substring(tutorial.indexOf("## 9. Pitfalls at a glance"));
+        String pitfalls = sectionBody(tutorial, "Pitfalls at a glance");
         assertThat(pitfalls).contains("`allowPurge`").contains("purge_messages").contains("`tools.download.dir`");
     }
 
@@ -203,7 +239,7 @@ class TutorialTest {
 
     @Test
     void pitfallsListTheWriteToolLines() {
-        String pitfalls = tutorial.substring(tutorial.indexOf("## 9. Pitfalls at a glance"));
+        String pitfalls = sectionBody(tutorial, "Pitfalls at a glance");
         assertThat(pitfalls).contains("active on every account without `readOnly: true`")
                 .contains("no per-tool selection").contains("`UNSUPPORTED`");
     }
@@ -263,7 +299,7 @@ class TutorialTest {
         while (m.find()) {
             assertThat(m.group(1)).isEqualTo("example.com");
         }
-        assertThat(tutorial).doesNotContainPattern("\\b(?![A-Z_]+\\b)[A-Za-z0-9_-]{32,}");
+        assertThat(findSecretLikeToken(tutorial)).as("secret-like token outside link fragments").isEmpty();
         Matcher pw = Pattern.compile("(?m)^\\s*(password|token):\\s*(\\S+)").matcher(tutorial);
         while (pw.find()) {
             assertThat(pw.group(2)).matches("(env:|file:|keyring:).+");
