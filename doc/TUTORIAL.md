@@ -2,6 +2,20 @@
 
 A walk-through from a fresh checkout to a working `imap-mcp` server in Claude Code. Reference material (all options, defaults, environment variables) is in the [README](../README.md); scope and architecture are in [SPEC.md](SPEC.md). Placeholders such as `<version>`, `<user>` and `imap.example.com` must be replaced.
 
+## Which mode do you need?
+
+The server runs in one of three modes. Pick first, then read only the matching section.
+
+| You want | Mode | Users | Whose mailboxes | Read |
+|---|---|---|---|---|
+| Claude Code or Desktop on your own machine, simplest | `stdio` | one (you) | the accounts in your config file | sections 1 to 4 |
+| A long-running local server (warm JVM, container) for yourself | `http-local` | one (you) | the accounts in your config file | sections 1 to 3, then 5 |
+| A hosted server for several people, for example as a Claude connector | `http-public` | many | each user links their own accounts; nobody sees another user's mail | section 6, then [DEPLOYMENT.md](DEPLOYMENT.md) |
+
+**Tenants and mailboxes.** In `stdio` and `http-local` there is exactly one tenant (internally `local`), and every account in the config file belongs to it. Only `http-public` has real multi-tenancy: each user (identified by the identity provider's token) is a tenant with a private list of IMAP accounts. Tenants do not share a mailbox and there is no shared account; if two people want the same mailbox, each links it separately. In `http-public` the config file contains no accounts at all.
+
+Sections 2 and 3 (config file, keyring) apply to `stdio` and `http-local` only.
+
 ## 1. Build
 
 Requirements: JDK 25 or newer (the project is built and tested with JDK 26) and Maven 3.9.6+. Set `JAVA_HOME` explicitly, because the default `mvn` may run another JDK:
@@ -11,7 +25,7 @@ export JAVA_HOME=/usr/lib/jvm/java-26
 mvn -pl imap-mcp-app -am -DskipTests package
 ```
 
-The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` builds all modules as well; it also runs the unit tests, so it takes longer.
+The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` builds all modules as well; it also runs the unit tests, so it takes longer. Note that `-DskipTests` does not skip the integration tests under `mvn verify`; add `-DskipITs` there (`package` never runs them).
 
 ## 2. Config file
 
@@ -118,7 +132,7 @@ Claude Desktop (`claude_desktop_config.json`):
 
 ## 5. HTTP mode (`http-local`)
 
-A long-running local server on `127.0.0.1:8080`, secured by a bearer token.
+A long-running local server on `127.0.0.1:8080`, secured by a bearer token. It serves one user: all accounts of the config file belong to the single local tenant, and anyone holding the token sees all of them. Use `http-public` (section 6) if several people need separate mailboxes.
 
 Without Docker, start the jar yourself:
 
@@ -140,20 +154,60 @@ docker exec <container> cat /config/state/http-token
 
 There is no keyring in the container: use `file:` (Docker secrets, mounted files) or `env:`. Publish the port on host loopback only.
 
+Three things regularly go wrong on a first Docker start (full detail in the README, "Passing `env:` secrets to the container" and "Host directories: ownership and SELinux"):
+
+- **`environment variable NAME is not set or empty`** with `password: env:NAME`. The variable must reach the container: `docker run -e NAME ...` (or `--env-file`). `-e NAME` copies the value from the shell that runs `docker`, so it must be exported there, and `sudo docker run -e NAME` loses it because `sudo` resets the environment (also for root). Run `docker` without `sudo`, or use `--env-file /root-owned/file` (mode 0600, outside `/config`). Check with `docker inspect -f '{{.Config.Env}}' <container>`.
+- **`Cannot read or create the bearer token at /config/state/http-token`.** The container runs as uid 10001 and cannot write to your host directory. Run `mkdir -p <config>/state && chown 10001 <config>/state`, and give `/logs` a dedicated directory owned by 10001 (not `/var/log` itself).
+- **"Permission denied" on a bind mount although ownership is right** (SELinux enforcing, the default on Fedora and RHEL). Add `:Z` to the mount: `-v /etc/imap-mcp:/config:Z -v /var/log/imap-mcp:/logs:Z`. Use it only on directories dedicated to the container, never on `/var/log`, `/etc` or a home directory.
+
+A failed container restarts in a loop with `--restart unless-stopped`; `docker rm -f` it before retrying.
+
 Add the server to Claude Code with the token:
 
 ```
 claude mcp add --transport http imap-mcp http://127.0.0.1:8080/mcp --header "Authorization: Bearer <token>"
 ```
 
-## 6. After adding
+## 6. Public multi-tenant mode (`http-public`)
+
+This is the mode for several users. Each user logs in through an identity provider and links their own IMAP accounts in a small web page; the server keeps the (encrypted) credentials in Postgres. Nothing from sections 2 and 3 applies: there is no `accounts:` list (a config with one fails startup) and no keyring.
+
+### How tenants and mailboxes map
+
+- **Tenant = one user.** The tenant is identified by the issuer and subject claim of the user's token. A tenant is created at the user's first login at `https://<host>/accounts`, and only if the user has the IdP role named by `oauth.requiredRole`. A request to `/mcp` never creates one; a user without a tenant sees an empty `list_accounts` plus a `link_url`.
+- **Mailbox = an account owned by exactly one tenant.** The user links accounts (label, IMAP host, port, user name, password) at `/accounts`, by default up to 10. Each account has its own credentials and pooled connections. The IMAP host must be on the operator's `ssrf.allowedHosts` list.
+- **No sharing.** A tenant can only address its own accounts. Account handles and message handles of another tenant are refused (`ACCOUNT_NOT_FOUND`, `INVALID_HANDLE`).
+- **Per account switches** are set by the user while linking: `read_only` (default on) and `allow_purge` (default off, and only possible when the operator enabled `purge.enabled`).
+
+### What you need
+
+| Part | Role |
+|---|---|
+| This server (`--mode http-public`) | OAuth 2.1 resource server; serves `/mcp` and the linking pages `/accounts` |
+| Postgres | tenants, accounts, encrypted credentials, web sessions, audit rows |
+| Identity provider (Keycloak is the tested one) | logs users in and issues access tokens whose `aud` is the server's `/mcp` URL |
+| TLS reverse proxy | public https in front of the server, forwarding `Host` unchanged |
+| Key material | handle signing keys (`security.handleKeys`) and a key-wrapping key (`kms`: local KEK or Vault Transit) |
+
+### Steps
+
+1. **Easiest path, a ready test stack:** `dist/docker` contains Postgres, a Keycloak realm, the app and an optional Caddy proxy with Let's Encrypt. Follow [`dist/docker/README.md`](../dist/docker/README.md) (commands) and [DEPLOYMENT.md](DEPLOYMENT.md) (what to provide, checks in order). `setup.sh` generates the keys and the config for you.
+2. **Own deployment:** write the config as in the README section [http-public](../README.md#http-public) (`db`, `oauth`, `public.baseUrl`, `security.handleKeys`, `ssrf.allowedHosts`, `kms`), configure Keycloak as in [Keycloak setup for the Claude connector](../README.md#keycloak-setup-for-the-claude-connector) (two clients: the public one of the MCP client, the confidential web client of the linking page), then start `java -jar imap-mcp-app-<version>-all.jar --mode http-public --config /path/to/config.yaml`. Startup fails with one line naming the offending config key, never a value.
+3. **Give users the role** `oauth.requiredRole` (for example `imap-mcp-user`) in the identity provider.
+4. **Each user links a mailbox:** open `https://<host>/accounts`, log in, add the account (leave `read_only` on at first).
+5. **Connect the client:** in Claude, add a custom connector with the URL exactly `oauth.resource` (ends in `/mcp`, no trailing slash). Claude Code is not supported in this mode. Grant both scopes (`imap-mcp:read`, `imap-mcp:write`) at the first authorization.
+6. **Check:** ask "List my mail accounts"; you should see only the accounts you linked.
+
+Differences from the single-user modes: no bearer token file, no `--config` accounts, `imap.trace` and `tools.download.dir` are refused, `download_attachment` returns the file inside the tool result, and `purge_messages` stays off until the operator enables `purge.enabled` together with `http.stateful`.
+
+## 7. After adding
 
 1. Restart Claude Code (or reconnect the server), then run `/mcp` and check that `imap-mcp` is connected.
 2. Try a first prompt, for example: "List my mail accounts, then show the folders of the first one."
 3. If it does not connect, look at the log file `<state>/logs/imap-mcp.log` (default `~/.local/state/imap-mcp/logs/imap-mcp.log`; `IMAP_MCP_STATE_DIR` and `IMAP_MCP_LOG_DIR` move it). A startup failure (bad config, unreadable password, locked keyring) is written as one line `imap-mcp: startup failed: ...` to stderr and, as soon as logging is up, also to that log file. In stdio mode stdout carries only the protocol, so the log file is the reliable place to look; the stderr line shows up in the client's MCP log if it keeps one. The logs never contain passwords, message bodies, subjects or addresses.
 4. `imap.trace: true` switches on the IMAP protocol trace. It can write message content (subjects, addresses, bodies) to the log; credentials stay redacted. It is off by default; enable it only to diagnose a problem and disable it afterwards.
 
-## 7. Write tools and read-only accounts
+## 8. Write tools and read-only accounts
 
 Besides the read tools the server offers five write tools: `set_flags`, `move_messages`, `copy_messages`, `delete_messages` and `create_folder`. They are on by default for every account. The switch is `readOnly: true` on an account; there is no other setting and no per-tool selection. This example has one writable and one read-only account:
 
@@ -194,7 +248,7 @@ Undo: `move_messages` and `delete_messages` return new handles for the moved mes
 
 A server without the UIDPLUS extension cannot return the new handles; `copy_messages`, `move_messages` and `delete_messages` are then refused with `UNSUPPORTED` (`details.capability` is `UIDPLUS`).
 
-## 8. Permanent deletion and downloads
+## 9. Permanent deletion and downloads
 
 ### purge_messages
 
@@ -236,7 +290,7 @@ tools:
 
 With Docker, mount the directory (`-v ~/Downloads/imap-mcp:/downloads`) and run the container with `--user "$(id -u):$(id -g)"` (Podman rootless also `--userns=keep-id`), otherwise the 0600 files belong to the container user and are unreadable on the host. Then `/config` and `/logs` must be writable by that uid, and `tools.download.displayDir` names the host path that the tool reports. On Docker Desktop for macOS the owner check behaves differently; see the smoke checklist in the README.
 
-## 9. Pitfalls at a glance
+## 10. Pitfalls at a glance
 
 - Account `id`: only `[a-z0-9-]`, 1 to 32 characters (no underscores).
 - Replace `imap.example.com` and the example user names.
@@ -245,7 +299,10 @@ With Docker, mount the directory (`-v ~/Downloads/imap-mcp:/downloads`) and run 
 - Keyring: unlocked, D-Bus session present, resolved once at startup with a timeout; not available in Docker.
 - stdio: keep both `-Xlog` flags, use absolute paths, put `-s` and `-e` before `--`.
 - Restart Claude Code after `claude mcp add`; check `/mcp`, then the log file.
-- HTTP: the token is in `<state>/http-token`; publish the port on loopback only.
+- HTTP (`http-local`): the token is in `<state>/http-token`; publish the port on loopback only.
+- Docker and `env:` secrets: pass them with `-e NAME` (exported!) or `--env-file`; `sudo` strips the environment.
+- Docker bind mounts: `chown 10001` the `state` and log directories; add `:Z` on SELinux hosts (dedicated directories only).
+- `http-public` is the only multi-tenant mode; it has no `accounts:` in the config, users link their own mailboxes at `/accounts`, and tenants never share one.
 - Write tools are active on every account without `readOnly: true`.
 - There is no per-tool selection; `readOnly: true` turns all five write tools off for that account.
 - A server without UIDPLUS refuses copy/move/delete with `UNSUPPORTED`.

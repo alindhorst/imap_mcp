@@ -19,9 +19,9 @@ One codebase and one shaded jar, with the same tool code in every mode. Tools ne
 | `http-local` | Streamable HTTP, stateless, loopback, usually in Docker (bind rules in 5.3) | fixed single tenant | static bearer token (random on first start if unset) | as `stdio` |
 | `http-public` | Streamable HTTP, stateless, behind TLS reverse proxy | per request, from validated OAuth token | OAuth 2.1 resource server | Postgres |
 
-`http-public` is what a Claude connector needs. It is not part of v1 (see section 3).
+`http-public` is what a Claude connector needs. It arrived with v3b (see section 3).
 
-The mode is selected with `--mode stdio|http-local` (fallback `IMAP_MCP_MODE`); `http-public` is refused in v1. The single-tenant modes use the fixed tenant id `local`.
+The mode is selected with `--mode stdio|http-local|http-public` (fallback `IMAP_MCP_MODE`). The single-tenant modes (`stdio`, `http-local`) use the fixed tenant id `local`: one user, whose mailboxes are the `accounts` of the config file. Only `http-public` is multi-tenant: each user is a tenant (from the token's issuer and subject), tenants own disjoint sets of accounts that they link themselves, and no tenant can address another tenant's account or message handle. Setup guides per mode: [TUTORIAL.md](TUTORIAL.md) sections 4 to 6.
 
 ## 3. Phasing
 

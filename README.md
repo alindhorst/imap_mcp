@@ -58,6 +58,8 @@ mvn -pl imap-mcp-core -am test      # one module and what it depends on
 mvn -B -Pdocker -pl imap-mcp-app -am package -DskipTests   # also builds the Docker image imap-mcp
 ```
 
+Skipping tests: `-DskipTests` skips only the unit tests (Surefire); the Failsafe integration tests, such as `ShadedJarIT` in `imap-mcp-app`, still run in `verify`. Use `mvn verify -DskipTests -DskipITs` to skip everything, or `-DskipITs` alone to skip only the integration tests. `mvn package` never reaches the integration-test phase, so `package -DskipTests` is enough there.
+
 `imap-mcp-app` produces the runnable shaded jar `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`; the thin jar stays the main artifact.
 
 ## Release
@@ -79,6 +81,23 @@ The same jar runs in two modes in v2 (see SPEC section 2):
 | `http-public` (production, multi-tenant) | Behind a TLS reverse proxy; accounts, credentials and tenants in Postgres | OAuth 2.1 resource server (JWT access tokens) |
 
 The mode comes from `--mode stdio|http-local|http-public` (fallback env `IMAP_MCP_MODE`). Without a mode the jar prints a usage text to stderr and exits with 2.
+
+#### Tenants and mailboxes: which mode do I need?
+
+Short version: **`stdio` and `http-local` serve exactly one user (one fixed tenant, `local`); only `http-public` is multi-tenant.** Tenants never share a mailbox: in `http-public` every user is a tenant with their own, separately linked IMAP accounts.
+
+| | `stdio` | `http-local` | `http-public` |
+|---|---|---|---|
+| Users | one (you) | one (you) | many, each a tenant |
+| Who is the tenant | fixed tenant `local` | fixed tenant `local` | the user in the OAuth token (issuer + subject), created at the first login at `/accounts` |
+| Where mailboxes are defined | `accounts:` in the YAML config | `accounts:` in the YAML config | not in the config (a configured `accounts` list fails startup); each user links their own at `<public.baseUrl>/accounts` |
+| Which mailboxes a client sees | all accounts of the config | all accounts of the config | only the accounts of the token's own tenant |
+| Passwords | secret references (`env:`, `file:`, `keyring:`) | secret references (`file:`, `env:`; no keyring in Docker) | entered by the user in the linking page, stored encrypted in Postgres |
+| Client authentication | none (the client spawns the process) | static bearer token | OAuth 2.1 access token (JWT) from an identity provider such as Keycloak |
+| Needs | the jar | the jar, optionally Docker | the jar, Postgres, an identity provider, a TLS reverse proxy, a key-wrapping key |
+| Setup guide | [TUTORIAL 4](doc/TUTORIAL.md#4-stdio-mode-claude-code-claude-desktop) | [TUTORIAL 5](doc/TUTORIAL.md#5-http-mode-http-local) | [TUTORIAL 6](doc/TUTORIAL.md#6-public-multi-tenant-mode-http-public), then [DEPLOYMENT](doc/DEPLOYMENT.md) |
+
+Within one tenant a user may have several accounts (several mailboxes, at most 10 by default in `http-public`); every tool call names the account it addresses. Two tenants can link the same IMAP login without noticing each other: their accounts, handles and pooled connections are separate.
 
 ### Configuration
 
@@ -161,7 +180,7 @@ Environment variables (the only ones read; they override file values where appli
 
 | Variable | Effect |
 |---|---|
-| `IMAP_MCP_MODE` | `stdio` or `http-local` (if `--mode` is absent) |
+| `IMAP_MCP_MODE` | `stdio`, `http-local` or `http-public` (if `--mode` is absent) |
 | `IMAP_MCP_CONFIG`, `IMAP_MCP_STATE_DIR`, `IMAP_MCP_LOG_DIR` | paths, see above |
 | `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | base directories, used only when absolute |
 | `IMAP_MCP_LOG_LEVEL` | root log level: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR` |
@@ -233,6 +252,30 @@ accounts:
     host: imap.example.com
     username: me@example.com
     password: file:/run/secrets/imap_password
+```
+
+**Passing `env:` secrets to the container.** `env:NAME` reads the variable from the server process inside the container, so it must be given to `docker run`; a variable in your shell is not enough. A missing one fails startup with `environment variable NAME is not set or empty`. Pitfalls:
+
+- `-e NAME` (without a value) copies the variable from the environment of the `docker` command. It must be exported (`export NAME=...`; `set | grep NAME` also lists unexported variables, `env | grep NAME` does not).
+- `sudo docker run -e NAME` loses the variable, even when you are already root: `sudo` resets the environment by default (`env_reset`). Run `docker` without `sudo` (as root, or as a member of the `docker` group), or pass the value explicitly (`-e NAME="$NAME"`, which exposes it in the process list), or use `--env-file`.
+- Preferred on a server: `--env-file /path/to/env` with a root-owned file of mode 0600 (`NAME=value` lines, everything after the first `=` is literal), kept outside the directory mounted as `/config`; or a `file:` reference to a file inside the mounted config directory (owned by uid 10001, mode 0400).
+- Check what the container received: `docker inspect -f '{{.Config.Env}}' <container>` (this shows the values too; the secrets are also visible to anyone who can run `docker inspect`).
+- With `--restart unless-stopped` a container that fails at startup restarts in a loop; `docker rm -f` it before the next attempt.
+
+**Host directories: ownership and SELinux.** The container user is uid 10001, so the mounted directories must let it in:
+
+- `/config` is read for `config.yaml`; the server also creates `/config/state` (bearer token, handle key). Create `state` yourself and hand it over: `mkdir -p <config>/state && chown 10001 <config>/state && chmod 700 <config>/state`. Otherwise startup fails with `Cannot read or create the bearer token at /config/state/http-token; make the state directory writable or configure http.token`. `config.yaml` itself can stay root-owned, as long as uid 10001 can read it (mode 0644).
+- `/logs` must be writable by uid 10001. Use a dedicated directory (`mkdir -p /var/log/imap-mcp && chown 10001 /var/log/imap-mcp`), never `chown` a shared directory such as `/var/log`.
+- On hosts with SELinux enforcing (Fedora, RHEL and derivatives), a bind mount can be refused with "permission denied" although the ownership is right, because the files carry a label the container may not use. Add `:Z` to the mount, which relabels the host directory for this container only: `-v /etc/imap-mcp:/config:Z -v /var/log/imap-mcp:/logs:Z`. Use `:z` instead when several containers share the directory. Never use `:Z` or `:z` on a system directory such as `/var/log`, `/etc` or your home directory itself: it relabels everything below it. Mount a dedicated directory. Named volumes (`-v imap-mcp-config:/config`) need none of this.
+
+Example for a host with SELinux, root-owned env file and dedicated directories:
+
+```
+docker run -d --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  --env-file /etc/imap-mcp.env \
+  -v /etc/imap-mcp:/config:Z -v /var/log/imap-mcp:/logs:Z \
+  imap-mcp
 ```
 
 ### Permanent deletion (purge_messages)
@@ -448,7 +491,7 @@ Every test is skipped, with a reason, when its credentials are not set.
 
 ### http-public
 
-The multi-tenant mode for a hosted deployment (what a Claude connector needs): `java -jar imap-mcp.jar --mode http-public --config <file>`. This server is an OAuth 2.1 resource server only; the identity provider (for example Keycloak) is separate and must put the resource URI into the access token's `aud` claim (RFC 8707). Mail accounts are linked per user in the linking surface, not in the config file; a configured `accounts` list fails startup.
+The multi-tenant mode for a hosted deployment (what a Claude connector needs): `java -jar imap-mcp.jar --mode http-public --config <file>`. Every user is a tenant with their own mail accounts; tenants never see each other's mailboxes (see "Tenants and mailboxes" above). A step-by-step overview is in [`doc/TUTORIAL.md`, section 6](doc/TUTORIAL.md#6-public-multi-tenant-mode-http-public). This server is an OAuth 2.1 resource server only; the identity provider (for example Keycloak) is separate and must put the resource URI into the access token's `aud` claim (RFC 8707). Mail accounts are linked per user in the linking surface, not in the config file; a configured `accounts` list fails startup.
 
 A container-based test environment (Postgres, Keycloak with a ready realm, the app and an optional Caddy TLS proxy) for trying http-public on the public web, including with the Claude connector, is in [`dist/docker`](dist/docker/README.md).
 
