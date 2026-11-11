@@ -24,6 +24,8 @@ class ConnectorContractDeployedIT {
         String source = "[fixture source: " + fixture.header().source() + "]";
         ConnectorContractRun.Result run = ConnectorContractRun.run(stack, new KeycloakAdmin(stack), fixture);
         String text = write(run.trace());
+        // the trace is clean (no secret, see the last test); kept for comparison with a recording
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "connector-contract-trace.jsonl"), text);
 
         return Stream.of(
                 DynamicTest.dynamicTest("conformance: order, paths, parameter names, values, headers " + source,
