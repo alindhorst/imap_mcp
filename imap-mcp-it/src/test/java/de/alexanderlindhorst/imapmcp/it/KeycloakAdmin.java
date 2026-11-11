@@ -9,7 +9,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Creates test users in the deployed realm with kcadm.sh inside the keycloak container. The admin password is read
  * there from the container's own environment ({@code KC_BOOTSTRAP_ADMIN_PASSWORD}) by a shell, so it is never on a
  * host command line or in a log; a user's password travels as an exec environment variable, not as an argument of the
- * host process. Command output is never printed. No realm setting is changed.
+ * host process. Command output is never printed. The only realm setting that can be changed is the access token lifespan
+ * ({@link #setAccessTokenLifespan}), by a test that restores it.
  */
 final class KeycloakAdmin {
 
@@ -51,6 +52,11 @@ final class KeycloakAdmin {
         login();
         String out = run("get realms/" + REALM + " --fields accessTokenLifespan", List.of());
         return JsonMapper.builder().build().readTree(out).get("accessTokenLifespan").asInt();
+    }
+
+    /** Sets the realm's {@code accessTokenLifespan} (seconds); the caller restores it. */
+    synchronized void setAccessTokenLifespan(int seconds) throws Exception {
+        throw new UnsupportedOperationException("not implemented");
     }
 
     private void login() throws Exception {

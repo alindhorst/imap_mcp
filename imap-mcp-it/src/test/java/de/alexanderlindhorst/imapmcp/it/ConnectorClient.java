@@ -108,6 +108,11 @@ final class ConnectorClient {
                 .header("User-Agent", CONNECTOR_UA).POST(HttpRequest.BodyPublishers.ofString(INITIALIZE)));
     }
 
+    /** {@code POST <resource>} with an initialize body and {@code Authorization: Bearer}; the SDK is not involved. */
+    HttpResponse<String> initializeWithToken(String accessToken) throws Exception {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
     /** {@code GET <resource>} without a token. */
     HttpResponse<String> getMcpWithoutToken() throws Exception {
         return send(HttpRequest.newBuilder(URI.create(stack.configValue("oauth", "resource")))
