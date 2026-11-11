@@ -350,4 +350,25 @@ class DistDockerTest {
                 || (ch >= 0x200B && ch <= 0x200F) || (ch >= 0x202A && ch <= 0x202E) || (ch >= 0x2066 && ch <= 0x2069)
                 || ch == 0xFEFF).count()).isZero();
     }
+
+    /** #440: section 6 of the deployment guide names every deployed IT class of imap-mcp-it, so the guide follows the suite. */
+    @Test
+    void deploymentGuideSectionSixNamesEveryDeployedItClass() throws IOException {
+        String text = read(Path.of("..", "doc", "DEPLOYMENT.md"));
+        int from = text.indexOf("## 6.");
+        int to = text.indexOf("## 7.");
+        assertThat(from).isGreaterThanOrEqualTo(0);
+        assertThat(to).isGreaterThan(from);
+        String section = text.substring(from, to);
+        Path it = Path.of("..", "imap-mcp-it", "src", "test", "java", "de", "alexanderlindhorst", "imapmcp", "it");
+        List<String> classes;
+        try (Stream<Path> s = Files.list(it)) {
+            classes = s.map(p -> p.getFileName().toString()).filter(n -> n.endsWith("DeployedIT.java"))
+                    .map(n -> n.substring(0, n.length() - ".java".length())).sorted().toList();
+        }
+        assertThat(classes).isNotEmpty();
+        for (String c : classes) {
+            assertThat(section).as("section 6 names " + c).contains(c);
+        }
+    }
 }
