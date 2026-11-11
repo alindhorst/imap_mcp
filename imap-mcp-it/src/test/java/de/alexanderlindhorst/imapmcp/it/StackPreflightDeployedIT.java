@@ -66,6 +66,70 @@ class StackPreflightDeployedIT {
     }
 
     @Test
+    void imapHostResolvesToOneIpv4InsideTheSubnetWithoutAaaaAndIsNotBlocked() throws Exception {
+        DeployedCompose.ExecResult r = stack.exec("app", List.of(), "getent", "ahosts", DeployedDovecot.HOST);
+        assertThat(r.exitCode()).isZero();
+        java.util.Set<String> addresses = new java.util.TreeSet<>();
+        for (String line : r.stdout().split("\\R")) {
+            String[] cols = line.trim().split("\\s+");
+            if (cols.length >= 1 && !cols[0].isEmpty()) {
+                addresses.add(cols[0]);
+            }
+        }
+        assertThat(addresses).hasSize(1);
+        String ip = addresses.iterator().next();
+        assertThat(ip).as("IPv4 only, no AAAA").matches("\\d+\\.\\d+\\.\\d+\\.\\d+");
+        InetAddress address = InetAddress.getByName(ip);
+        assertThat(de.alexanderlindhorst.imapmcp.core.net.Cidr.parse(stack.backendSubnet()).contains(address)).isTrue();
+        assertThat(new AddressBlocklist(List.of()).isBlocked(address)).isFalse();
+    }
+
+    @Test
+    void dovecotPresentsTheLeafForTheImapHostOn993ChainedToTheTestCa() throws Exception {
+        DeployedCompose.ExecResult r = stack.exec("app", List.of(), "sh", "-c",
+                "echo | openssl s_client -connect " + DeployedDovecot.HOST + ":993 -servername " + DeployedDovecot.HOST
+                        + " -showcerts 2>/dev/null");
+        assertThat(r.exitCode()).isZero();
+        java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+        List<java.security.cert.X509Certificate> chain = new java.util.ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", java.util.regex.Pattern.DOTALL)
+                .matcher(r.stdout());
+        while (m.find()) {
+            chain.add((java.security.cert.X509Certificate) cf.generateCertificate(
+                    new java.io.ByteArrayInputStream(m.group().getBytes(java.nio.charset.StandardCharsets.US_ASCII))));
+        }
+        assertThat(chain).isNotEmpty();
+        java.security.cert.X509Certificate leaf = chain.get(0);
+        assertThat(leaf.getSubjectAlternativeNames().stream().map(e -> (Object) e.get(1)).toList())
+                .containsExactly(DeployedDovecot.HOST);
+        java.security.cert.X509Certificate root = (java.security.cert.X509Certificate) cf.generateCertificate(
+                new java.io.ByteArrayInputStream(Files.readAllBytes(stack.runDir().resolve("local-ca/ca.crt"))));
+        java.security.cert.PKIXParameters params = new java.security.cert.PKIXParameters(
+                java.util.Set.of(new java.security.cert.TrustAnchor(root, null)));
+        params.setRevocationEnabled(false);
+        java.security.cert.CertPathValidator.getInstance("PKIX")
+                .validate(cf.generateCertPath(List.of(leaf)), params);
+    }
+
+    @Test
+    void thereIsNoLoginInTheDovecotLogBeforeAnyFlowStarts() {
+        assertThat(stack.dovecotLoginsAtStart()).isZero();
+    }
+
+    @Test
+    void everyUserHasOneUnreadSeedMessageWithTheCanarySubject() throws Exception {
+        assertThat(stack.dovecotUsers()).hasSize(2);
+        for (DeployedDovecot.ImapUser user : stack.dovecotUsers()) {
+            DeployedCompose.ExecResult r = stack.exec("dovecot", List.of(), "doveadm", "fetch", "-u", user.name(),
+                    "flags hdr.subject", "mailbox", "INBOX", "all");
+            assertThat(r.exitCode()).isZero();
+            assertThat(r.stdout()).contains("hdr.subject: " + stack.canarySubject()).doesNotContain("\\Seen");
+            assertThat(r.stdout().split("hdr.subject:", -1)).hasSize(2);
+        }
+    }
+
+    @Test
     void theBuildContextCarriesOnlyTheDockerfileAndTheJar() {
         assertThat(stack.buildContextEntries()).containsExactlyInAnyOrder("Dockerfile", "jar/imap-mcp.jar");
     }
@@ -76,6 +140,7 @@ class StackPreflightDeployedIT {
         Map<String, String> canaries = new java.util.TreeMap<>(
                 DeployedSecretScan.secrets(stack.runDir().resolve(".env")));
         assertThat(canaries).isNotEmpty();
+        stack.dovecotUsers().forEach(u -> canaries.put("DOVECOT_PASSWORD_" + u.name(), u.password().value()));
         int i = 0;
         for (String line : DeployedSecretScan.pemLines(stack.runDir().resolve("local-ca/ca.key"))) {
             canaries.put("CA_KEY_LINE_" + i++, line);

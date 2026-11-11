@@ -146,7 +146,7 @@ final class DeployedStack {
                 .withFileFromPath("Dockerfile", runDir.resolve("Dockerfile"))
                 .withFileFromPath("jar/imap-mcp.jar", jar)
                 .get();
-        Files.writeString(runDir.resolve("it-compose.override.yaml"), DeployedOverride.render(imageTag, ItImages.SQUID, "x"));
+        Files.writeString(runDir.resolve("it-compose.override.yaml"), DeployedOverride.render(imageTag, ItImages.SQUID, ItImages.DOVECOT));
 
         DeployedCompose compose = new DeployedCompose("imcp-" + run, runDir,
                 List.of("compose.yaml", "it-compose.override.yaml")).waitingForHealthy("app");
@@ -334,6 +334,31 @@ final class DeployedStack {
     /** Value of an environment variable inside a running service container (compared, never printed). */
     String containerEnv(String service, String name) {
         return compose.env(service, name);
+    }
+
+    /** The shared client: local-CA trust, through the forward proxy, redirects never followed. */
+    HttpClient httpClient() {
+        return http;
+    }
+
+    /** Runs a command in a service container (see {@link DeployedCompose#exec}). */
+    DeployedCompose.ExecResult exec(String service, List<String> env, String... command) throws InterruptedException {
+        return compose.exec(service, env, command);
+    }
+
+    /** The Dovecot users of this run (names and redacting passwords, SPEC 5.8); never logged. */
+    List<DeployedDovecot.ImapUser> dovecotUsers() {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    /** Subject of the unread message seeded in the INBOX of every Dovecot user. */
+    String canarySubject() {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    /** Number of {@code Login:} lines in the Dovecot log when the stack was ready (before any test flow). */
+    int dovecotLoginsAtStart() {
+        throw new UnsupportedOperationException("not implemented");
     }
 
     /** Everything the fixture captured of setup.sh, for the canary scan. */
