@@ -141,14 +141,16 @@ class DeployedTokenLifecycleIT {
 
     /**
      * Characterization, the "sporadic reconnect" mechanism of DEPLOYMENT section 4: two refreshes with the same refresh
-     * token at the same moment, three rounds. Observed outcome pinned below (the rounds must agree).
+     * token at the same moment, repeated. Observed: usually one {@code 200} and one {@code invalid_grant} (and the
+     * loser's attempt, a reuse of the old token, revokes the session, so the winner's new token is refused at its next
+     * use); now and then (a race window in Keycloak) both succeed, and then at most one of the two new tokens works.
+     * Both refused never happens. The test pins these rules, not the frequency, which is printed.
      */
     @Test
     void twoParallelRefreshesWithTheSameTokenHaveThePinnedOutcome() throws Exception {
         List<String> secrets = new ArrayList<>();
-        List<List<Integer>> rounds = new ArrayList<>();
-        List<Integer> winnerSuccessorStatus = new ArrayList<>();
-        for (int round = 0; round < 3; round++) {
+        Map<String, Integer> outcomes = new java.util.TreeMap<>();
+        for (int round = 0; round < 8; round++) {
             ConnectorClient client = new ConnectorClient(stack);
             KeycloakAdmin.TestUser user = admin.createUser();
             secrets.add(user.password());
@@ -156,22 +158,27 @@ class DeployedTokenLifecycleIT {
             List<HttpResponse<String>> responses = parallelRefresh(client, first.refresh());
             List<Integer> statuses = new ArrayList<>(responses.stream().map(HttpResponse::statusCode).toList());
             Collections.sort(statuses);
-            rounds.add(statuses);
+            List<Integer> successors = new ArrayList<>();
             for (HttpResponse<String> r : responses) {
                 if (r.statusCode() == 200) {
-                    Tokens won = tokens(r, secrets);
-                    winnerSuccessorStatus.add(client.token(tokenEndpoint, refreshForm(won.refresh())).statusCode());
+                    successors.add(client.token(tokenEndpoint, refreshForm(tokens(r, secrets).refresh()))
+                            .statusCode());
                 } else {
                     assertThat(JSON.readTree(r.body()).get("error").asString()).isEqualTo("invalid_grant");
                 }
             }
+            outcomes.merge("parallel " + statuses + ", then the new tokens used in turn " + successors, 1,
+                    Integer::sum);
+            if (statuses.equals(List.of(200, 400))) {
+                assertThat(successors).as("the winner's new token after the loser's reuse").containsExactly(400);
+            } else {
+                assertThat(statuses).as("a pair other than one success and one refusal").containsExactly(200, 200);
+                assertThat(successors.stream().filter(c -> c == 200).count())
+                        .as("working tokens out of two successes").isLessThanOrEqualTo(1);
+            }
             assertTraceClean(client, secrets);
         }
-        assertThat(rounds).as("status codes of the two parallel refreshes, per round")
-                .containsExactly(List.of(200, 400), List.of(200, 400), List.of(200, 400));
-        // the loser's attempt is a reuse of the old token, which revokes the session: the winner's new token is refused
-        assertThat(winnerSuccessorStatus).as("the winner's new refresh token, used afterwards, per round")
-                .containsExactly(400, 400, 400);
+        System.out.println("DeployedTokenLifecycleIT parallel refresh outcomes: " + outcomes);
     }
 
     // ---- scopes (D3, D19) -------------------------------------------------------------------------------------------
