@@ -273,6 +273,10 @@ class DeployedFlowIT {
         assertThat(flagsOf(aliceMail)).isEqualTo(before).doesNotContain("\\Flagged");
         assertThat(flagChangesOf(aliceMail.name())).as("no STORE reached Dovecot").isEqualTo(flagChangesBefore);
         assertThat(auditItems(aliceSub)).as("a refused call writes no item row").isZero();
+        assertThat(count("select count(*) from audit_event where tenant_id = " + tenantSql(aliceSub)
+                + " and tool = 'set_flags' and ref_hash is null and error_code = 'PERMISSION_DENIED'"
+                + " and account_id = (select id from mailbox_account where tenant_id = " + tenantSql(aliceSub) + ")"))
+                .as("exactly one call row for account_read_only, with Alice's account id").isEqualTo(1);
     }
 
     @Test
@@ -324,6 +328,13 @@ class DeployedFlowIT {
         Map<String, Object> foreignMessage = call(bobMcp, "get_message", "account", bobAccount, "message",
                 messageHandle);
         assertThat(map(foreignMessage, "error")).containsEntry("code", "INVALID_HANDLE");
+        Map<String, Object> foreignWrite = call(bobMcp, "set_flags", "account", aliceAccount, "handles",
+                List.of(messageHandle), "flagged", true);
+        assertThat(map(foreignWrite, "error")).as("the account step precedes the read-only gate")
+                .containsEntry("code", "ACCOUNT_NOT_FOUND");
+        assertThat(count("select count(*) from audit_event where tenant_id = " + tenantSql(bobSub)
+                + " and tool = 'set_flags' and ref_hash is null and error_code = 'ACCOUNT_NOT_FOUND'"
+                + " and account_id is null")).as("one call row with Bob's tenant and no account id").isEqualTo(1);
 
         assertThat(loginsOf(bobMail.name())).as("the counter sees Bob's own IMAP I/O").isGreaterThan(bobLoginsBefore);
         assertThat(loginsOf(aliceMail.name())).as("no login for Alice's user during Bob's calls")
