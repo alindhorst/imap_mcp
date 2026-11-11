@@ -1,0 +1,44 @@
+package de.alexanderlindhorst.imapmcp.it;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/** #435: selecting the fixture of a contract run. No stack. */
+class ConnectorContractRunTest {
+
+    @Test
+    void theDefaultIsTheAssumedFixtureOnTheClasspath() {
+        assertThat(ConnectorContractRun.loadFixture(null).header().source()).isEqualTo("assumed");
+    }
+
+    @Test
+    void aFilePathIsReadWhenThereIsNoSuchClasspathResource(@TempDir Path dir) throws IOException {
+        Path f = dir.resolve("f.jsonl");
+        Files.writeString(f, "{\"format\":\"imap-mcp-connector-session\",\"version\":1,\"source\":\"recorded 2026-11-12\"}\n");
+        assertThat(ConnectorContractRun.loadFixture(f.toString()).header().source()).isEqualTo("recorded 2026-11-12");
+    }
+
+    @Test
+    void anUnknownFixtureIsAnError() {
+        assertThatThrownBy(() -> ConnectorContractRun.loadFixture("connector/nope.jsonl"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theGateLogLineNamesTheFixtureSourceAndItsLocation() {
+        ConnectorSessionFixture assumed = ConnectorContractRun.loadFixture(null);
+        assertThat(ConnectorContractRun.sourceLine(null, assumed)).isEqualTo(
+                "connector contract: fixture source=assumed (connector/assumed-claude-session.jsonl)");
+        ConnectorSessionFixture recorded = new ConnectorSessionFixture(new ConnectorSessionFixture.Header(
+                ConnectorSessionFixture.FORMAT, ConnectorSessionFixture.VERSION, "recorded 2026-11-12"),
+                assumed.requests());
+        assertThat(ConnectorContractRun.sourceLine("/x/rec.jsonl", recorded)).isEqualTo(
+                "connector contract: fixture source=recorded 2026-11-12 (/x/rec.jsonl)");
+    }
+}
