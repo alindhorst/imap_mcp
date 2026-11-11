@@ -29,15 +29,11 @@ The owner creates a registration token in Gitea (repository, organisation or ins
 ```
 # as the non-root runner user, on the VM
 act_runner generate-config > config.yaml          # set runner.capacity: 1
-act_runner register --no-interactive \
-  --instance http://spacedock:3000 \
-  --token "$GITEA_RUNNER_REGISTRATION_TOKEN" \
-  --name imap-mcp-ci-1 \
-  --labels imap-mcp-host:host
+act_runner register                               # prompts, see below
 act_runner daemon --config config.yaml            # run it as a systemd user service in practice
 ```
 
-Export the token in the shell only for the `register` call (for example read it from a prompt) and unset it afterwards. The runner label must equal `runs-on` in the workflow: `imap-mcp-host`.
+`act_runner register` asks interactively for the instance URL (`http://spacedock:3000`), the registration token (paste it at the prompt), the runner name (for example `imap-mcp-ci-1`) and the labels (`imap-mcp-host:host`). Use the interactive form: a token passed as a command-line argument is visible to every local user in the process list and ends up in the shell history. The runner label must equal `runs-on` in the workflow: `imap-mcp-host`.
 
 ## Try it before relying on it
 
@@ -45,4 +41,4 @@ Open a pull request (or push to `master`) and check that the `verify` run starts
 
 ## Making `verify` a required check (owner decision)
 
-Once at least one successful run exists, the owner may require it: in Gitea, repository Settings, Branches, the rule for `master`, enable "Enable status check" and select the context of the job, `verify` (shown as `verify / verify (pull_request)` in the list, taken from the workflow and job name). Adding it to the merge gate script `.claude/gitea-pr.sh` is a separate decision. Until then a green run is evidence, not enforcement.
+Once at least one successful run exists, the owner may require it: in Gitea, repository Settings, Branches, the rule for `master`, enable "Enable status check" and select the context of the job, `verify` (shown as `verify / verify (pull_request)` in the list, taken from the workflow and job name). Adding it to the owner's local merge gate is a separate decision. Until then a green run is evidence, not enforcement.
