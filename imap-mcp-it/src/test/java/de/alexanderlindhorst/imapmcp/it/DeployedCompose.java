@@ -123,6 +123,48 @@ final class DeployedCompose {
         return result;
     }
 
+    /** The compose project name as the engine knows it (the identifier plus Testcontainers' random suffix). */
+    String actualProject() {
+        return projectContainers(true).stream().map(c -> c.getLabels().get(PROJECT_LABEL)).findFirst()
+                .orElseThrow(() -> new IllegalStateException("no container of " + project));
+    }
+
+    /** The project network with the given compose name (as in compose.yaml), inspected; null if it was not created. */
+    com.github.dockerjava.api.model.Network network(String name) {
+        return client().listNetworksCmd().exec().stream()
+                .filter(n -> isMine(n.getLabels()) && name.equals(n.getLabels().get("com.docker.compose.network")))
+                .findFirst().map(n -> client().inspectNetworkCmd().withNetworkId(n.getId()).exec()).orElse(null);
+    }
+
+    /** IPv4 addresses of the project's running containers on the given project network. */
+    List<String> networkIps(String name) {
+        com.github.dockerjava.api.model.Network net = network(name);
+        List<String> ips = new ArrayList<>();
+        for (Container c : projectContainers(false)) {
+            var settings = client().inspectContainerCmd(c.getId()).exec().getNetworkSettings().getNetworks();
+            var entry = settings.get(net.getName());
+            if (entry != null && entry.getIpAddress() != null && !entry.getIpAddress().isEmpty()) {
+                ips.add(entry.getIpAddress());
+            }
+        }
+        return ips;
+    }
+
+    /** One environment variable of a running service container; null if unset. */
+    String env(String service, String variable) {
+        for (Container c : projectContainers(false)) {
+            if (service.equals(c.getLabels().get(SERVICE_LABEL))) {
+                String[] env = client().inspectContainerCmd(c.getId()).exec().getConfig().getEnv();
+                for (String e : env == null ? new String[0] : env) {
+                    if (e.startsWith(variable + "=")) {
+                        return e.substring(variable.length() + 1);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     Path logsDir() {
         return dir.resolve("logs");
     }

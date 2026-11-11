@@ -32,7 +32,6 @@ final class DeployedOverride {
                     ports: !reset []
                   proxy:
                     image: %s
-                    pull_policy: never
                     volumes:
                       - ./squid.conf:/etc/squid/squid.conf:ro,Z
                     ports:
