@@ -17,6 +17,10 @@ public final class ItImages {
     public static final String VAULT =
             "hashicorp/vault:1.20@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10";
 
+    /** Forward proxy of the deployed stack (squid, ubuntu image); its allowlist comes from {@link DeployedSquidConf}. */
+    public static final String SQUID =
+            "ubuntu/squid:6.13-25.04_beta@sha256:3de2e64f0ca6efdac3e98557607dc0f23050037f3885016d5d5bfcf9950501b8";
+
     private ItImages() {
     }
 }
