@@ -60,4 +60,16 @@ class DeployedFailsafeConfigTest {
                 .contains("junit.jupiter.execution.timeout.lifecycle.method.default=15m")
                 .contains("junit.jupiter.execution.timeout.testable.method.default=15m");
     }
+
+    /** #433: the class that restarts the app runs last in the shared stack; only this execution orders classes. */
+    @Test
+    void theDeployedExecutionOrdersClassesByAnnotationAndNoOtherExecutionDoes() throws Exception {
+        assertThat(text(FAILSAFE + "/executions/execution[id='deployed-it']/configuration/properties"
+                + "/configurationParameters"))
+                .contains("junit.jupiter.testclass.order.default=org.junit.jupiter.api.ClassOrderer$OrderAnnotation");
+        assertThat(text(FAILSAFE + "/executions/execution[id='default']/configuration/properties"
+                + "/configurationParameters")).doesNotContain("testclass.order");
+        assertThat(text(FAILSAFE + "/configuration/properties/configurationParameters"))
+                .doesNotContain("testclass.order");
+    }
 }
