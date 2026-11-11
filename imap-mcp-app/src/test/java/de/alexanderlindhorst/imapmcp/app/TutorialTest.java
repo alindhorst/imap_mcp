@@ -292,4 +292,10 @@ class TutorialTest {
             assertThat(pw.group(2)).matches("(env:|file:|keyring:).+");
         }
     }
+
+    /** #426: the build docs name the property that admits skipped tests (test-completeness gate, SPEC 5.8). */
+    @Test
+    void buildDocsNameThePartialBuildProperty() {
+        assertThat(tutorial).contains("-Dimapmcp.partialBuild=true");
+    }
 }

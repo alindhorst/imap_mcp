@@ -441,4 +441,10 @@ class ReadmeTest {
                 .contains("IMAP_MCP_SMOKE_<GMAIL|M365>_HOST").contains("IMAP_MCP_SMOKE_WRITE=1")
                 .contains("skipped");
     }
+
+    /** #426: the build docs name the property that admits skipped tests (test-completeness gate, SPEC 5.8). */
+    @Test
+    void buildDocsNameThePartialBuildProperty() {
+        assertThat(readme).contains("-Dimapmcp.partialBuild=true");
+    }
 }
