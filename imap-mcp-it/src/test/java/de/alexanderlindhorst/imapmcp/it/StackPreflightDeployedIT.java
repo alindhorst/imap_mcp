@@ -117,6 +117,23 @@ class StackPreflightDeployedIT {
         assertThat(stack.dovecotLoginsAtStart()).isZero();
     }
 
+    /** Non-vacuity: the baseline counter must see a real login (the password travels in the exec env only). */
+    @Test
+    void theLoginCounterSeesARealLoginOfOneUser() throws Exception {
+        DeployedDovecot.ImapUser user = stack.dovecotUsers().get(0);
+        DeployedDovecot.ImapUser other = stack.dovecotUsers().get(1);
+        int before = stack.dovecotLogins(user.name());
+        int otherBefore = stack.dovecotLogins(other.name());
+        DeployedCompose.ExecResult r = stack.exec("app",
+                List.of("IMAP_U=" + user.name(), "IMAP_P=" + user.password().value()), "sh", "-c",
+                "(printf 'a LOGIN %s %s\\r\\n' \"$IMAP_U\" \"$IMAP_P\"; sleep 2; printf 'b LOGOUT\\r\\n'; sleep 1)"
+                        + " | openssl s_client -quiet -connect " + DeployedDovecot.HOST + ":993 -servername "
+                        + DeployedDovecot.HOST + " 2>/dev/null");
+        assertThat(r.stdout()).contains("a OK");
+        assertThat(stack.dovecotLogins(user.name())).isEqualTo(before + 1);
+        assertThat(stack.dovecotLogins(other.name())).isEqualTo(otherBefore);
+    }
+
     @Test
     void everyUserHasOneUnreadSeedMessageWithTheCanarySubject() throws Exception {
         assertThat(stack.dovecotUsers()).hasSize(2);

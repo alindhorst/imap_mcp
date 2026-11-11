@@ -72,4 +72,21 @@ class DeployedFailsafeConfigTest {
         assertThat(text(FAILSAFE + "/configuration/properties/configurationParameters"))
                 .doesNotContain("testclass.order");
     }
+
+    /** An IT that starts the shared stack must match the deployed-it include, or the default execution runs it too. */
+    @Test
+    void everyITThatUsesTheDeployedStackIsNamedDeployedIT() throws Exception {
+        try (java.util.stream.Stream<Path> files = Files.walk(Path.of("src/test/java"))) {
+            java.util.List<String> misnamed = files.filter(f -> f.getFileName().toString().endsWith("IT.java"))
+                    .filter(f -> !f.getFileName().toString().endsWith("DeployedIT.java"))
+                    .filter(f -> {
+                        try {
+                            return Files.readString(f).contains("DeployedStack");
+                        } catch (java.io.IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    }).map(f -> f.getFileName().toString()).sorted().toList();
+            assertThat(misnamed).as("ITs that use DeployedStack but are not named *DeployedIT").isEmpty();
+        }
+    }
 }
