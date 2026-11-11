@@ -50,7 +50,7 @@ class ConnectorSessionFixtureTest {
     @Test
     void aMissingHeaderIsRejected() {
         String request = "{\"seq\":1,\"relativeMs\":0,\"host\":\"mcp\",\"method\":\"POST\",\"path\":\"/mcp\","
-                + "\"query\":{},\"headers\":{},\"status\":401,\"wwwAuthenticate\":true}";
+                + "\"query\":[],\"headers\":{},\"status\":401,\"wwwAuthenticate\":true}";
         assertThatThrownBy(() -> ConnectorSessionFixture.read(request + "\n"))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("header");
         assertThatThrownBy(() -> ConnectorSessionFixture.read(""))
@@ -85,7 +85,9 @@ class ConnectorSessionFixtureTest {
     @Test
     void aWrittenRequestKeepsAllFields() throws IOException {
         var r = new ConnectorSessionFixture.Request(3, 1500L, "idp", "GET", "/realms/imap-mcp/x",
-                Map.of("state", "<redacted>", "scope", "imap-mcp:read"), Map.of("Authorization", "present"), 302, false);
+                List.of(new ConnectorSessionFixture.Param("state", "<redacted>"), new ConnectorSessionFixture.Param("scope", "imap-mcp:read"),
+                        new ConnectorSessionFixture.Param("scope", "openid")),
+                Map.of("Authorization", "present"), 302, false);
         var f = new ConnectorSessionFixture(new ConnectorSessionFixture.Header(ConnectorSessionFixture.FORMAT,
                 ConnectorSessionFixture.VERSION, "assumed"), List.of(r));
         StringWriter out = new StringWriter();
