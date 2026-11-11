@@ -52,6 +52,59 @@
     </dependency>
   </dependencies>
 
+  <properties>
+    <!-- Session start with millisecond resolution (UTC); the gate ignores reports older than it. -->
+    <maven.build.timestamp.format>yyyyMMddHHmmssSSS</maven.build.timestamp.format>
+    <!-- Defaults for the gate arguments below; -DskipTests, -DskipITs, -Dmaven.test.skip and -Dimapmcp.partialBuild
+         on the command line override them. -->
+    <skipTests>false</skipTests>
+    <skipITs>false</skipITs>
+    <maven.test.skip>false</maven.test.skip>
+    <imapmcp.partialBuild>false</imapmcp.partialBuild>
+  </properties>
+
+  <build>
+    <plugins>
+      <!-- Test-completeness gate (SPEC 5.8, #426): plain Java, not a surefire test, so -DskipTests cannot silence it.
+           This module is reactor-last, so every report of the build exists when it runs in verify. exec:java runs in
+           the Maven JVM and a failure is the exception of main (no System.exit). -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>test-completeness-gate</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>de.alexanderlindhorst.imapmcp.buildgate.TestCompletenessGate</mainClass>
+              <arguments>
+                <argument>${session.executionRootDirectory}</argument>
+                <argument>${maven.build.timestamp}</argument>
+                <argument>${skipTests}</argument>
+                <argument>${skipITs}</argument>
+                <argument>${maven.test.skip}</argument>
+                <argument>${imapmcp.partialBuild}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- The live smoke run is a partial build (its *LiveSmoke tests skip without IMAP_MCP_SMOKE_*, no *IT runs). -->
+    <profile>
+      <id>smoke</id>
+      <properties>
+        <imapmcp.partialBuild>true</imapmcp.partialBuild>
+      </properties>
+    </profile>
+  </profiles>
+
   <reporting>
     <plugins>
       <plugin>

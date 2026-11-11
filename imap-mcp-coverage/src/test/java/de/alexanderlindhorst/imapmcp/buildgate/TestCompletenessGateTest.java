@@ -183,6 +183,16 @@ class TestCompletenessGateTest {
     }
 
     @Test
+    void summaryListsAtMostFiveNamesAndCountsTheRest() throws Exception {
+        for (int i = 0; i < 12; i++) {
+            itSource("N" + i + "IT");
+        }
+        String summary = run().summary();
+        assertThat(summary).contains("and 7 more").doesNotContain("p.N11IT");
+        assertThat(summary.length()).isLessThan(600);
+    }
+
+    @Test
     void summaryNeverEchoesSkipMessagesOrTestOutput() throws Exception {
         Path d = Files.createDirectories(root.resolve("m/target/surefire-reports"));
         Path f = d.resolve("TEST-a.FooTest.xml");
@@ -190,6 +200,12 @@ class TestCompletenessGateTest {
                 + "<skipped message=\"SECRET-SUBJECT\"/></testcase><system-out>SECRET-BODY</system-out></testsuite>");
         Files.setLastModifiedTime(f, FileTime.fromMillis(START + 5));
         assertThat(run().summary()).doesNotContain("SECRET");
+    }
+
+    @Test
+    void sessionStartParsesTheMavenBuildTimestampAsUtcAndPlainEpochMillis() {
+        assertThat(TestCompletenessGate.parseStart("20270115083000123")).isEqualTo(1_800_001_800_123L);
+        assertThat(TestCompletenessGate.parseStart("1800001800123")).isEqualTo(1_800_001_800_123L);
     }
 
     @Test

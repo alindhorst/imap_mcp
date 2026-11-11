@@ -5,6 +5,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -257,8 +260,17 @@ public final class TestCompletenessGate {
         }
     }
 
+    static long parseStart(String s) {
+        if (s.length() == 17) {
+            return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS")).toInstant(ZoneOffset.UTC)
+                    .toEpochMilli();
+        }
+        return Long.parseLong(s);
+    }
+
     /**
-     * Arguments: root directory, session start in epoch milliseconds, then skipTests, skipITs, maven.test.skip and
+     * Arguments: root directory, session start ({@code maven.build.timestamp}, format {@code yyyyMMddHHmmssSSS}, UTC;
+     * a plain epoch millisecond number is accepted too), then skipTests, skipITs, maven.test.skip and
      * imapmcp.partialBuild as true/false. Throws (so exec:java fails the build) instead of calling System.exit.
      */
     public static void main(String[] args) throws IOException {
@@ -272,7 +284,7 @@ public final class TestCompletenessGate {
             }
             allow = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
-        Config config = new Config(Path.of(args[0]), Long.parseLong(args[1]), Boolean.parseBoolean(args[2]),
+        Config config = new Config(Path.of(args[0]), parseStart(args[1]), Boolean.parseBoolean(args[2]),
                 Boolean.parseBoolean(args[3]), Boolean.parseBoolean(args[4]), Boolean.parseBoolean(args[5]));
         Result result = check(config, parseAllowlist(allow));
         if (!result.ok()) {

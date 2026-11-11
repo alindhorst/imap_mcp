@@ -5,7 +5,8 @@ import org.testcontainers.DockerClientFactory;
 
 /**
  * Makes the integration test phase fail (not skip) when Docker is missing. Failsafe sets
- * {@code imapmcp.requireDocker=true}; {@code -DskipITs} skips failsafe altogether and therefore the check.
+ * {@code imapmcp.requireDocker=true}; {@code -DskipITs} skips failsafe altogether and therefore the check; the
+ * test-completeness gate (SPEC 5.8) then fails {@code verify} unless {@code -Dimapmcp.partialBuild=true} is given.
  */
 public final class DockerGuard {
 
@@ -29,7 +30,7 @@ public final class DockerGuard {
         }
         if (!available) {
             throw new IllegalStateException("Docker is required for the integration tests (imap-mcp-it) but no "
-                    + "usable Docker daemon was found. Start Docker, or skip the integration tests with -DskipITs.");
+                    + "usable Docker daemon was found. Start Docker, or run a partial build with -DskipITs -Dimapmcp.partialBuild=true (no evidence for the merge gate).");
         }
     }
 
