@@ -146,7 +146,7 @@ final class DeployedStack {
                 .withFileFromPath("Dockerfile", runDir.resolve("Dockerfile"))
                 .withFileFromPath("jar/imap-mcp.jar", jar)
                 .get();
-        Files.writeString(runDir.resolve("it-compose.override.yaml"), DeployedOverride.render(imageTag, ItImages.SQUID));
+        Files.writeString(runDir.resolve("it-compose.override.yaml"), DeployedOverride.render(imageTag, ItImages.SQUID, "x"));
 
         DeployedCompose compose = new DeployedCompose("imcp-" + run, runDir,
                 List.of("compose.yaml", "it-compose.override.yaml")).waitingForHealthy("app");
