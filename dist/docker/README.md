@@ -108,7 +108,9 @@ Opening dynamic client registration for Claude is possible but not set up here: 
 7. Only now consider `http.stateful: true` and `purge.enabled: true` in `app/config.yaml` (`compose restart app`), then the v3b smoke checklist of the repository README.
 8. Teardown.
 
-`http.allowedOrigins` is left at its default. Whether Claude's `Origin` header passes the origin check is not verified. If `/mcp` answers 403 at Claude's first request, set `http.allowedOrigins: ["https://claude.ai"]` in `app/config.yaml` and restart the app. If Claude reconnects sporadically, `revokeRefreshToken` in the realm can be set to false (Realm settings, Tokens: Revoke Refresh Token).
+`http.allowedOrigins` is left at its default. Observed (deployed tests): without an `Origin` header the request passes, and `https://claude.ai` is refused with 403; with `http.allowedOrigins: ["https://claude.ai"]` and a restart it passes. Whether Claude sends an `Origin` header, and which, is not verified. If `/mcp` answers 403 at Claude's first request, set `http.allowedOrigins: ["https://claude.ai"]` in `app/config.yaml` and restart the app.
+
+The realm rotates refresh tokens (`revokeRefreshToken` true, `refreshTokenMaxReuse` 0). Observed: reusing an old refresh token revokes the session, and two refreshes with the same token at the same moment usually leave the client logged out. If Claude reconnects sporadically, the recommendation (not tested) is to keep rotation and raise `refreshTokenMaxReuse` to 1 (Realm settings, Tokens). The details are in section 4 of [DEPLOYMENT.md](../../doc/DEPLOYMENT.md).
 
 ## Recording a connector session
 

@@ -31,14 +31,19 @@ The full checklist with the commands is in [`dist/docker/README.md`](../dist/doc
 5. Read tools, then (with `read_only` off) write tools. Reading leaves messages unread.
 6. Only then consider `http.stateful` and `purge.enabled`, and run the v3b smoke checklist in the [README](../README.md#smoke-checklist-for-v3b).
 
-## 4. Assumptions not yet verified, and their symptoms
+## 4. Assumptions, what the tests observed, and their symptoms
 
-- **`Origin` header from Claude.** A 403 on the first request to `/mcp` means the origin check refused it: set `http.allowedOrigins: ["https://claude.ai"]` and restart the app.
-- **Callback `https://claude.com/api/mcp/auth_callback`.** It is registered as an assumption; only the `claude.ai` callback is documented. A redirect-URI error at Keycloak points here.
+What is stated as observed comes from the deployed integration tests (section 6, Keycloak 26.4 behind Caddy, local names and a local CA). What is stated as unknown needs the real connector on a public host.
+
+- **`Origin` header from Claude.** Observed with the shipped config: a request without `Origin` passes, and `https://claude.ai` and `null` get 403 without a `WWW-Authenticate` header. With `http.allowedOrigins: ["https://claude.ai"]` and a restart of the app, `https://claude.ai` passes, another origin is still 403, and a request without `Origin` still passes. Linked accounts survive the restart. Unknown: whether Claude sends an `Origin` at all, and which. A 403 on the first request to `/mcp` means the origin check refused it: set `http.allowedOrigins: ["https://claude.ai"]` and restart the app.
+- **Callbacks.** Observed: the realm accepts both `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback` for `claude-connector` (authorization and token exchange), and refuses an unregistered redirect URI with an error page. Unknown: which of them the real connector uses; only the `claude.ai` callback is documented. A redirect-URI error at Keycloak points here.
 - **Claude Code** is not supported (its loopback redirect is not registered).
-- **Refresh token rotation.** If Claude reconnects sporadically, set `revokeRefreshToken` to false in the realm.
+- **Authorization server metadata.** Observed: the document at `/.well-known/oauth-authorization-server/realms/imap-mcp` (RFC 8414 with the path inserted, the first location in the MCP discovery order) answers 200 through Caddy, and `authorization_response_iss_parameter_supported` is true. The advertised `registration_endpoint` answers 404 through Caddy (client registration is not public). `token_endpoint_auth_methods_supported` does not contain `none`, although the token exchange of the public client works without a secret. Unknown: whether the real connector accepts that; a client that insists on `none` in the metadata would refuse.
+- **Access token expiry.** Observed: a token 10 seconds past its `exp` is still accepted (the 60 second skew), 63 seconds past it is refused with 401 and `error="invalid_token"`; a refresh then gives a token that works.
+- **Scopes in the authorization request.** Observed with the shipped realm: `openid` is accepted in addition to the two `imap-mcp` scopes; `offline_access`, `profile` and `email` are refused with `invalid_scope`. A write-scope refusal on a tool call is a `PERMISSION_DENIED` tool result, not an HTTP challenge; a token with only the write scope gets 403 `insufficient_scope`, and authorizing again with both scopes works.
+- **Refresh token rotation.** The shipped realm rotates refresh tokens (`revokeRefreshToken` true, `refreshTokenMaxReuse` 0). Observed: every refresh returns a new refresh token and the old one is refused with `invalid_grant`; presenting the old one again also revokes the session, so the new one is refused too. Two refreshes with the same token at the same moment usually end with one 200 and one `invalid_grant`, after which the new token of the winner is refused as well, so the client is logged out; in some rounds both succeeded. That is a plausible cause of sporadic reconnects. Recommendation, not tested: keep rotation, and if reconnects after refresh races are seen, raise `refreshTokenMaxReuse` to 1 (Realm settings, Tokens). That variant itself has not been tested, and the shipped realm is unchanged.
 
-To replace these assumptions with facts, record one real connector session with the opt-in kit: [Recording a connector session](../dist/docker/README.md#recording-a-connector-session).
+To replace what is still unknown with facts, record one real connector session with the opt-in kit: [Recording a connector session](../dist/docker/README.md#recording-a-connector-session).
 
 ## 5. Podman notes
 
@@ -50,9 +55,18 @@ To replace these assumptions with facts, record one real connector session with 
 
 ## 6. What was verified, and what was not
 
-Verified (rootless Podman 5.8.2, `podman compose` and podman-compose 1.6.0, local `.test` names on port 8443 with a local CA): all containers healthy, both databases and the Flyway migrations, discovery through the proxy, 404 for the non-public paths, the resolved realm placeholders, the 401 challenge, and a token round trip (`initialize`, `tools/list`, `list_accounts` with `link_url`), including refusal of a token without the audience.
+Verified by the deployed integration tests of `imap-mcp-it` (`*DeployedIT`; see the [README](../README.md#build) for how to run them). They start the stack of `dist/docker` from a copy on rootless Podman 5.8.2, with local `.test` names on port 8443, a local CA and a forward proxy, and every request goes through Caddy:
 
-Not verified: a run on a native Docker daemon, a run on a public host (DNS, Let's Encrypt, ports 80 and 443), the browser login with TOTP, the Claude connector itself, and linking a real IMAP account. These are what the checks in section 3 are for.
+- `ComposeLifecycleDeployedIT`: the compose harness leaves nothing behind after a pass or a failed start, and keeps the logs of a failed start.
+- `StackPreflightDeployedIT`: the backend network is internal and without IPv6, every backend container is inside the subnet and not blocked by the production SSRF policy, the run uses a copy of the project directory, the proxy allows only `CONNECT` to the test domain on 8443, Dovecot presents its certificate on 993 chained to the test CA, and no generated secret appears in captured output.
+- `DiscoveryDeployedIT`: both metadata paths return the same document, the 401 challenge on `/mcp` is verbatim, and `/health`, `/admin/`, `/realms/master/` and client registration answer 404.
+- `ConnectorClientDeployedIT`: the sequence of the connector from the challenge to an authenticated MCP session (metadata, authorization with PKCE `S256` and `claude-connector`, the consent page shown to a first-time user, the token request without a secret, `tools/list`, `list_accounts`), both callbacks, the refusal of a request without a challenge, of `plain`, of an unregistered redirect URI, of a wrong verifier and of a replayed code, and the discovery values listed in section 4.
+- `FlowDeployedIT`: the first login at `/accounts` creates the tenant and sets the `__Host-session` cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, no `Domain`); a user without `imap-mcp-user` gets 403 and no tenant; linking Dovecot on 993 under the production SSRF policy takes one LOGIN probe, and a host outside the allowlist gets the generic refusal and stores nothing; the read tools work and leave the message unseen as `doveadm` shows (PEEK); `set_flags` on a `read_only` account is refused and changes nothing; with `read_only` off one reversible write succeeds and leaves audit rows; a second tenant is isolated (`ACCOUNT_NOT_FOUND` and `INVALID_HANDLE` for the first tenant's handles, no IMAP I/O for the first tenant's account); the app log at INFO holds no subject, sender, password, token or session.
+- `TokenLifecycleDeployedIT`: expiry, refresh and rotation as described in section 4, parallel refresh, the 403 `insufficient_scope` challenge and the re-authorization, and the scope strings the realm accepts.
+- `OriginDeployedIT`: the `Origin` behaviour of section 4 and that linked accounts survive an app restart. The `Host` check is not tested through Caddy: a foreign name is answered by Caddy itself and never reaches the app.
+- `ConnectorContractDeployedIT`: the client's connector sequence conforms to the committed connector fixture and replays its statuses. That fixture is still `source: assumed`, so this proves the stack against an assumed sequence only; the log line of the run names the source.
+
+Not verified, because it needs a public run or a runner: the real Claude connector (whether it sends an `Origin` and which, its `User-Agent` and protocol version, whether it accepts metadata without `none`), the public host with DNS and Let's Encrypt (ports 80 and 443), the browser login with TOTP, a run with native Docker as the engine (the tests ran on rootless Podman), and a run on a CI runner. These are what the checks in section 3 are for.
 
 ## 7. Security notes
 
