@@ -276,6 +276,57 @@ class DistDockerTest {
         assertThat(dir.resolve(".env")).exists();
     }
 
+    /** #425: the backend subnet is one variable, used for the network and for the Keycloak trusted proxies. */
+    @Test
+    void backendSubnetIsOneVariableInComposeAndNamedInTheDocs() throws IOException {
+        String text = read(DOCKER.resolve("compose.yaml"));
+        String expr = "${BACKEND_SUBNET:-172.28.0.0/24}";
+        JsonNode compose = YAMLMapper.builder().build().readTree(text);
+        assertThat(compose.get("networks").get("backend").get("ipam").get("config").get(0).get("subnet").asString())
+                .isEqualTo(expr);
+        assertThat(compose.get("services").get("keycloak").get("environment").get("KC_PROXY_TRUSTED_ADDRESSES")
+                .asString()).isEqualTo(expr);
+        assertThat(text.replace(expr, "")).doesNotContain("172.28.");
+        assertThat(read(Path.of("..", "doc", "DEPLOYMENT.md"))).contains("BACKEND_SUBNET");
+        assertThat(read(DOCKER.resolve("README.md"))).contains("BACKEND_SUBNET");
+    }
+
+    /** #425: setup.sh validates BACKEND_SUBNET as an IPv4 CIDR before writing, passes it on only when set. */
+    @Test
+    void setupValidatesAndPassesOnBackendSubnet(@org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+        Path dir = Files.createDirectories(tmp.resolve("docker"));
+        Files.createDirectories(dir.resolve("app"));
+        for (String f : List.of("setup.sh", "config.yaml.example", "Dockerfile")) {
+            Files.copy(DOCKER.resolve(f), dir.resolve(f));
+        }
+        for (String bad : List.of("not-a-cidr", "10.0.0.0/33", "300.0.0.0/24", "10.0.0.0", "10.0.0.0/24 x", "10.0.0/24")) {
+            assertThat(runSetup(dir, bad)).as(bad).isNotZero();
+            assertThat(dir.resolve(".env")).doesNotExist();
+            assertThat(dir.resolve("app").resolve("config.yaml")).doesNotExist();
+        }
+        assertThat(runSetup(dir, null)).isZero();
+        assertThat(read(dir.resolve(".env"))).doesNotContain("BACKEND_SUBNET");
+        Files.delete(dir.resolve(".env"));
+        assertThat(runSetup(dir, "10.77.0.0/24")).isZero();
+        assertThat(read(dir.resolve(".env"))).contains("\nBACKEND_SUBNET=10.77.0.0/24\n");
+    }
+
+    private static int runSetup(Path dir, String subnet) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder("bash", dir.resolve("setup.sh").toString()).directory(dir.toFile())
+                .redirectErrorStream(true);
+        pb.environment().put("MCP_HOST", "mail.example.org");
+        pb.environment().put("IDP_HOST", "idp.example.org");
+        pb.environment().put("ACME_EMAIL", "a@example.org");
+        pb.environment().put("IMAP_HOSTS", "imap.example.org");
+        pb.environment().remove("BACKEND_SUBNET");
+        if (subnet != null) {
+            pb.environment().put("BACKEND_SUBNET", subnet);
+        }
+        Process p = pb.start();
+        p.getInputStream().readAllBytes();
+        return p.waitFor();
+    }
+
     /** #418: doc/DEPLOYMENT.md exists, is linked from both READMEs, its relative links resolve, and it stays clean. */
     @Test
     void deploymentGuideIsLinkedAndItsLinksResolve() throws IOException {
