@@ -44,7 +44,7 @@ The full checklist with the commands is in [`dist/docker/README.md`](../dist/doc
 - `podman compose` uses the docker-compose provider and needs the socket (`systemctl --user enable --now podman.socket`).
 - Rootless healthchecks need systemd user timers: enable linger.
 - Bind mounts carry `:Z`; do not use `keep-id`.
-- The compose network uses the fixed subnet `172.28.0.0/24`; if it collides, change it in `networks.backend` and in `KC_PROXY_TRUSTED_ADDRESSES`.
+- The compose network uses the default subnet `172.28.0.0/24`; if it collides, set `BACKEND_SUBNET` (an IPv4 CIDR, in `.env` or via `BACKEND_SUBNET=... ./setup.sh`); it is used for `networks.backend` and for `KC_PROXY_TRUSTED_ADDRESSES`.
 
 ## 6. What was verified, and what was not
 
