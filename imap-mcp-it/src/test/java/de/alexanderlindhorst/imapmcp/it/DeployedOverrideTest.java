@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 
 class DeployedOverrideTest {
 
-    private final String yaml = DeployedOverride.render("imap-mcp-it:abc", "squid:digest");
+    private final String yaml = DeployedOverride.render("imap-mcp-it:abc", "squid:digest", "dovecot-it:xyz");
 
     @Test
     void backendNetworkIsInternalWithoutIpv6AndWithoutIpamOverride() {
@@ -43,5 +43,14 @@ class DeployedOverrideTest {
     @Test
     void healthcheckTimingIsShortenedForTheSlowStarters() {
         assertThat(yaml).contains("interval: 3s");
+    }
+
+    @Test
+    void dovecotIsAddedOnTheBackendNetworkOnlyWithItsAliasAndPort993Sysctl() {
+        String dovecot = yaml.substring(yaml.indexOf("  dovecot:"), yaml.indexOf("networks:\n  backend:"));
+        assertThat(dovecot).contains("image: dovecot-it:xyz").contains("pull_policy: never")
+                .contains("net.ipv4.ip_unprivileged_port_start=0").contains("imap.imap-mcp.test");
+        assertThat(dovecot).doesNotContain("outside").doesNotContain("ports:").doesNotContain("volumes:")
+                .doesNotContain("environment");
     }
 }

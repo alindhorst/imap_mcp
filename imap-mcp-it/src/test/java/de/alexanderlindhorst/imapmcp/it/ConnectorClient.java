@@ -255,7 +255,8 @@ final class ConnectorClient {
 
     // ---- internals -----------------------------------------------------------------------------------------------
 
-    private HttpResponse<String> send(HttpRequest.Builder b) throws IOException, InterruptedException {
+    /** Sends one request through the tracing client (package-private for the contract run, #435). */
+    HttpResponse<String> send(HttpRequest.Builder b) throws IOException, InterruptedException {
         return http.send(b.timeout(Duration.ofSeconds(30)).build(), HttpResponse.BodyHandlers.ofString());
     }
 

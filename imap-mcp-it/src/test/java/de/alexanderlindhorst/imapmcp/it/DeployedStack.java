@@ -60,6 +60,10 @@ final class DeployedStack {
     private final List<String> buildContext;
     private HttpClient http;
     private int proxyPort;
+    private List<DeployedDovecot.ImapUser> dovecotUsers = List.of();
+    private String canarySubject;
+    private String dovecotTag;
+    private int dovecotLoginsAtStart = -1;
 
     private DeployedStack(Path sourceDir, Map<String, String> sourceSnapshot, Path runDir, String subnet,
             String imageTag, DeployedCompose compose, StringBuilder captured, List<String> buildContext) {
@@ -146,11 +150,20 @@ final class DeployedStack {
                 .withFileFromPath("Dockerfile", runDir.resolve("Dockerfile"))
                 .withFileFromPath("jar/imap-mcp.jar", jar)
                 .get();
-        Files.writeString(runDir.resolve("it-compose.override.yaml"), DeployedOverride.render(imageTag, ItImages.SQUID));
+        String dovecotTag = "localhost/imap-mcp-it-dovecot:" + run;
+        List<DeployedDovecot.ImapUser> users = DeployedDovecot.generateUsers();
+        String canary = DeployedDovecot.newCanarySubject();
+        DeployedDovecot.buildImage(runDir, dovecotTag, users, canary);
+        Files.writeString(runDir.resolve("it-compose.override.yaml"),
+                DeployedOverride.render(imageTag, ItImages.SQUID, dovecotTag));
 
         DeployedCompose compose = new DeployedCompose("imcp-" + run, runDir,
-                List.of("compose.yaml", "it-compose.override.yaml")).waitingForHealthy("app");
+                List.of("compose.yaml", "it-compose.override.yaml")).waitingForHealthy("app")
+                .waitingForHealthy("dovecot");
         DeployedStack stack = new DeployedStack(source, snapshot, runDir, subnet, imageTag, compose, captured, context);
+        stack.dovecotUsers = users;
+        stack.canarySubject = canary;
+        stack.dovecotTag = dovecotTag;
         try {
             compose.start(START_BOUND);
         } catch (RuntimeException e) {
@@ -162,6 +175,7 @@ final class DeployedStack {
             throw e;
         }
         try {
+            stack.seedDovecot();
             stack.proxyPort = compose.hostPort("proxy", 3128);
             stack.http = stack.buildClient();
             stack.awaitProxy();
@@ -206,6 +220,20 @@ final class DeployedStack {
                 .followRedirects(HttpClient.Redirect.NEVER).connectTimeout(Duration.ofSeconds(10)).build();
     }
 
+    /** Delivers the canary message to every user (doveadm as the container's vmail user), then records the baseline. */
+    private void seedDovecot() throws Exception {
+        for (DeployedDovecot.ImapUser user : dovecotUsers) {
+            DeployedCompose.ExecResult r = compose.exec("dovecot", List.of(), "sh", "-c",
+                    "doveadm save -u \"$0\" -m INBOX < /seed/msg.eml", user.name());
+            if (r.exitCode() != 0) {
+                throw new IllegalStateException("seeding the Dovecot INBOX failed: " + r);
+            }
+        }
+        compose.saveLogs();
+        dovecotLoginsAtStart = (int) Files.readAllLines(compose.logsDir().resolve("dovecot.log")).stream()
+                .filter(l -> l.contains("Login:")).count();
+    }
+
     private void awaitProxy() throws Exception {
         long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         while (true) {
@@ -235,6 +263,13 @@ final class DeployedStack {
             DockerClientFactory.lazyClient().removeImageCmd(imageTag).withForce(true).exec();
         } catch (RuntimeException e) {
             // already gone, or removed by Ryuk
+        }
+        if (dovecotTag != null) {
+            try {
+                DockerClientFactory.lazyClient().removeImageCmd(dovecotTag).withForce(true).exec();
+            } catch (RuntimeException e) {
+                // already gone, or removed by Ryuk
+            }
         }
     }
 
@@ -344,6 +379,25 @@ final class DeployedStack {
     /** Runs a command in a service container (see {@link DeployedCompose#exec}). */
     DeployedCompose.ExecResult exec(String service, List<String> env, String... command) throws InterruptedException {
         return compose.exec(service, env, command);
+    }
+
+    /**
+     * The Dovecot users of this run, for the flow tests (#431): generated names, passwords only through the
+     * redacting {@link DeployedDovecot.Secret}; each has the unread canary message in INBOX; never log them.
+     * The service is {@link DeployedDovecot#HOST}:{@link DeployedDovecot#PORT}, reachable from the app only.
+     */
+    List<DeployedDovecot.ImapUser> dovecotUsers() {
+        return dovecotUsers;
+    }
+
+    /** Subject of the unread message seeded in the INBOX of every Dovecot user. */
+    String canarySubject() {
+        return canarySubject;
+    }
+
+    /** Number of {@code Login:} lines in the Dovecot log when the stack was ready (before any test flow). */
+    int dovecotLoginsAtStart() {
+        return dovecotLoginsAtStart;
     }
 
     /** Everything the fixture captured of setup.sh, for the canary scan. */
