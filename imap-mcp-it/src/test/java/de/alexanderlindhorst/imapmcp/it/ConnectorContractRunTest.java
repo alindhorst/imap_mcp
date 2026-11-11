@@ -29,4 +29,16 @@ class ConnectorContractRunTest {
         assertThatThrownBy(() -> ConnectorContractRun.loadFixture("connector/nope.jsonl"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void theGateLogLineNamesTheFixtureSourceAndItsLocation() {
+        ConnectorSessionFixture assumed = ConnectorContractRun.loadFixture(null);
+        assertThat(ConnectorContractRun.sourceLine(null, assumed)).isEqualTo(
+                "connector contract: fixture source=assumed (connector/assumed-claude-session.jsonl)");
+        ConnectorSessionFixture recorded = new ConnectorSessionFixture(new ConnectorSessionFixture.Header(
+                ConnectorSessionFixture.FORMAT, ConnectorSessionFixture.VERSION, "recorded 2026-11-12"),
+                assumed.requests());
+        assertThat(ConnectorContractRun.sourceLine("/x/rec.jsonl", recorded)).isEqualTo(
+                "connector contract: fixture source=recorded 2026-11-12 (/x/rec.jsonl)");
+    }
 }
