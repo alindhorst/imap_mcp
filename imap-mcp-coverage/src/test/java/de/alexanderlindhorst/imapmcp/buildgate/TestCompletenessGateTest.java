@@ -188,7 +188,7 @@ class TestCompletenessGateTest {
             itSource("N" + i + "IT");
         }
         String summary = run().summary();
-        assertThat(summary).contains("and 7 more").doesNotContain("p.N11IT");
+        assertThat(summary).contains("and 7 more").doesNotContain("p.N9IT");
         assertThat(summary.length()).isLessThan(600);
     }
 

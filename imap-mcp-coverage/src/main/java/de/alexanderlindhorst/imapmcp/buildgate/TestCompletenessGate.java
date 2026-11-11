@@ -134,7 +134,7 @@ public final class TestCompletenessGate {
                 }
             }
             if (!offenders.isEmpty()) {
-                violations.add("skipped or aborted tests off the allowlist: " + String.join(", ", offenders));
+                violations.add("skipped or aborted tests off the allowlist: " + names(offenders));
             }
             List<String> missing = new ArrayList<>();
             for (String itClass : itClasses(config.root())) {
@@ -145,7 +145,7 @@ public final class TestCompletenessGate {
                 }
             }
             if (!missing.isEmpty()) {
-                violations.add("no integration test report with tests for: " + String.join(", ", missing));
+                violations.add("no integration test report with tests for: " + names(missing));
             }
         }
 
@@ -161,6 +161,15 @@ public final class TestCompletenessGate {
                     + String.join("; ", violations);
         }
         return new Result(List.copyOf(violations), summary);
+    }
+
+    /** At most five names, then a count, so one build line stays readable. */
+    private static String names(java.util.Collection<String> all) {
+        List<String> list = new ArrayList<>(all);
+        if (list.size() <= 5) {
+            return String.join(", ", list);
+        }
+        return String.join(", ", list.subList(0, 5)) + " and " + (list.size() - 5) + " more";
     }
 
     private static void flag(List<String> violations, boolean set, String name) {
