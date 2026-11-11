@@ -139,10 +139,41 @@
         <artifactId>maven-failsafe-plugin</artifactId>
         <executions>
           <execution>
+            <id>default</id>
             <goals>
               <goal>integration-test</goal>
               <goal>verify</goal>
             </goals>
+            <configuration>
+              <excludes>
+                <exclude>**/*DeployedIT.java</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <!-- The deployed stack (#427, SPEC 5.8): one compose project per execution, shared by the *DeployedIT classes in
+               one JVM, not parallel, its own summary, and a 15 minute bound on every test and lifecycle method. It runs
+               in the default verify (owner decision of 2026-11-11). -->
+          <execution>
+            <id>deployed-it</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>**/*DeployedIT.java</include>
+              </includes>
+              <forkCount>1</forkCount>
+              <reuseForks>true</reuseForks>
+              <summaryFile>${project.build.directory}/failsafe-reports/failsafe-summary-deployed.xml</summaryFile>
+              <properties>
+                <configurationParameters>
+                  junit.jupiter.execution.parallel.enabled=false
+                  junit.jupiter.execution.timeout.lifecycle.method.default=15m
+                  junit.jupiter.execution.timeout.testable.method.default=15m
+                </configurationParameters>
+              </properties>
+            </configuration>
           </execution>
         </executions>
         <configuration>
@@ -166,6 +197,15 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-failsafe-plugin</artifactId>
+            <executions>
+              <!-- no Docker in the smoke profile: the deployed stack does not run -->
+              <execution>
+                <id>deployed-it</id>
+                <configuration>
+                  <skip>true</skip>
+                </configuration>
+              </execution>
+            </executions>
             <configuration>
               <includes>
                 <include>**/*LiveSmoke.java</include>
