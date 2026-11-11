@@ -98,6 +98,7 @@ class ConnectorClientDeployedIT {
         Map<String, String> q = query(back);
         assertThat(q.get("state")).isEqualTo(params.get("state"));
         assertThat(q).containsKey("code").doesNotContainKey("error");
+        assertThat(q.get("iss")).isEqualTo(issuer);
         secrets.add(q.get("code"));
 
         // 6. the token request
@@ -168,27 +169,61 @@ class ConnectorClientDeployedIT {
         assertThat(client.head(root).statusCode()).isEqualTo(200);
     }
 
+    /**
+     * Characterization of Keycloak 26.4 behind Caddy (to be re-read at an upgrade; the test fails loudly if it
+     * changes): (a) answers with the real document, (b) is 404, (c) does not advertise {@code none} as a token
+     * endpoint auth method although the public client works without a secret (step 6 of the contract test).
+     */
     @Test
     void authorizationServerDiscoveryFollowsTheMcpOrderAndCharacterizesTheOptionalFields() throws Exception {
         ConnectorClient client = new ConnectorClient(stack);
         URI iss = URI.create(issuer);
         String origin = stack.idpOrigin();
-        for (String url : List.of(origin + "/.well-known/oauth-authorization-server" + iss.getPath(),
-                origin + "/.well-known/openid-configuration" + iss.getPath())) {
-            int status = client.get(url).statusCode();
-            assertThat(status).as(url).isNotEqualTo(200);
-            assertThat(status / 100).as(url).isNotEqualTo(3);
-        }
-        JsonNode as = JSON.readTree(client.get(issuer + "/.well-known/openid-configuration").body());
-        assertThat(as.get("authorization_endpoint").asString()).startsWith("https://").startsWith(origin + "/");
-        assertThat(as.get("token_endpoint").asString()).startsWith("https://").startsWith(origin + "/");
+        String authorizationServer = JSON.readTree(
+                client.get(stack.mcpOrigin() + "/.well-known/oauth-protected-resource/mcp").body())
+                .get("authorization_servers").get(0).asString();
+
+        // (c) the document at the OpenID Connect location under the issuer
+        HttpResponse<String> third = client.get(issuer + "/.well-known/openid-configuration");
+        assertThat(third.statusCode()).isEqualTo(200);
+        JsonNode as = JSON.readTree(third.body());
+        assertThat(as.get("issuer").asString()).isEqualTo(authorizationServer);
+        assertCapabilities(as, origin);
+
+        // (a) RFC 8414 with the path inserted: tried first, so it is the document Claude uses; here it is the same
+        HttpResponse<String> rfc8414 = client.get(origin + "/.well-known/oauth-authorization-server" + iss.getPath());
+        assertThat(rfc8414.statusCode()).isEqualTo(200);
+        assertThat(rfc8414.headers().firstValue("Content-Type").orElse("")).startsWith("application/json");
+        JsonNode first = JSON.readTree(rfc8414.body());
+        assertThat(first.get("issuer").asString()).isEqualTo(authorizationServer);
+        assertThat(first.get("authorization_endpoint")).isEqualTo(as.get("authorization_endpoint"));
+        assertThat(first.get("token_endpoint")).isEqualTo(as.get("token_endpoint"));
+        assertCapabilities(first, origin);
+
+        // (b) OpenID Connect discovery with the path inserted: neither a document nor a redirect
+        int inserted = client.get(origin + "/.well-known/openid-configuration" + iss.getPath()).statusCode();
+        assertThat(inserted).isNotEqualTo(200);
+        assertThat(inserted / 100).isNotEqualTo(3);
+
+        // characterized: the issuer parameter is advertised (so the authorization response carries iss), and the
+        // dynamic registration endpoint is advertised although Caddy answers 404 for it
+        assertThat(as.get("authorization_response_iss_parameter_supported").asBoolean()).isTrue();
+        assertThat(as.get("registration_endpoint").asString())
+                .isEqualTo(issuer + "/clients-registrations/openid-connect");
+        assertThat(client.get(as.get("registration_endpoint").asString()).statusCode()).isEqualTo(404);
+    }
+
+    private static void assertCapabilities(JsonNode as, String idpOrigin) {
+        assertThat(as.get("authorization_endpoint").asString()).startsWith("https://").startsWith(idpOrigin + "/");
+        assertThat(as.get("token_endpoint").asString()).startsWith("https://").startsWith(idpOrigin + "/");
         assertThat(strings(as.get("response_types_supported"))).contains("code");
         assertThat(strings(as.get("grant_types_supported"))).contains("authorization_code", "refresh_token");
         assertThat(strings(as.get("code_challenge_methods_supported"))).contains("S256");
-        assertThat(strings(as.get("token_endpoint_auth_methods_supported"))).contains("none");
-        System.out.println("characterized: authorization_response_iss_parameter_supported="
-                + as.get("authorization_response_iss_parameter_supported") + " registration_endpoint="
-                + as.get("registration_endpoint"));
+        // [C] characterized, not required: Keycloak 26.4 does not list "none" for its public clients (the secret-less
+        // token exchange of claude-connector in the contract test is the positive proof); a client that insists on
+        // seeing "none" in the metadata would refuse
+        assertThat(strings(as.get("token_endpoint_auth_methods_supported"))).containsExactlyInAnyOrder(
+                "private_key_jwt", "client_secret_basic", "client_secret_post", "tls_client_auth", "client_secret_jwt");
     }
 
     // ---- negatives -------------------------------------------------------------------------------------------
