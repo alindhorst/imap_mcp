@@ -1,8 +1,13 @@
 package de.alexanderlindhorst.imapmcp.it;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
+import org.testcontainers.images.builder.ImageFromDockerfile;
 
 /**
  * The Dovecot of the deployed stack (#429, SPEC 5.8): the pinned 2.4 image of {@link ItImages#DOVECOT} with its
@@ -102,5 +107,38 @@ final class DeployedDovecot {
                 + "Content-Type: text/plain; charset=utf-8\r\n"
                 + "\r\n"
                 + "Seeded by the deployed-stack fixture.\r\n";
+    }
+
+    /**
+     * Signs a leaf for {@link #HOST} with the copy's local CA (openssl, as setup.sh does for Caddy; the CA key is read
+     * by openssl only and never printed) and builds the image with everything copied in. The leaf key is a
+     * throwaway test key and is world-readable so that the unprivileged vmail user can read it.
+     */
+    static void buildImage(Path runDir, String tag, List<ImapUser> users, String canarySubject) throws Exception {
+        Path tls = Files.createDirectories(runDir.resolve("dovecot-tls"));
+        Files.writeString(tls.resolve("leaf.ext"), leafExtension());
+        openssl(tls, "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=" + HOST, "-keyout", "tls.key",
+                "-out", "leaf.csr");
+        openssl(tls, "x509", "-req", "-in", "leaf.csr", "-CA", "../local-ca/ca.crt", "-CAkey", "../local-ca/ca.key",
+                "-CAcreateserial", "-days", "90", "-extfile", "leaf.ext", "-out", "tls.crt");
+        Files.setPosixFilePermissions(tls.resolve("tls.key"), java.nio.file.attribute.PosixFilePermissions.fromString("rw-r--r--"));
+        new ImageFromDockerfile(tag, true)
+                .withFileFromString("Dockerfile", dockerfile())
+                .withFileFromPath("tls.crt", tls.resolve("tls.crt"))
+                .withFileFromPath("tls.key", tls.resolve("tls.key"))
+                .withFileFromString("users", passwdFile(users))
+                .withFileFromString("99-deployed.conf", config())
+                .withFileFromString("seed/msg.eml", seedMessage(canarySubject))
+                .get();
+    }
+
+    private static void openssl(Path dir, String... args) throws IOException, InterruptedException {
+        List<String> command = new java.util.ArrayList<>(List.of("openssl"));
+        command.addAll(List.of(args));
+        Process p = new ProcessBuilder(command).directory(dir.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (p.waitFor() != 0) {
+            throw new IllegalStateException("openssl " + args[0] + " failed: " + out);
+        }
     }
 }
