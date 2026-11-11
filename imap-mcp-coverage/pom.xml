@@ -11,9 +11,9 @@
   </parent>
 
   <artifactId>imap-mcp-coverage</artifactId>
-  <packaging>pom</packaging>
+  <packaging>jar</packaging>
   <name>IMAP MCP - aggregated coverage</name>
-  <description>Build-only leaf module: aggregates JaCoCo unit and integration coverage via mvn site. No sources.</description>
+  <description>Build-only leaf module: aggregates JaCoCo unit and integration coverage via mvn site, and runs the test-completeness gate (SPEC 5.8) in verify. Nothing depends on it.</description>
 
   <!-- report-aggregate reads classes, sources and exec data from compile/runtime/provided dependencies only;
        imap-mcp-it has just test classes, so it is test scope (exec data only). -->
