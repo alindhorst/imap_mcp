@@ -27,7 +27,7 @@ class DeployedOverrideGuardTest {
 
     @Test
     void theRealOverrideOfTheFixturePasses() {
-        assertThat(check(DeployedOverride.render("imap-mcp-it:abc", "squid:digest"))).isEmpty();
+        assertThat(check(DeployedOverride.render("imap-mcp-it:abc", "squid:digest", "dovecot-it:xyz"))).isEmpty();
     }
 
     @Test
