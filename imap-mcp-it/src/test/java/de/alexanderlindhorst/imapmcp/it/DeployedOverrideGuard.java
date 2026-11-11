@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -18,6 +19,13 @@ final class DeployedOverrideGuard {
 
     /** Services the override may add; everything else in services must exist in the shipped file. */
     private static final Set<String> ADDED_SERVICES = Set.of("proxy", "dovecot");
+    /** Keys of an added service; volumes, ports and network aliases are checked further down. */
+    private static final Set<String> ADDED_SERVICE_KEYS = Set.of("image", "pull_policy", "networks", "depends_on",
+            "healthcheck", "sysctls", "environment", "command", "entrypoint", "user", "volumes", "ports");
+    /** Network aliases an added service may claim; a shipped name (idp, mcp, keycloak, app) would hijack traffic. */
+    private static final Map<String, Set<String>> ADDED_SERVICE_ALIASES = Map.of(
+            "dovecot", Set.of("imap.imap-mcp.test"), "proxy", Set.of());
+    private static final Pattern LOOPBACK_PORT = Pattern.compile("127\\.0\\.0\\.1::\\d+");
     private static final Set<String> TOP_LEVEL = Set.of("services", "networks");
     private static final Set<String> HEALTHCHECK_TIMING = Set.of("interval", "start_period", "retries", "timeout");
     /** Per shipped service: the keys beyond healthcheck timing (ports only as an empty reset, build only as null). */
@@ -55,6 +63,8 @@ final class DeployedOverrideGuard {
         if (!shippedServices.has(name)) {
             if (!ADDED_SERVICES.contains(name)) {
                 out.add(path);
+            } else {
+                checkAddedService(name, node, out);
             }
             return;
         }
@@ -76,6 +86,54 @@ final class DeployedOverrideGuard {
                 }
             }
         }
+    }
+
+    private static void checkAddedService(String name, JsonNode node, List<String> out) {
+        String path = "services." + name;
+        for (Map.Entry<String, JsonNode> key : node.properties()) {
+            String keyPath = path + "." + key.getKey();
+            JsonNode value = key.getValue();
+            switch (key.getKey()) {
+                case "volumes" -> {
+                    // only bind mounts from the copy's directory (short form); never a named or absolute source
+                    if (!value.isArray() || !allMatch(value, v -> v.isString() && v.asString().startsWith("./"))) {
+                        out.add(keyPath);
+                    }
+                }
+                case "ports" -> {
+                    if (!name.equals("proxy") || !value.isArray()
+                            || !allMatch(value, v -> v.isString() && LOOPBACK_PORT.matcher(v.asString()).matches())) {
+                        out.add(keyPath);
+                    }
+                }
+                case "networks" -> {
+                    for (Map.Entry<String, JsonNode> network : value.isObject() ? value.properties()
+                            : List.<Map.Entry<String, JsonNode>>of()) {
+                        JsonNode aliases = network.getValue().path("aliases");
+                        Set<String> allowed = ADDED_SERVICE_ALIASES.getOrDefault(name, Set.of());
+                        if (!aliases.isMissingNode()
+                                && (!aliases.isArray() || !allMatch(aliases, a -> a.isString()
+                                        && allowed.contains(a.asString())))) {
+                            out.add(keyPath + "." + network.getKey() + ".aliases");
+                        }
+                    }
+                }
+                default -> {
+                    if (!ADDED_SERVICE_KEYS.contains(key.getKey())) {
+                        out.add(keyPath);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean allMatch(JsonNode array, java.util.function.Predicate<JsonNode> test) {
+        for (JsonNode element : array) {
+            if (!test.test(element)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Jackson reads the tagged scalar {@code !reset null} as the text "null"; a real null is the same reset. */
