@@ -236,7 +236,7 @@ final class DeployedStack {
     private int countLogins(String user) throws IOException {
         compose.saveLogs();
         return (int) Files.readAllLines(compose.logsDir().resolve("dovecot.log")).stream()
-                .filter(l -> l.contains("Login:") && (user == null || l.contains("user=<" + user + ">"))).count();
+                .filter(l -> l.contains("Logged in:") && (user == null || l.contains("user=<" + user + ">"))).count();
     }
 
     /** Number of successful logins of the user in the Dovecot log so far (snapshots the log; never prints it). */
@@ -405,7 +405,7 @@ final class DeployedStack {
         return canarySubject;
     }
 
-    /** Number of login lines in the Dovecot log when the stack was ready (before any test flow). */
+    /** Number of {@code Logged in:} lines (Dovecot 2.4.5: {@code imap-login: Info: Logged in: user=<name>}) in the Dovecot log when the stack was ready (before any test flow). */
     int dovecotLoginsAtStart() {
         return dovecotLoginsAtStart;
     }
