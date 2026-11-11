@@ -96,6 +96,7 @@ public final class TestCompletenessGate {
 
         List<Report> reports = new ArrayList<>();
         List<Report> itReports = new ArrayList<>();
+        int freshSurefire = 0;
         for (Path module : children(config.root())) {
             for (String dir : new String[] {"surefire-reports", "failsafe-reports"}) {
                 for (Path file : reportFiles(module.resolve("target").resolve(dir))) {
@@ -105,6 +106,9 @@ public final class TestCompletenessGate {
                     try {
                         Report r = parse(file);
                         reports.add(r);
+                        if (dir.equals("surefire-reports")) {
+                            freshSurefire++;
+                        }
                         if (dir.equals("failsafe-reports")) {
                             itReports.add(r);
                         }
@@ -119,6 +123,11 @@ public final class TestCompletenessGate {
         int allowed = 0;
         int tests = 0;
         if (!config.partialBuild()) {
+            if (freshSurefire == 0) {
+                // fail closed: a wrong root or an all-stale tree must not make the skip check pass vacuously
+                violations.add("no fresh surefire reports under " + config.root().getFileName() + " (scanned "
+                        + config.root() + ")");
+            }
             Set<String> offenders = new TreeSet<>();
             for (Report r : reports) {
                 tests += r.tests();

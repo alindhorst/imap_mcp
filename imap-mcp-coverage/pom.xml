@@ -81,7 +81,7 @@
             <configuration>
               <mainClass>de.alexanderlindhorst.imapmcp.buildgate.TestCompletenessGate</mainClass>
               <arguments>
-                <argument>${session.executionRootDirectory}</argument>
+                <argument>${maven.multiModuleProjectDirectory}</argument>
                 <argument>${maven.build.timestamp}</argument>
                 <argument>${skipTests}</argument>
                 <argument>${skipITs}</argument>

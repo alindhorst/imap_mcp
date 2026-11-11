@@ -140,6 +140,7 @@ class TestCompletenessGateTest {
     @Test
     void itReportOfANestedClassCountsForTheOuterClass() throws Exception {
         itSource("FooIT");
+        report("m", "surefire-reports", "a.FooTest", passed("a.FooTest", "ok"), START + 5);
         report("imap-mcp-it", "failsafe-reports", "p.FooIT$Inner", passed("p.FooIT$Inner", "ok"), START + 5);
         assertThat(run().ok()).isTrue();
     }
