@@ -1,0 +1,36 @@
+# OPT-IN capture of one connector session. Never imported by the shipped Caddyfiles; see "Recording a connector
+# session" in ../README.md. Defines the snippet (capture); import it inside both site blocks of a copy of the
+# Caddyfile, record, then remove it again.
+# The log file is mode 0600 and is written inside the caddy-data volume. Secrets are removed or replaced by Caddy
+# before they are written; the converter (tools/Redact.java) still works by allowlist on top of this.
+(capture) {
+	log connector_capture {
+		output file /data/capture/connector.log {
+			mode 0600
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
+				resp_headers>Location delete
+				request>remote_ip delete
+				request>client_ip delete
+				request>uri query {
+					replace code REDACTED
+					replace state REDACTED
+					replace code_challenge REDACTED
+					replace nonce REDACTED
+					replace session_code REDACTED
+					replace tab_id REDACTED
+					replace client_data REDACTED
+					replace execution REDACTED
+					replace session_state REDACTED
+					replace id_token_hint REDACTED
+					replace login_hint REDACTED
+				}
+			}
+		}
+	}
+}
