@@ -48,6 +48,17 @@ class ConnectorSessionFixtureTest {
     }
 
     @Test
+    void theAssumedFixtureMatchesTheChallengeScopeAndTheStatelessTransport() throws IOException {
+        ConnectorSessionFixture f = ConnectorSessionFixture.read(assumedFixture());
+        var auth = f.requests().stream().filter(r -> r.path().endsWith("/openid-connect/auth")).toList();
+        assertThat(auth).isNotEmpty();
+        for (var r : auth) {
+            assertThat(r.query()).contains(new ConnectorSessionFixture.Param("scope", "imap-mcp:read imap-mcp:write"));
+        }
+        assertThat(f.requests()).noneMatch(r -> r.headers().containsKey("Mcp-Session-Id"));
+    }
+
+    @Test
     void aMissingHeaderIsRejected() {
         String request = "{\"seq\":1,\"relativeMs\":0,\"host\":\"mcp\",\"method\":\"POST\",\"path\":\"/mcp\","
                 + "\"query\":[],\"headers\":{},\"status\":401,\"wwwAuthenticate\":true}";

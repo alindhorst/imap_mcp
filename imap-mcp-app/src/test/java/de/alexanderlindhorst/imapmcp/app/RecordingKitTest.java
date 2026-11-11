@@ -264,7 +264,8 @@ class RecordingKitTest {
         Matcher next = Pattern.compile("(?m)^## ").matcher(text);
         String section = next.find(start) ? text.substring(start, next.start()) : text.substring(start);
         assertThat(section).contains("capture.caddy").contains("Redact.java").contains("shred").contains("kcadm")
-                .contains("/accounts").contains("5 minutes").contains("Review").contains("open owner decision")
+                .contains("/accounts").contains("5 minutes").contains("Review").contains("umask 077").contains("mktemp -d").contains("shred -u").contains("rmdir")
+                .doesNotContain("/tmp/connector.log").contains("open owner decision")
                 .doesNotContainPattern("#\\d{3}");
         Matcher links = Pattern.compile("\\]\\(([^)#\\s]+)(#[^)]*)?\\)").matcher(section);
         while (links.find()) {
