@@ -28,18 +28,29 @@ final class TracingHttpClient extends HttpClient {
     @Override
     public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
             throws IOException, InterruptedException {
-        throw new UnsupportedOperationException();
+        long start = System.nanoTime();
+        HttpResponse<T> response = delegate.send(request, handler);
+        record(request, response, start);
+        return response;
     }
 
     @Override
     public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
-        throw new UnsupportedOperationException();
+        long start = System.nanoTime();
+        return delegate.sendAsync(request, handler).thenApply(r -> record(request, r, start));
     }
 
     @Override
     public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler,
             HttpResponse.PushPromiseHandler<T> push) {
-        throw new UnsupportedOperationException();
+        long start = System.nanoTime();
+        return delegate.sendAsync(request, handler, push).thenApply(r -> record(request, r, start));
+    }
+
+    private <T> HttpResponse<T> record(HttpRequest request, HttpResponse<T> response, long start) {
+        trace.record(request.method(), request.uri(), request.headers().map(), response.statusCode(),
+                response.headers().firstValue("WWW-Authenticate").isPresent(), start);
+        return response;
     }
 
     @Override
