@@ -38,6 +38,8 @@ The full checklist with the commands is in [`dist/docker/README.md`](../dist/doc
 - **Claude Code** is not supported (its loopback redirect is not registered).
 - **Refresh token rotation.** If Claude reconnects sporadically, set `revokeRefreshToken` to false in the realm.
 
+To replace these assumptions with facts, record one real connector session with the opt-in kit: [Recording a connector session](../dist/docker/README.md#recording-a-connector-session).
+
 ## 5. Podman notes
 
 - podman-compose needs a recent version for `service_healthy`; 1.6.0 was verified.
