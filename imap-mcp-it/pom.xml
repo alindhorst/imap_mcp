@@ -169,6 +169,7 @@
               <properties>
                 <configurationParameters>
                   junit.jupiter.execution.parallel.enabled=false
+                  junit.jupiter.testclass.order.default=org.junit.jupiter.api.ClassOrderer$OrderAnnotation
                   junit.jupiter.execution.timeout.lifecycle.method.default=15m
                   junit.jupiter.execution.timeout.testable.method.default=15m
                 </configurationParameters>

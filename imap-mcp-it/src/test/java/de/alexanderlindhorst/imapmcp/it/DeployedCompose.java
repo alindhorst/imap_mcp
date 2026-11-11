@@ -123,6 +123,22 @@ final class DeployedCompose {
         return result;
     }
 
+    /** Restarts the service's container and waits, up to {@code bound}, until its healthcheck reports healthy. */
+    void restart(String service, java.time.Duration bound) throws InterruptedException {
+        Container c = projectContainers(false).stream().filter(x -> service.equals(x.getLabels().get(SERVICE_LABEL)))
+                .findFirst().orElseThrow(() -> new IllegalStateException("no running container for " + service));
+        client().restartContainerCmd(c.getId()).withTimeout(30).exec();
+        long deadline = System.nanoTime() + bound.toNanos();
+        while (System.nanoTime() < deadline) {
+            var health = client().inspectContainerCmd(c.getId()).exec().getState().getHealth();
+            if (health != null && "healthy".equals(health.getStatus())) {
+                return;
+            }
+            Thread.sleep(1000);
+        }
+        throw new IllegalStateException(service + " was not healthy within " + bound + " after the restart");
+    }
+
     /** The compose project name as the engine knows it (the identifier plus Testcontainers' random suffix). */
     String actualProject() {
         return projectContainers(true).stream().map(c -> c.getLabels().get(PROJECT_LABEL)).findFirst()

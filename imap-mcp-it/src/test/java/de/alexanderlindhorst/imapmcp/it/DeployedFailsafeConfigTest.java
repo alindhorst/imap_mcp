@@ -61,6 +61,18 @@ class DeployedFailsafeConfigTest {
                 .contains("junit.jupiter.execution.timeout.testable.method.default=15m");
     }
 
+    /** #433: the class that restarts the app runs last in the shared stack; only this execution orders classes. */
+    @Test
+    void theDeployedExecutionOrdersClassesByAnnotationAndNoOtherExecutionDoes() throws Exception {
+        assertThat(text(FAILSAFE + "/executions/execution[id='deployed-it']/configuration/properties"
+                + "/configurationParameters"))
+                .contains("junit.jupiter.testclass.order.default=org.junit.jupiter.api.ClassOrderer$OrderAnnotation");
+        assertThat(text(FAILSAFE + "/executions/execution[id='default']/configuration/properties"
+                + "/configurationParameters")).doesNotContain("testclass.order");
+        assertThat(text(FAILSAFE + "/configuration/properties/configurationParameters"))
+                .doesNotContain("testclass.order");
+    }
+
     /** An IT that starts the shared stack must match the deployed-it include, or the default execution runs it too. */
     @Test
     void everyITThatUsesTheDeployedStackIsNamedDeployedIT() throws Exception {

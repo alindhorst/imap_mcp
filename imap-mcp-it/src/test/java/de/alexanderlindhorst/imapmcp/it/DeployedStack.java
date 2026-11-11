@@ -422,4 +422,9 @@ final class DeployedStack {
     void saveLogs() throws IOException {
         compose.saveLogs();
     }
+
+    /** Restarts the {@code app} service and waits until it is healthy again (the config is read at start). */
+    void restartApp() throws Exception {
+        compose.restart("app", Duration.ofMinutes(5));
+    }
 }
