@@ -40,7 +40,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class DeployedFlowIT {
+class FlowDeployedIT {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final String SCOPE = "imap-mcp:read imap-mcp:write";
