@@ -246,4 +246,92 @@ class DeployedOverrideGuardTest {
                   s: {}
                 """)).containsExactlyInAnyOrder("volumes", "secrets");
     }
+
+    @Test
+    void aliasHijackOnAnAddedServiceIsRejectedInBothNetworkForms() {
+        assertThat(check("""
+                services:
+                  proxy:
+                    networks:
+                      backend:
+                        aliases: [idp.imap-mcp.test]
+                  dovecot:
+                    networks:
+                      backend:
+                        aliases: [imap.imap-mcp.test, keycloak]
+                """)).containsExactlyInAnyOrder("services.proxy.networks.backend.aliases",
+                "services.dovecot.networks.backend.aliases");
+    }
+
+    @Test
+    void dovecotMayHaveItsOwnAliasAndListFormNetworksPass() {
+        assertThat(check("""
+                services:
+                  dovecot:
+                    networks:
+                      backend:
+                        aliases: [imap.imap-mcp.test]
+                  proxy:
+                    networks: [backend, outside]
+                """)).isEmpty();
+    }
+
+    @Test
+    void networkModeVolumesFromPrivilegedAndCapAddOnAnAddedServiceAreRejected() {
+        assertThat(check("""
+                services:
+                  proxy:
+                    network_mode: service:app
+                    volumes_from: [app]
+                    privileged: true
+                    cap_add: [SYS_ADMIN]
+                """)).containsExactlyInAnyOrder("services.proxy.network_mode", "services.proxy.volumes_from",
+                "services.proxy.privileged", "services.proxy.cap_add");
+    }
+
+    @Test
+    void namedVolumesAndNonRelativeBindsOnAnAddedServiceAreRejected() {
+        assertThat(check("""
+                services:
+                  dovecot:
+                    volumes:
+                      - caddy-data:/data
+                      - /etc:/host-etc
+                      - ./ok:/ok:ro
+                """)).containsExactlyInAnyOrder("services.dovecot.volumes");
+    }
+
+    @Test
+    void publishedPortsAreForTheProxyOnlyAndOnlyOnLoopback() {
+        assertThat(check("""
+                services:
+                  proxy:
+                    ports: ["127.0.0.1::3128"]
+                """)).isEmpty();
+        assertThat(check("""
+                services:
+                  proxy:
+                    ports: ["3128:3128"]
+                  dovecot:
+                    ports: ["127.0.0.1::993"]
+                """)).containsExactlyInAnyOrder("services.proxy.ports", "services.dovecot.ports");
+    }
+
+    @Test
+    void theAllowedKeysOfAnAddedServicePass() {
+        assertThat(check("""
+                services:
+                  dovecot:
+                    image: d
+                    pull_policy: never
+                    depends_on: [proxy]
+                    healthcheck:
+                      test: ["CMD", "true"]
+                    sysctls: {net.ipv6.conf.all.disable_ipv6: 1}
+                    environment: {A: b}
+                    command: ["x"]
+                    entrypoint: ["y"]
+                    user: "1000"
+                """)).isEmpty();
+    }
 }
