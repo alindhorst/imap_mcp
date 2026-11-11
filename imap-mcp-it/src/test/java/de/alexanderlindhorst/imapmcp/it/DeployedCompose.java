@@ -165,6 +165,39 @@ final class DeployedCompose {
         return null;
     }
 
+    /** Exit code and stdout of a command run inside a service container; output is never logged by the fixture. */
+    record ExecResult(long exitCode, String stdout) {
+        @Override
+        public String toString() {
+            return "exit " + exitCode;
+        }
+    }
+
+    /**
+     * Runs a command in a running service container. {@code env} entries ({@code NAME=value}) are passed to the exec
+     * only, so a secret never has to be part of the command line.
+     */
+    ExecResult exec(String service, List<String> env, String... command) throws InterruptedException {
+        for (Container c : projectContainers(false)) {
+            if (service.equals(c.getLabels().get(SERVICE_LABEL))) {
+                String id = client().execCreateCmd(c.getId()).withAttachStdout(true).withAttachStderr(true)
+                        .withEnv(env).withCmd(command).exec().getId();
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                client().execStartCmd(id).exec(new ResultCallback.Adapter<Frame>() {
+                    @Override
+                    public void onNext(Frame frame) {
+                        if (frame.getStreamType() == com.github.dockerjava.api.model.StreamType.STDOUT) {
+                            out.writeBytes(frame.getPayload());
+                        }
+                    }
+                }).awaitCompletion(120, TimeUnit.SECONDS);
+                Long code = client().inspectExecCmd(id).exec().getExitCodeLong();
+                return new ExecResult(code == null ? -1 : code, out.toString(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        throw new IllegalStateException("no running container for service " + service);
+    }
+
     Path logsDir() {
         return dir.resolve("logs");
     }

@@ -336,6 +336,16 @@ final class DeployedStack {
         return compose.env(service, name);
     }
 
+    /** The shared client: local-CA trust, through the forward proxy, redirects never followed. */
+    HttpClient httpClient() {
+        return http;
+    }
+
+    /** Runs a command in a service container (see {@link DeployedCompose#exec}). */
+    DeployedCompose.ExecResult exec(String service, List<String> env, String... command) throws InterruptedException {
+        return compose.exec(service, env, command);
+    }
+
     /** Everything the fixture captured of setup.sh, for the canary scan. */
     String capturedOutput() {
         return captured.toString();
