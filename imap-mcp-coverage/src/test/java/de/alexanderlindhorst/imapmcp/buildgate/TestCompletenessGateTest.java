@@ -64,6 +64,15 @@ class TestCompletenessGateTest {
     }
 
     @Test
+    void noFreshSurefireReportAtAllFailsClosedNamingTheScannedRoot() throws Exception {
+        report("m", "surefire-reports", "a.FooTest", skipped("a.FooTest", "bar"), START - 1000);
+        Result r = run();
+        assertThat(r.ok()).isFalse();
+        assertThat(r.summary()).contains("no fresh surefire reports").contains(root.getFileName().toString());
+        assertThat(run(false, false, false, true, List.of()).ok()).isTrue();
+    }
+
+    @Test
     void skippedTestOffTheAllowlistFailsAndNamesClassAndMethod() throws Exception {
         report("m", "surefire-reports", "a.FooTest", skipped("a.FooTest", "bar"), START + 5);
         Result r = run();
@@ -99,6 +108,7 @@ class TestCompletenessGateTest {
     @Test
     void reportsOlderThanTheSessionAreIgnored() throws Exception {
         report("m", "surefire-reports", "a.FooTest", skipped("a.FooTest", "bar"), START - 1000);
+        report("m", "surefire-reports", "a.BarTest", passed("a.BarTest", "ok"), START + 5);
         Result r = run();
         assertThat(r.ok()).isTrue();
     }
@@ -136,6 +146,7 @@ class TestCompletenessGateTest {
 
     @Test
     void liveSmokeAndNonItClassesNeedNoReport() throws Exception {
+        report("m", "surefire-reports", "a.FooTest", passed("a.FooTest", "ok"), START + 5);
         itSource("GmailReadLiveSmoke");
         itSource("DockerGuardTest");
         assertThat(run().ok()).isTrue();
@@ -145,6 +156,7 @@ class TestCompletenessGateTest {
     void deployedItClassesNeedAReportLikeAnyOther() throws Exception {
         itSource("StackDeployedIT");
         assertThat(run().ok()).isFalse();
+        report("m", "surefire-reports", "a.FooTest", passed("a.FooTest", "ok"), START + 5);
         report("imap-mcp-it", "failsafe-reports", "p.StackDeployedIT", passed("p.StackDeployedIT", "ok"), START + 5);
         assertThat(run().ok()).isTrue();
     }
