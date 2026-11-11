@@ -45,7 +45,7 @@ compose ps
 
 Pass `--profile proxy` explicitly (do not rely on `COMPOSE_PROFILES` with podman-compose). A realm is imported once: to change the hostnames later, `compose down -v` (deletes all data) and regenerate `.env`, `app/config.yaml` and the Caddy certificates.
 
-The compose network uses the fixed subnet `172.28.0.0/24`. If it collides with one of yours, set `BACKEND_SUBNET` (an IPv4 CIDR) in `.env`, or pass it to `setup.sh`; it feeds both `networks.backend` and `KC_PROXY_TRUSTED_ADDRESSES`.
+The compose network uses the default subnet `172.28.0.0/24`. If it collides with one of yours, set `BACKEND_SUBNET` (an IPv4 CIDR) in `.env`, or pass it to `setup.sh`; it feeds both `networks.backend` and `KC_PROXY_TRUSTED_ADDRESSES`.
 
 Keycloak needs about three minutes on a first start (Postgres, then Keycloak, then the app wait on health). `compose logs -f app` shows nothing but the JVM notice: the app logs to `/logs/imap-mcp.log` in the `imap-mcp-logs` volume (`compose exec app tail -n 50 /logs/imap-mcp.log`).
 
