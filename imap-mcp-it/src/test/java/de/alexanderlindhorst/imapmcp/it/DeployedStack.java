@@ -415,15 +415,6 @@ final class DeployedStack {
 
     /** Restarts the {@code app} service and waits until it is healthy again (the config is read at start). */
     void restartApp() throws Exception {
-        throw new UnsupportedOperationException("restartApp");
-    }
-
-    /** A raw HTTP/1.1 exchange with the proxied site: status line and headers of the response, body dropped. */
-    RawResponse rawThroughProxy(String authority, String request) throws Exception {
-        throw new UnsupportedOperationException("rawThroughProxy");
-    }
-
-    /** Status code and header names/values of a raw response. */
-    record RawResponse(int status, Map<String, List<String>> headers) {
+        compose.restart("app", Duration.ofMinutes(5));
     }
 }

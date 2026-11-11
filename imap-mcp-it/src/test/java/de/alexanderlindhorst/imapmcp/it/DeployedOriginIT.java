@@ -28,6 +28,11 @@ import org.junit.jupiter.api.TestMethodOrder;
  * config and a restart that origin passes and another one is still refused; the shipped config is restored and
  * the restore is asserted; a linked account still reads after the restarts (state is in Postgres).
  *
+ * <p>The Host check (ticket step 2) is not tested here: Caddy's site matches the Host name only, so a foreign name is
+ * answered by Caddy itself with an empty 200 and never reaches the app (probed through the proxy), and the same
+ * name with another port or none is forwarded and allowed by the app's {@code <host>:*} default. No Host value both
+ * reaches the app and is refused, so the app's 403 cannot be shown through Caddy.
+ *
  * <p>This class restarts the app of the stack that all deployed ITs share, so it runs last ({@code @Order} on the
  * class, {@code ClassOrderer$OrderAnnotation} in the {@code deployed-it} execution). It edits only the copy's
  * {@code app/config.yaml} under {@code target/}, never {@code dist/docker}. It uses its own Keycloak user and links
@@ -100,26 +105,10 @@ class DeployedOriginIT {
         assertRefused(initialize(token, "null"));
     }
 
-    // ---- 2. the Host check ---------------------------------------------------------------------------------------
+    // ---- 2. allowedOrigins configured ----------------------------------------------------------------------------
 
     @Test
     @Order(2)
-    void aHostOtherThanThePublicOneNeverReachesTheAppThroughCaddy() throws Exception {
-        String token = token();
-        String authority = URI.create(stack.mcpOrigin()).getAuthority();
-        String request = "POST /mcp HTTP/1.1\r\nHost: other.imap-mcp.test:8443\r\nAuthorization: Bearer " + token
-                + "\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
-                + "Connection: close\r\nContent-Length: " + INITIALIZE.length() + "\r\n\r\n" + INITIALIZE;
-
-        DeployedStack.RawResponse response = stack.rawThroughProxy(authority, request);
-
-        assertThat(response.status()).isEqualTo(403);
-    }
-
-    // ---- 3. allowedOrigins configured ----------------------------------------------------------------------------
-
-    @Test
-    @Order(3)
     void withTheOriginConfiguredItPassesAndAnotherOneIsStillRefusedThenTheShippedConfigIsRestored() throws Exception {
         assertThat(shippedConfig).contains("\nhttp:\n").doesNotContain("allowedOrigins");
         try {
@@ -140,10 +129,10 @@ class DeployedOriginIT {
         assertRefused(initialize(token, CLAUDE));
     }
 
-    // ---- 4. the state survives the restarts ----------------------------------------------------------------------
+    // ---- 3. the state survives the restarts ----------------------------------------------------------------------
 
     @Test
-    @Order(4)
+    @Order(3)
     void aLinkedAccountStillReadsAfterTheRestarts() throws Exception {
         McpSyncClient mcp = mcpFor(user);
 
