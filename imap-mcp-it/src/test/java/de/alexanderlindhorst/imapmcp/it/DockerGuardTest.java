@@ -13,7 +13,8 @@ class DockerGuardTest {
         assertThatThrownBy(() -> DockerGuard.require(true, () -> false))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Docker is required")
-                .hasMessageContaining("-DskipITs");
+                .hasMessageContaining("-DskipITs")
+                .hasMessageContaining("-Dimapmcp.partialBuild=true");
     }
 
     @Test

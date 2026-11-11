@@ -58,7 +58,9 @@ mvn -pl imap-mcp-core -am test      # one module and what it depends on
 mvn -B -Pdocker -pl imap-mcp-app -am package -DskipTests   # also builds the Docker image imap-mcp
 ```
 
-Skipping tests: `-DskipTests` skips only the unit tests (Surefire); the Failsafe integration tests, such as `ShadedJarIT` in `imap-mcp-app`, still run in `verify`. Use `mvn verify -DskipTests -DskipITs` to skip everything, or `-DskipITs` alone to skip only the integration tests. `mvn package` never reaches the integration-test phase, so `package -DskipTests` is enough there.
+Skipping tests: `-DskipTests` skips only the unit tests (Surefire); the Failsafe integration tests, such as `ShadedJarIT` in `imap-mcp-app`, still run in `verify`. `-DskipITs` skips only the integration tests. `mvn package` never reaches the integration-test phase, so `package -DskipTests` is enough there.
+
+Test-completeness gate: every build that reaches `verify` ends with a check in `imap-mcp-coverage` (SPEC 5.8). It fails when a test is skipped or aborted outside the allowlist `imap-mcp-coverage/src/main/resources/allowed-skips.txt`, when an `*IT` class of `imap-mcp-it` has no report with tests, and when `-DskipTests`, `-DskipITs` or `-Dmaven.test.skip` is set. `-Dimapmcp.partialBuild=true` admits these flags and turns both report checks off, for example `mvn verify -DskipITs -Dimapmcp.partialBuild=true`; the profile `smoke` sets it. A partial build is no evidence for the merge gate.
 
 `imap-mcp-app` produces the runnable shaded jar `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`; the thin jar stays the main artifact.
 

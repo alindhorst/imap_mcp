@@ -25,7 +25,7 @@ export JAVA_HOME=/usr/lib/jvm/java-26
 mvn -pl imap-mcp-app -am -DskipTests package
 ```
 
-The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` builds all modules as well; it also runs the unit tests, so it takes longer. Note that `-DskipTests` does not skip the integration tests under `mvn verify`; add `-DskipITs` there (`package` never runs them).
+The runnable jar is `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`. Use its absolute path in the commands below. A plain `mvn package` builds all modules as well; it also runs the unit tests, so it takes longer. Note that `-DskipTests` does not skip the integration tests under `mvn verify`, and any of `-DskipTests`, `-DskipITs` and `-Dmaven.test.skip` makes `mvn verify` fail unless you also pass `-Dimapmcp.partialBuild=true` (`package` never reaches that check or the integration tests).
 
 ## 2. Config file
 
