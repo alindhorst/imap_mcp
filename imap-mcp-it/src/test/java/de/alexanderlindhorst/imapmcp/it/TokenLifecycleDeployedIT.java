@@ -38,7 +38,7 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>No token, code, verifier or password is ever put in an assertion message or left in a trace: comparisons of
  * secrets are made as booleans, and every client's trace is scanned for the secrets of its scenario.
  */
-class DeployedTokenLifecycleIT {
+class TokenLifecycleDeployedIT {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -177,7 +177,7 @@ class DeployedTokenLifecycleIT {
             }
             assertTraceClean(client, secrets);
         }
-        System.out.println("DeployedTokenLifecycleIT parallel refresh outcomes: " + outcomes);
+        System.out.println("TokenLifecycleDeployedIT parallel refresh outcomes: " + outcomes);
     }
 
     // ---- scopes (D3, D19) -------------------------------------------------------------------------------------------
