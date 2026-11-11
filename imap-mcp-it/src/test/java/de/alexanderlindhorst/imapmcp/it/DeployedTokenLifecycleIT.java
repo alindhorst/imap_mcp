@@ -143,8 +143,9 @@ class DeployedTokenLifecycleIT {
      * Characterization, the "sporadic reconnect" mechanism of DEPLOYMENT section 4: two refreshes with the same refresh
      * token at the same moment, repeated. Observed: usually one {@code 200} and one {@code invalid_grant} (and the
      * loser's attempt, a reuse of the old token, revokes the session, so the winner's new token is refused at its next
-     * use); now and then (a race window in Keycloak) both succeed (then both new tokens were observed to work when used in turn; not asserted, the
-     * race gives no stable rule beyond the status pair). Both refused never happens. The test pins these rules, not the frequency, which is printed.
+     * use); now and then (a race window in Keycloak) both succeed (then both new tokens were observed to work when
+     * used in turn; not asserted, the race gives no stable rule beyond the status pair). Both refused never happens.
+     * The test pins these rules, not the frequency, which is printed.
      */
     @Test
     void twoParallelRefreshesWithTheSameTokenHaveThePinnedOutcome() throws Exception {
