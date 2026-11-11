@@ -56,7 +56,8 @@ final class KeycloakAdmin {
 
     /** Sets the realm's {@code accessTokenLifespan} (seconds); the caller restores it. */
     synchronized void setAccessTokenLifespan(int seconds) throws Exception {
-        throw new UnsupportedOperationException("not implemented");
+        login();
+        run("update realms/" + REALM + " -s accessTokenLifespan=" + seconds, List.of());
     }
 
     private void login() throws Exception {

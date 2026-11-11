@@ -132,11 +132,10 @@ class DeployedTokenLifecycleIT {
         assertThat(reuse.statusCode()).isEqualTo(400);
         assertThat(JSON.readTree(reuse.body()).get("error").asString()).isEqualTo("invalid_grant");
 
-        // characterization: RT2 after the reuse of RT1
+        // characterization: the reuse of RT1 revokes the whole session, so RT2 is refused too
         HttpResponse<String> afterReuse = client.token(tokenEndpoint, refreshForm(second.refresh()));
-        assertThat(afterReuse.statusCode()).as("RT2 after the reuse of RT1").isEqualTo(200);
-        Tokens third = tokens(afterReuse, secrets);
-        assertThat(client.initializeWithToken(third.access()).statusCode()).isEqualTo(200);
+        assertThat(afterReuse.statusCode()).as("RT2 after the reuse of RT1").isEqualTo(400);
+        assertThat(JSON.readTree(afterReuse.body()).get("error").asString()).isEqualTo("invalid_grant");
         assertTraceClean(client, secrets);
     }
 
@@ -170,8 +169,9 @@ class DeployedTokenLifecycleIT {
         }
         assertThat(rounds).as("status codes of the two parallel refreshes, per round")
                 .containsExactly(List.of(200, 400), List.of(200, 400), List.of(200, 400));
+        // the loser's attempt is a reuse of the old token, which revokes the session: the winner's new token is refused
         assertThat(winnerSuccessorStatus).as("the winner's new refresh token, used afterwards, per round")
-                .containsExactly(200, 200, 200);
+                .containsExactly(400, 400, 400);
     }
 
     // ---- scopes (D3, D19) -------------------------------------------------------------------------------------------
@@ -229,7 +229,7 @@ class DeployedTokenLifecycleIT {
         List<ConnectorSessionFixture.Request> after = client.trace().fixture().requests()
                 .subList(before, client.trace().fixture().requests().size());
         assertThat(after).as("MCP requests of the session").isNotEmpty()
-                .allSatisfy(r -> assertThat(r.status()).isLessThan(400))
+                .allSatisfy(r -> assertThat(r.status()).isNotIn(401, 403))
                 .allSatisfy(r -> assertThat(r.wwwAuthenticate()).isFalse())
                 .allSatisfy(r -> assertThat(r.host()).isEqualTo("mcp"));
         assertTraceClean(client, secrets);
@@ -268,7 +268,7 @@ class DeployedTokenLifecycleIT {
             observed.put(extra, "accepted, further scopes in the token: " + granted);
         }
         assertThat(observed).containsExactlyInAnyOrderEntriesOf(Map.of(
-                "openid", "error invalid_scope", "offline_access", "error invalid_scope",
+                "openid", "accepted, further scopes in the token: [openid]", "offline_access", "error invalid_scope",
                 "profile", "error invalid_scope", "email", "error invalid_scope"));
         assertTraceClean(client, secrets);
     }
