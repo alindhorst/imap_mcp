@@ -22,7 +22,7 @@ class RecordingKitTest {
 
     // Surefire runs with the module directory as working directory.
     private static final Path DOCKER = Path.of("..", "dist", "docker");
-    private static final Path REDACT = DOCKER.resolve("tools").resolve("Redact.java").toAbsolutePath();
+    private static final Path REDACT = DOCKER.resolve("tools").resolve("Redact.java").toAbsolutePath().normalize();
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final List<String> NAMES = List.of("code", "state", "code_challenge", "nonce", "session_code",
             "tab_id", "client_data", "execution", "session_state", "id_token_hint", "login_hint");
@@ -143,7 +143,7 @@ class RecordingKitTest {
         assertThat(b.get("relativeMs").asLong()).isEqualTo(1500);
         assertThat(b.get("host").asString()).isEqualTo("idp");
         assertThat(b.get("headers").get("User-Agent").asString()).isEqualTo("browser");
-        assertThat(b.get("headers").get("Origin").asString()).isEqualTo("<IDP_HOST>".equals("") ? "" : "https://<IDP_HOST>");
+        assertThat(b.get("headers").get("Origin").asString()).isEqualTo("https://<IDP_HOST>");
         assertThat(b.get("headers").has("Authorization")).isFalse();
         assertThat(b.get("wwwAuthenticate").asBoolean()).isFalse();
 
@@ -264,7 +264,8 @@ class RecordingKitTest {
         Matcher next = Pattern.compile("(?m)^## ").matcher(text);
         String section = next.find(start) ? text.substring(start, next.start()) : text.substring(start);
         assertThat(section).contains("capture.caddy").contains("Redact.java").contains("shred").contains("kcadm")
-                .contains("/accounts").contains("5 minutes").contains("review").contains("#436").contains("#437");
+                .contains("/accounts").contains("5 minutes").contains("review").contains("open owner decision")
+                .doesNotContainPattern("#\\d{3}");
         Matcher links = Pattern.compile("\\]\\(([^)#\\s]+)(#[^)]*)?\\)").matcher(section);
         while (links.find()) {
             if (!links.group(1).contains("://")) {
