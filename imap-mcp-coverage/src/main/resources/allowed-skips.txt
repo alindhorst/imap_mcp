@@ -1,3 +1,5 @@
 # Skips and aborted tests the test-completeness gate admits (SPEC 5.8). One entry per line:
 #   fully.qualified.Class#method | reason | condition
 # method may be * for every test of the class. The condition is documentation; it is not evaluated.
+de.alexanderlindhorst.imapmcp.store.state.StateDirectoryTest#unwritableDirectoryGivesEphemeralHandleKeyWithWarnButTokenFailsStartup | the directory stays writable for uid 0 | running as root
+de.alexanderlindhorst.imapmcp.store.secret.ProcessCommandRunnerTest#* | POSIX commands only | Windows
