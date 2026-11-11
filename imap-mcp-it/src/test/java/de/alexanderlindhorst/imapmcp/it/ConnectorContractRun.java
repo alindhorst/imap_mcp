@@ -95,6 +95,12 @@ final class ConnectorContractRun {
         throw new IllegalArgumentException("no such fixture (classpath resource or file): " + name);
     }
 
+    /** The one line the gate log carries: which evidence (assumed or recorded) this run was compared with. */
+    static String sourceLine(String spec, ConnectorSessionFixture fixture) {
+        return "connector contract: fixture source=" + fixture.header().source() + " ("
+                + (spec == null || spec.isBlank() ? DEFAULT_FIXTURE : spec) + ")";
+    }
+
     static Result run(DeployedStack stack, KeycloakAdmin admin, ConnectorSessionFixture fixture) throws Exception {
         return new ConnectorContractRun(stack, fixture).perform(admin.createUser());
     }

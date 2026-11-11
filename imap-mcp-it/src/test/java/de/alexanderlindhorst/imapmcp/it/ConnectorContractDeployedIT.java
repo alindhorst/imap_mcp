@@ -19,8 +19,10 @@ class ConnectorContractDeployedIT {
     @TestFactory
     Stream<DynamicTest> theConnectorSequenceConformsToTheFixtureAndReplaysItsStatuses() throws Exception {
         DeployedStack stack = DeployedStack.instance();
-        ConnectorSessionFixture fixture = ConnectorContractRun.loadFixture(
-                System.getProperty(ConnectorContractRun.PROPERTY));
+        String spec = System.getProperty(ConnectorContractRun.PROPERTY);
+        ConnectorSessionFixture fixture = ConnectorContractRun.loadFixture(spec);
+        // the gate keeps only the Maven output, where dynamic tests show as [1..3]: name the evidence there
+        System.out.println(ConnectorContractRun.sourceLine(spec, fixture));
         String source = "[fixture source: " + fixture.header().source() + "]";
         ConnectorContractRun.Result run = ConnectorContractRun.run(stack, new KeycloakAdmin(stack), fixture);
         String text = write(run.trace());
