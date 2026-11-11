@@ -47,6 +47,13 @@ esac
 case "$HTTPS_PORT$HTTP_PORT" in
   *[!0-9]*) echo "setup.sh: HTTPS_PORT and HTTP_PORT must be numbers" >&2; exit 1 ;;
 esac
+# optional: the compose backend subnet (default in compose.yaml), an IPv4 CIDR
+BACKEND_SUBNET=${BACKEND_SUBNET:-}
+if [ -n "$BACKEND_SUBNET" ]; then
+  OCTET='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+  CIDR_RE="^$OCTET(\\.$OCTET){3}/(3[0-2]|[12]?[0-9])\$"
+  [[ "$BACKEND_SUBNET" =~ $CIDR_RE ]] || { echo "setup.sh: BACKEND_SUBNET is not an IPv4 CIDR (e.g. 172.28.0.0/24)" >&2; exit 1; }
+fi
 suffix=""
 [ "$HTTPS_PORT" != "443" ] && suffix=":$HTTPS_PORT"
 
@@ -67,6 +74,7 @@ else
     echo "HTTPS_PORT=$HTTPS_PORT"
     echo "HTTP_PORT=$HTTP_PORT"
     echo "APP_PORT=${APP_PORT:-8080}"
+    [ -n "$BACKEND_SUBNET" ] && echo "BACKEND_SUBNET=$BACKEND_SUBNET"
     if $LOCAL; then
       echo "APP_JDK_JAVA_OPTIONS=-Djavax.net.ssl.trustStore=/truststore/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit"
     else
