@@ -1,5 +1,13 @@
 package de.alexanderlindhorst.imapmcp.it;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -15,9 +23,124 @@ import java.util.stream.Collectors;
  */
 final class AccountsClient {
 
+    private static final String BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0";
+    private static final int MAX_HOPS = 8;
     private static final Pattern CSRF = Pattern.compile("name=\"csrf\" value=\"([^\"]+)\"");
     private static final Pattern FORM = Pattern.compile("(?s)<form\\b([^>]*)>(.*?)</form>");
     private static final Pattern ACTION = Pattern.compile("action=\"([^\"]*)\"");
+
+    private final DeployedStack stack;
+    private final String base;
+    private final String idpHost;
+    private final CookieJar jar = new CookieJar();
+    private final List<String> bodies = new ArrayList<>();
+    private final List<String> cookieValues = new ArrayList<>();
+    private String csrf;
+
+    AccountsClient(DeployedStack stack) {
+        this.stack = stack;
+        this.base = stack.configValue("public", "baseUrl");
+        this.idpHost = URI.create(stack.idpOrigin()).getHost();
+    }
+
+    /**
+     * The browser's sign-in: {@code GET /accounts/login}, Keycloak's login form with the user's credentials, and the
+     * callback with the cookies of this browser. Returns the response of the callback (200 with the session cookie
+     * and the meta-refresh page, or the refusal); the code and state never leave this method.
+     */
+    HttpResponse<String> login(KeycloakAdmin.TestUser user) throws IOException, InterruptedException {
+        csrf = null;
+        HttpResponse<String> start = request("GET", URI.create(base + "/accounts/login"), null, false);
+        URI next = URI.create(start.headers().firstValue("Location").orElseThrow());
+        HttpResponse<String> page = null;
+        for (int hop = 0; hop < MAX_HOPS; hop++) {
+            page = request("GET", next, null, false);
+            if (page.statusCode() / 100 != 3) {
+                break;
+            }
+            next = next.resolve(page.headers().firstValue("Location").orElseThrow());
+        }
+        String action = loginFormAction(page.body());
+        if (action == null) {
+            throw new IllegalStateException("no login form at the identity provider (status " + page.statusCode() + ")");
+        }
+        HttpResponse<String> posted = request("POST", URI.create(action), form(Map.of("username", user.username(),
+                "password", user.password(), "credentialId", "")), true);
+        if (posted.statusCode() != 302) {
+            throw new IllegalStateException("the identity provider did not accept the login (status "
+                    + posted.statusCode() + ")");
+        }
+        URI back = URI.create(posted.headers().firstValue("Location").orElseThrow());
+        if (!back.toString().startsWith(base + "/accounts/callback?")) {
+            throw new IllegalStateException("the login did not return to the callback of the linking surface");
+        }
+        return request("GET", back, null, false);
+    }
+
+    HttpResponse<String> get(String path) throws IOException, InterruptedException {
+        return request("GET", URI.create(base + path), null, false);
+    }
+
+    /** A form {@code POST} with the session's CSRF token and the {@code Origin} of the surface. */
+    HttpResponse<String> post(String path, Map<String, String> fields) throws IOException, InterruptedException {
+        Map<String, String> all = new LinkedHashMap<>();
+        all.put("csrf", csrf());
+        all.putAll(fields);
+        return request("POST", URI.create(base + path), form(all), false);
+    }
+
+    /** The CSRF token of the session, read once from the home page. */
+    String csrf() throws IOException, InterruptedException {
+        if (csrf == null) {
+            csrf = csrfToken(get("/accounts").body());
+        }
+        return csrf;
+    }
+
+    /** Every response body this browser received (the password scan); never printed. */
+    List<String> responseBodies() {
+        return List.copyOf(bodies);
+    }
+
+    /** Every cookie value this browser was given (the log scan); never printed. */
+    List<String> cookieValues() {
+        return List.copyOf(cookieValues);
+    }
+
+    private HttpResponse<String> request(String method, URI uri, String formBody, boolean withIdpOrigin)
+            throws IOException, InterruptedException {
+        HttpRequest.Builder b = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
+                .header("User-Agent", BROWSER_UA).header("Accept", "text/html,application/xhtml+xml");
+        String cookie = jar.header(uri.getHost());
+        if (cookie != null) {
+            b.header("Cookie", cookie);
+        }
+        if (formBody != null) {
+            boolean idp = uri.getHost().equals(idpHost);
+            b.header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", idp ? stack.idpOrigin() : URI.create(base).getScheme() + "://"
+                            + URI.create(base).getAuthority())
+                    .POST(HttpRequest.BodyPublishers.ofString(formBody));
+        } else {
+            b.method(method, HttpRequest.BodyPublishers.noBody());
+        }
+        HttpResponse<String> r = stack.httpClient().send(b.build(), HttpResponse.BodyHandlers.ofString());
+        List<String> setCookies = r.headers().allValues("Set-Cookie");
+        jar.store(uri.getHost(), setCookies);
+        for (String c : setCookies) {
+            String value = SetCookie.parse(c).value();
+            if (!value.isEmpty()) {
+                cookieValues.add(value);
+            }
+        }
+        bodies.add(r.body());
+        return r;
+    }
+
+    private static String form(Map<String, String> fields) {
+        return fields.entrySet().stream().map(e -> URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8) + "="
+                + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8)).collect(Collectors.joining("&"));
+    }
 
     /** The cookies a browser holds, per host (the stack's cookies are host-only: {@code __Host-} or no Domain). */
     static final class CookieJar {

@@ -203,7 +203,7 @@ class DeployedFlowIT {
 
         assertThat(linked.statusCode()).isEqualTo(303);
         assertThat(linked.headers().firstValue("Location")).hasValue("/accounts");
-        assertThat(loginsOf(aliceMail.name())).as("the probe is the only Login: of Alice's Dovecot user")
+        assertThat(loginsOf(aliceMail.name())).as("the probe is the only login of Alice's Dovecot user")
                 .isEqualTo(loginsBefore + 1);
         assertThat(aliceWeb.responseBodies()).noneMatch(b -> b.contains(aliceMail.password().value()));
         // SQL side only: a boolean comes back, never a credential column
@@ -223,6 +223,7 @@ class DeployedFlowIT {
     @Order(6)
     void theReadToolsWorkAndLeaveTheMessageUnseenAsDoveadmShows() throws Exception {
         assertThat(flagsOf(aliceMail)).as("unread before").doesNotContain("\\Seen");
+        int flagChangesBefore = flagChangesOf(aliceMail.name());
 
         Map<String, Object> accounts = call(aliceMcp, "list_accounts");
         List<Map<String, Object>> list = list(accounts, "accounts");
@@ -251,6 +252,8 @@ class DeployedFlowIT {
 
         assertThat(flagsOf(aliceMail)).as("PEEK: still unseen on the server, whatever the app says")
                 .doesNotContain("\\Seen");
+        assertThat(flagChangesOf(aliceMail.name())).as("Dovecot logged no flag change for the reads")
+                .isEqualTo(flagChangesBefore);
     }
 
     // ---- 6. the write gate and one reversible write ------------------------------------------------------------------
@@ -259,6 +262,7 @@ class DeployedFlowIT {
     @Order(7)
     void setFlagsOnAReadOnlyAccountIsRefusedAndNothingChangesOnTheServer() throws Exception {
         List<String> before = flagsOf(aliceMail);
+        int flagChangesBefore = flagChangesOf(aliceMail.name());
 
         Map<String, Object> refused = call(aliceMcp, "set_flags", "account", aliceAccount, "handles",
                 List.of(messageHandle), "flagged", true);
@@ -267,6 +271,7 @@ class DeployedFlowIT {
         assertThat(error).containsEntry("code", "PERMISSION_DENIED");
         assertThat(map(error, "details")).containsEntry("reason", "account_read_only");
         assertThat(flagsOf(aliceMail)).isEqualTo(before).doesNotContain("\\Flagged");
+        assertThat(flagChangesOf(aliceMail.name())).as("no STORE reached Dovecot").isEqualTo(flagChangesBefore);
         assertThat(auditItems(aliceSub)).as("a refused call writes no item row").isZero();
     }
 
@@ -299,6 +304,7 @@ class DeployedFlowIT {
     @Test
     @Order(9)
     void bobsTenantIsIsolatedAndAlicesImapAccountSeesNoIo() throws Exception {
+        int bobLoginsBefore = loginsOf(bobMail.name());
         assertThat(bobWeb.login(bob).statusCode()).isEqualTo(200);
         assertThat(tenantRows(bobSub)).isEqualTo(1);
         assertThat(tenantId(bobSub)).isNotEqualTo(tenantId(aliceSub));
@@ -319,7 +325,8 @@ class DeployedFlowIT {
                 messageHandle);
         assertThat(map(foreignMessage, "error")).containsEntry("code", "INVALID_HANDLE");
 
-        assertThat(loginsOf(aliceMail.name())).as("no Login: for Alice's user during Bob's calls")
+        assertThat(loginsOf(bobMail.name())).as("the counter sees Bob's own IMAP I/O").isGreaterThan(bobLoginsBefore);
+        assertThat(loginsOf(aliceMail.name())).as("no login for Alice's user during Bob's calls")
                 .isEqualTo(aliceLoginsBefore);
         assertThat(flagsOf(aliceMail)).doesNotContain("\\Flagged").doesNotContain("\\Seen");
     }
@@ -484,12 +491,20 @@ class DeployedFlowIT {
         }
     }
 
+    // Dovecot 2.4 logs "Logged in: user=<name>" at the login process (counted per user, never printed)
     // Dovecot: login lines counted per user, flags read with doveadm (independent of the app)
 
     private int loginsOf(String user) throws Exception {
         stack.saveLogs();
         return (int) Files.readAllLines(stack.runDir().resolve("logs/dovecot.log")).stream()
-                .filter(l -> l.contains("Login:") && l.contains("user=<" + user + ">")).count();
+                .filter(l -> l.contains("Logged in:") && l.contains("user=<" + user + ">")).count();
+    }
+
+    /** Dovecot's own {@code flag_change} log lines of the user's sessions: a STORE that changed flags. */
+    private int flagChangesOf(String user) throws Exception {
+        stack.saveLogs();
+        return (int) Files.readAllLines(stack.runDir().resolve("logs/dovecot.log")).stream()
+                .filter(l -> l.contains("imap(" + user + ")") && l.contains("flag_change:")).count();
     }
 
     private List<String> flagsOf(DeployedDovecot.ImapUser user) throws Exception {
