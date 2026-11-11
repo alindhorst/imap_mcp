@@ -35,6 +35,23 @@ final class KeycloakAdmin {
 
     /** A user with the role {@code imap-mcp-user}, a complete profile (no required action) and a fresh password. */
     synchronized TestUser createUser() throws Exception {
+        return create(true);
+    }
+
+    /** As {@link #createUser()} but without the role: the linking surface refuses it at the callback (D2). */
+    synchronized TestUser createUserWithoutRole() throws Exception {
+        return create(false);
+    }
+
+    /** The Keycloak id of the user, which is the {@code sub} of its tokens. */
+    synchronized String userId(TestUser user) throws Exception {
+        login();
+        String out = run("get users -r " + REALM + " -q exact=true -q username=" + user.username() + " --fields id",
+                List.of());
+        return JsonMapper.builder().build().readTree(out).get(0).get("id").asString();
+    }
+
+    private TestUser create(boolean withRole) throws Exception {
         login();
         String name = "connector-" + random(6).toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "x");
         String password = random(24);
@@ -42,7 +59,9 @@ final class KeycloakAdmin {
                 + " -s email=" + name + "@example.test -s firstName=Test -s lastName=Connector", List.of());
         run("set-password -r " + REALM + " --username " + name + " --new-password \"$IT_USER_PASSWORD\"",
                 List.of("IT_USER_PASSWORD=" + password));
-        run("add-roles -r " + REALM + " --uusername " + name + " --rolename imap-mcp-user", List.of());
+        if (withRole) {
+            run("add-roles -r " + REALM + " --uusername " + name + " --rolename imap-mcp-user", List.of());
+        }
         return new TestUser(name, password);
     }
 
