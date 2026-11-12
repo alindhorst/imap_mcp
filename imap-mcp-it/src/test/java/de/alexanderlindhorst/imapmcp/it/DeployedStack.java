@@ -156,7 +156,7 @@ final class DeployedStack {
 
         DeployedCompose compose = new DeployedCompose("imcp-" + run, runDir,
                 List.of("compose.yaml", "it-compose.override.yaml")).waitingForHealthy("app")
-                .waitingForHealthy("dovecot");
+                .waitingForHealthy("dovecot").collectingFiles("app", "/logs").collectingFiles("proxy", "/var/log/squid");
         DeployedStack stack = new DeployedStack(source, snapshot, runDir, subnet, imageTag, compose, captured, context);
         stack.dovecotUsers = users;
         stack.canarySubject = canary;
@@ -177,7 +177,11 @@ final class DeployedStack {
             stack.http = stack.buildClient();
             stack.awaitProxy();
         } catch (Exception e) {
-            compose.saveLogs();
+            try {
+                compose.saveLogs();
+            } catch (IOException | RuntimeException saveFailure) {
+                e.addSuppressed(saveFailure);
+            }
             stack.stop();
             throw e;
         }

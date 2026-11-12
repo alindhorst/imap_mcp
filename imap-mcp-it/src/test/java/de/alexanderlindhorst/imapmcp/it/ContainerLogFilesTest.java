@@ -33,7 +33,8 @@ class ContainerLogFilesTest {
     }
 
     private static void file(TarArchiveOutputStream tar, String name, byte[] content) throws IOException {
-        TarArchiveEntry e = new TarArchiveEntry(name);
+        // keeps a leading slash: a hostile container does not normalise its entry names
+        TarArchiveEntry e = new TarArchiveEntry(name, true);
         e.setSize(content.length);
         tar.putArchiveEntry(e);
         tar.write(content);
