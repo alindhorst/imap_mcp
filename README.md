@@ -70,6 +70,8 @@ Do not change files under `dist/docker` while it runs: one test checks that the 
 
 Test-completeness gate: every build that reaches `verify` ends with a check in `imap-mcp-coverage` (SPEC 5.8). It fails when a test is skipped or aborted outside the allowlist `imap-mcp-coverage/src/main/resources/allowed-skips.txt`, when an `*IT` class of `imap-mcp-it` has no report with tests, and when `-DskipTests`, `-DskipITs` or `-Dmaven.test.skip` is set. `-Dimapmcp.partialBuild=true` admits these flags and turns both report checks off, for example `mvn verify -DskipITs -Dimapmcp.partialBuild=true`; the profile `smoke` sets it. A partial build is no evidence for the merge gate.
 
+CI: a fast unit-only workflow on Gitea and the full `verify` workflow on GitHub Actions, with the owner steps for runners, mirroring and the merge gate, are described in `doc/CI.md`. A green unit-only run is no merge-gate evidence.
+
 `imap-mcp-app` produces the runnable shaded jar `imap-mcp-app/target/imap-mcp-app-<version>-all.jar`; the thin jar stays the main artifact.
 
 ## Release

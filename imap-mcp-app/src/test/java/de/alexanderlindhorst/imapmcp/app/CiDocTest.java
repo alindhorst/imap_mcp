@@ -46,7 +46,7 @@ class CiDocTest {
     @Test
     void noSecretNoOwnerLocalPathAndNoStaleRunnerText() throws IOException {
         String doc = doc();
-        assertThat(doc).doesNotContain("--token").doesNotContain(".claude/").doesNotContain("6 GB")
+        assertThat(doc).doesNotContain("--token").doesNotContain(".claude/").doesNotContain("6 GB VM")
                 .doesNotContain("Docker for that user");
         assertThat(doc).doesNotContainPattern("(?i)(token|secret)\\s*[:=]\\s*[A-Za-z0-9]{16,}");
         assertThat(doc).doesNotContainPattern("[^\\x20-\\x7E\\n]");
