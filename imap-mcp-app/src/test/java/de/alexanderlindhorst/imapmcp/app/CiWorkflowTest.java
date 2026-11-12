@@ -176,6 +176,12 @@ class CiWorkflowTest {
     }
 
     @Test
+    void theUnitScriptForcesAUtf8LocaleForTheBareJobContainer() throws IOException {
+        // the job image has no locale set; non-ASCII file names in the tests then fail with the ASCII file system encoding
+        assertThat(scriptLines(read(ROOT.resolve("ci/unit.sh")))).contains("export LC_ALL=C.UTF-8");
+    }
+
+    @Test
     void theUnitScriptRefusesRootWithoutTheFlagAndDoesNotRunMaven(@TempDir Path tmp)
             throws IOException, InterruptedException {
         Path stubs = Files.createDirectory(tmp.resolve("bin"));
