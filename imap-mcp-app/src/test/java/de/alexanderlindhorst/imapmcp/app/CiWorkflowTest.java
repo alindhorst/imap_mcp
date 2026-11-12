@@ -92,6 +92,7 @@ class CiWorkflowTest {
         assertThat(wf.path("jobs").has("verify")).isFalse();
         assertThat(wf.path("jobs").path("unit").path("runs-on").asString()).isEqualTo("imap-mcp-unit");
         assertThat(wf.path("jobs").path("unit").path("steps").toString()).contains("unit-reports");
+        assertThat(read(WORKFLOW)).contains("imap-mcp-unit:host").contains("doc/CI.md");
     }
 
     @Test
