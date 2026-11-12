@@ -59,6 +59,13 @@ class CiDocTest {
     }
 
     @Test
+    void unitRuntimeReportsAndNetworkLessonsAreDocumented() throws IOException {
+        assertThat(doc()).contains("timeout-minutes: 40").contains("GHESNotSupportedError").contains("job log")
+                .contains("docker network ls").contains("not found").contains("timeout-minutes: 120")
+                .doesNotContain("timeout-minutes: 60").doesNotContain("to be measured by the owner");
+    }
+
+    @Test
     void readmeBuildSectionPointsToTheCiDocument() throws IOException {
         String readme = Files.readString(ROOT.resolve("README.md"), StandardCharsets.UTF_8);
         int build = readme.indexOf("\n## Build\n");

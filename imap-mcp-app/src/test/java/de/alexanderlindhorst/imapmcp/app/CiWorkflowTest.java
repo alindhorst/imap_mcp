@@ -92,7 +92,7 @@ class CiWorkflowTest {
         assertThat(wf.path("name").asString()).isEqualTo("unit");
         assertThat(wf.path("jobs").has("verify")).isFalse();
         assertThat(wf.path("jobs").path("unit").path("runs-on").asString()).isEqualTo("ubuntu-latest");
-        assertThat(wf.path("jobs").path("unit").path("steps").toString()).contains("unit-reports");
+        assertThat(read(WORKFLOW)).doesNotContain("unit-reports").doesNotContain("ci-artifacts");
         assertThat(read(WORKFLOW)).contains("container mode").contains("container.network")
                 .contains("container.docker_host").contains("doc/CI.md").doesNotContain("imap-mcp-unit");
         String image = wf.path("jobs").path("unit").path("container").path("image").asString();
@@ -120,7 +120,7 @@ class CiWorkflowTest {
     void theJobHasATimeoutNoSecretsAndTheRightTriggers() throws IOException {
         JsonNode wf = workflow();
         JsonNode job = verifyJob();
-        assertThat(job.path("timeout-minutes").asInt()).isEqualTo(60);
+        assertThat(job.path("timeout-minutes").asInt()).isEqualTo(40);
         assertThat(job.path("runs-on").asString()).isNotBlank();
         assertThat(read(WORKFLOW)).doesNotContain("secrets.");
         // "on" is a YAML 1.1 boolean for some parsers; accept either key
@@ -164,7 +164,7 @@ class CiWorkflowTest {
         assertThat(script).doesNotContain("skipTests").doesNotContain("skipITs")
                 .doesNotContain("maven.test.skip").doesNotContain("partialBuild");
         assertThat(String.join("\n", lines)).doesNotContainPattern("\\b(verify|install|package)\\b(?![-.]\\w)")
-                .contains("surefire-reports").contains("ci-artifacts").contains("unit-only");
+                .contains("unit-only").doesNotContain("ci-artifacts").doesNotContain("trap");
         assertThat(Files.isExecutable(file)).isTrue();
     }
 
@@ -240,13 +240,12 @@ class CiWorkflowTest {
     }
 
     @Test
-    void theReportsAreCollectedAsArtifacts() throws IOException {
+    void theVerifyReportsAreCollectedAsArtifactsAndTheUnitJobUploadsNothing() throws IOException {
+        // upload-artifact v4 treats a non-github.com server as GHES and fails (#471)
+        for (JsonNode step : verifyJob().path("steps")) {
+            assertThat(step.path("uses").asString()).doesNotStartWith("actions/upload-artifact@");
+        }
         assertThat(read(ROOT.resolve("ci/verify.sh"))).contains("surefire-reports").contains("failsafe-reports")
                 .contains("it-compose");
-        boolean upload = false;
-        for (JsonNode step : verifyJob().path("steps")) {
-            upload |= step.path("uses").asString().startsWith("actions/upload-artifact@");
-        }
-        assertThat(upload).isTrue();
     }
 }
