@@ -11,8 +11,16 @@ ROOT="$(pwd)"
 echo "ci/unit.sh: unit-only run; this is no merge-gate evidence, the full build is ci/verify.sh"
 
 if [ "$(id -u)" -eq 0 ]; then
-    echo "ci/unit.sh: refusing to run as root (uid 0); use the unprivileged runner user" >&2
-    exit 1
+    # A containerised act_runner runs jobs as root; the workflow sets IMAP_MCP_CI_DROP_ROOT=1 to run the build as
+    # the unprivileged user ci instead. Without the flag root is refused. The flag is not carried to the re-exec.
+    if [ "${IMAP_MCP_CI_DROP_ROOT:-}" != "1" ]; then
+        echo "ci/unit.sh: refusing to run as root (uid 0); use the unprivileged runner user" >&2
+        exit 1
+    fi
+    id ci >/dev/null 2>&1 || useradd --create-home --home-dir /home/ci --shell /bin/bash ci
+    mkdir -p /home/ci
+    chown -R ci "/home/ci" "$ROOT"
+    exec setpriv --reuid=ci --regid=ci --init-groups env -u IMAP_MCP_CI_DROP_ROOT HOME=/home/ci "$ROOT/ci/unit.sh"
 fi
 
 JAVA_HOME="$("$ROOT/ci/install-jdk.sh")"

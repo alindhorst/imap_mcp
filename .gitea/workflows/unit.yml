@@ -1,8 +1,8 @@
 # #461: unit tests only (test phase), no merge-gate evidence. For a slow (ARM) host; the full verify is
-# ci/verify.sh. Needs a self-hosted act_runner in host mode with the label below. Every action is pinned by
-# commit SHA; no secrets are used.
-# Runner: needs the label imap-mcp-unit:host (host mode; container mode runs as root, which ci/unit.sh refuses).
-# See doc/CI.md.
+# ci/verify.sh. Runs in container mode on the runner's default ubuntu-latest label: the job container is the
+# pinned image below, jobs run as root there, and ci/unit.sh drops to the user ci (IMAP_MCP_CI_DROP_ROOT).
+# The runner must put job containers on the Gitea network (container.network) and should not mount the Docker
+# socket into them (container.docker_host: "-"). See doc/CI.md. Every action is pinned by commit SHA; no secret is used.
 name: unit
 
 on:
@@ -17,16 +17,22 @@ concurrency:
 
 jobs:
   unit:
-    runs-on: imap-mcp-unit
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/library/node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
+    env:
+      IMAP_MCP_CI_DROP_ROOT: "1"
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          path: |
+            /home/ci/.m2/repository
+            /home/ci/.cache/imap-mcp-ci
+          key: maven-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
-            maven-${{ runner.os }}-
+            maven-${{ runner.os }}-${{ runner.arch }}-
       - run: ci/unit.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
