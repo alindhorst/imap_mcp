@@ -259,13 +259,16 @@ class DownloadAttachmentToolTest {
         }
     }
 
-    /** An abandoned worker may still be unwinding after the executor answered: wait for its cleanup. */
-    void awaitOnlyFinalNames(String... expected) throws Exception {
-        long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-        while (System.nanoTime() < end && !filesInDir().equals(List.of(expected))) {
-            Thread.sleep(25);
-        }
-        assertThat(filesInDir()).containsExactly(expected);
+    /**
+     * The executor answered while the abandoned worker may still be running (it was cancelled, interrupted and
+     * parked at the gate): release it, wait for it to leave the tool, then check once that nothing is left, neither
+     * a {@code .part} nor a file under a final name. The bounded wait is a safety net, not the completion signal.
+     */
+    void awaitWorkerThenExpectNoFiles() throws Exception {
+        gate.countDown();
+        assertThat(workerDone.await(10, java.util.concurrent.TimeUnit.SECONDS)).as("the abandoned worker finished")
+                .isTrue();
+        assertThat(filesInDir()).isEmpty();
     }
 
     static String sha(byte[] b) throws Exception {
@@ -642,10 +645,46 @@ class DownloadAttachmentToolTest {
         return new ToolExecutor(Duration.ofSeconds(30), new LogIds(KEYS), MetricsRecorder.NOOP);
     }
 
+    /** Counted down when the (possibly abandoned) worker has left the tool. */
+    java.util.concurrent.CountDownLatch workerDone;
+
+    /** Released by the test once the executor has answered; the cancelled worker waits for it. */
+    final java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
+
+    /** Cancels at {@code at}, then parks the worker until the test lets it go, as a slow runner would. */
+    private DownloadAttachmentTool.StepHook cancelAndParkAt(DownloadAttachmentTool.Step at) {
+        return (step, ctx) -> {
+            if (step == at) {
+                ctx.cancel();
+                // the cancel interrupted this worker: wait for the gate regardless, then restore the flag
+                boolean interrupted = false;
+                long end = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                for (long left = end - System.nanoTime(); gate.getCount() > 0 && left > 0;
+                        left = end - System.nanoTime()) {
+                    try {
+                        gate.await(left, java.util.concurrent.TimeUnit.NANOSECONDS);
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+    }
+
     private ToolOutcome wrapped(String h, DownloadAttachmentTool.StepHook hook) throws Exception {
         build(hook);
         ToolCallContext ctx = new ToolCallContext(new AccountContext(A), "rid");
-        return executor().wrap(DownloadAttachmentTool.DEFINITION, tool).handle(ctx,
+        workerDone = new java.util.concurrent.CountDownLatch(1);
+        return executor().wrap(DownloadAttachmentTool.DEFINITION, (c, a) -> {
+            try {
+                return tool.handle(c, a);
+            } finally {
+                workerDone.countDown();
+            }
+        }).handle(ctx,
                 Map.of("account", acctHandle, "message", h, "part", "2"));
     }
 
@@ -653,44 +692,32 @@ class DownloadAttachmentToolTest {
     void aCancelBeforePublicationIsAPlainTimeoutAndPublishesNothing() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.BEFORE_PUBLISH) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndParkAt(DownloadAttachmentTool.Step.BEFORE_PUBLISH));
 
         Map<String, Object> e = error(o);
         assertThat(e).containsEntry("code", "TIMEOUT");
         assertThat(e).doesNotContainKey("details");
-        awaitOnlyFinalNames();
+        awaitWorkerThenExpectNoFiles();
     }
 
     @Test
     void aCancelBetweenSizeCheckAndFetchIsAPlainTimeoutAndLeavesNoFile() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndParkAt(DownloadAttachmentTool.Step.AFTER_SIZE_CHECK));
 
         assertThat(error(o)).containsEntry("code", "TIMEOUT");
-        awaitOnlyFinalNames();
+        awaitWorkerThenExpectNoFiles();
     }
 
     @Test
     void aCancelRightAfterTheMutationMarkIsOutcomeUnknown() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.AFTER_BEGIN_MUTATION) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndParkAt(DownloadAttachmentTool.Step.AFTER_BEGIN_MUTATION));
 
         assertThat(error(o)).containsEntry("code", "OUTCOME_UNKNOWN");
-        awaitOnlyFinalNames();
+        awaitWorkerThenExpectNoFiles();
     }
 
     @Test
