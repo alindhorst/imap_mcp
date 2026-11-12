@@ -41,19 +41,4 @@ if ! mvn -v 2>/dev/null | grep -q "^Apache Maven 3\.9\."; then
     exit 1
 fi
 
-collect() {
-    rc=$?
-    out="$ROOT/ci-artifacts"
-    mkdir -p "$out"
-    for dir in "$ROOT"/*/target/surefire-reports; do
-        if [ -d "$dir" ]; then
-            mod="$(basename "$(dirname "$(dirname "$dir")")")"
-            mkdir -p "$out/$mod"
-            cp -R "$dir" "$out/$mod/" || true
-        fi
-    done
-    exit "$rc"
-}
-trap collect EXIT
-
 mvn -B test

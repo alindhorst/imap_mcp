@@ -26,7 +26,8 @@ The first Gitea workflow (#438) asked for a runner label `imap-mcp-host`, which 
 - **Root and the privilege drop:** jobs run as root in the job container. Several file-permission tests behave differently as root, so `ci/unit.sh` refuses uid 0 unless the workflow sets `IMAP_MCP_CI_DROP_ROOT=1`. With the flag it creates the unprivileged user `ci` (home `/home/ci`), hands the checkout to it and re-executes itself as `ci` without the flag, so it cannot loop. As a non-root user it runs directly.
 - **No Docker:** no unit test needs Docker, and the job uses no secret. Testcontainers is used only by the failsafe tests of `imap-mcp-it`, which `unit` does not run.
 - **JDK and Maven:** `ci/install-jdk.sh` picks the Temurin tarball by `uname -m` (x86_64 or aarch64, each with its own pinned sha256); `ci/install-maven.sh` installs Maven 3.9.x. Both land under `/home/ci`, which the workflow caches with a key that includes the runner architecture.
-- **Runtime:** unit-only, measured on x86_64: 728 s (about 12 min) with system Maven on a 16-core workstation, and 13 min 05 s in the pinned job image under Podman. ARM: to be measured by the owner; expect roughly 2x to 4x the x86_64 time, and the deadline and timing tests are the most likely to flake on a slow host. The job has `timeout-minutes: 60`.
+- **Runtime:** unit-only, measured on x86_64: 728 s (about 12 min) with system Maven on a 16-core workstation, and 13 min 05 s in the pinned job image under Podman. On the owner's ARM runner `mvn -B test` takes about 24 to 27 min (27:12 in run 32); the deadline and timing tests are the most likely to flake on a slow host. The job has `timeout-minutes: 40`.
+- **Reports:** the unit job uploads no artifact. A failure is read from the job log, where Maven prints the failing tests; locally the reports stay in `*/target/surefire-reports`. Why: `actions/upload-artifact` v4 fails on Gitea with `GHESNotSupportedError` (the client treats every server host other than github.com as GHES), although Gitea has had a v4 artifact backend since 1.22. The GitHub `verify` workflow still uploads its reports.
 
 ### Prerequisites
 
@@ -38,7 +39,7 @@ The first Gitea workflow (#438) asked for a runner label `imap-mcp-host`, which 
 
 Set these in the runner's `config.yaml` and restart the runner afterwards:
 
-- `container.network`: the Docker network of the Gitea compose project (find it with `docker network ls`; often `<project>_gitea_net`). Without it, job containers cannot resolve the Gitea instance URL, and checkout and artifact upload fail.
+- `container.network`: the real Docker name of the network of the Gitea compose project. docker compose prefixes the network key with the project name (for example `gitea-ci_cd_gitea_net`); find the name with `docker network ls`. A wrong name makes the job fail with "network ... not found". Without the option, job containers cannot resolve the Gitea instance URL, and checkout fails.
 - `container.docker_host: "-"`: the runner keeps using the daemon, but job containers no longer get the Docker socket mounted. With the default every job container receives `/var/run/docker.sock`, and a mounted `docker.sock` is root-equivalent control of the host. The unit job needs no Docker.
 - `container.privileged: false` and `container.valid_volumes: []`: no privileged job containers, no host volumes.
 - `cache.host`: only if the cache step warns that it cannot reach the cache server; set it to an address reachable from the job network. Without it the job just runs without the cache.
@@ -99,7 +100,7 @@ Gitea branch protection may additionally require `unit` once a Gitea runner exis
 
 ## Pins and how to update them
 
-- **Actions** (checkout, cache, upload-artifact) are pinned by commit SHA with the tag in a comment, in both workflows. To update one, look up the tag's commit with `git ls-remote --tags <repo-url> <tag>` and replace the SHA and the comment.
+- **Actions** are pinned by commit SHA with the tag in a comment: checkout and cache in both workflows, upload-artifact only in `verify`. To update one, look up the tag's commit with `git ls-remote --tags <repo-url> <tag>` and replace the SHA and the comment.
 - **JDK:** version and sha256 per architecture in `ci/install-jdk.sh`; the source is the checksum file of the Adoptium release named in the script.
 - **Maven:** version and sha512 in `ci/install-maven.sh`; the source is the `.sha512` file next to the binary on archive.apache.org.
 - **Job image of `unit`:** the multi-arch index digest in `.gitea/workflows/unit.yml`. Update it by looking up the digest of the new tag and checking that the index has `linux/arm64` and `linux/amd64`.
