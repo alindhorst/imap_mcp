@@ -41,6 +41,13 @@ class CiDocTest {
     }
 
     @Test
+    void githubRuntimeIsMeasuredNotEstimated() throws IOException {
+        assertThat(doc()).contains("33 min 25 s").contains("30 min 06 s").contains("cold").contains("43304462127")
+                .contains("timeout-minutes: 120").contains("warm-cache run is not measured yet")
+                .doesNotContain("estimated 45 to 70");
+    }
+
+    @Test
     void mergeMasterSummaryFormatAndBaseAreDocumented() throws IOException {
         assertThat(doc()).contains(
                 "head=<sha> master=<sha|absent> merged=<yes|no> basis=<merged|contains|self|head-only> "

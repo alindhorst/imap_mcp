@@ -371,4 +371,29 @@ class DistDockerTest {
             assertThat(section).as("section 6 names " + c).contains(c);
         }
     }
+
+    private static String deploymentSectionSix() throws IOException {
+        String text = read(Path.of("..", "doc", "DEPLOYMENT.md"));
+        int from = text.indexOf("## 6.");
+        int to = text.indexOf("## 7.");
+        assertThat(from).isGreaterThanOrEqualTo(0);
+        assertThat(to).isGreaterThan(from);
+        return text.substring(from, to);
+    }
+
+    @Test
+    void deploymentGuideSectionSixNamesTheNativeDockerCiRun() throws IOException {
+        String section = deploymentSectionSix();
+        assertThat(section).contains("native Docker").contains("ubuntu-24.04").contains("48c29d1")
+                .contains("2026-11-12").contains("43304462127").contains("3270 tests").contains("0 skipped")
+                .contains("48 deployed-IT tests in 8 classes").contains("not recorded");
+    }
+
+    @Test
+    void deploymentGuideNotVerifiedNoLongerListsNativeDockerOrCiRunner() throws IOException {
+        String section = deploymentSectionSix();
+        String notVerified = section.substring(section.indexOf("Not verified"));
+        assertThat(notVerified).doesNotContain("native Docker").doesNotContain("CI runner")
+                .contains("Claude connector").contains("Let's Encrypt").contains("TOTP");
+    }
 }
