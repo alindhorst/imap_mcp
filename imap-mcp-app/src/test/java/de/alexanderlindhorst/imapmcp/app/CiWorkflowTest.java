@@ -47,6 +47,12 @@ class CiWorkflowTest {
         return out;
     }
 
+    /** Lines that run Maven: the version assertion (mvn -v) and the install-maven.sh call are not builds. */
+    private static List<String> mavenInvocations(List<String> lines) {
+        return lines.stream().filter(l -> l.contains("mvn") && !l.contains("mvn -v")
+                && !l.contains("install-maven.sh")).toList();
+    }
+
     @Test
     void everyActionIsPinnedByACommitSha() throws IOException {
         List<String> uses = new ArrayList<>();
@@ -130,7 +136,7 @@ class CiWorkflowTest {
         assertThat(script).containsPattern("JDK_VERSION=\"?26\\.\\d+(\\.\\d+)*\"?");
         assertThat(script).contains("java -version");
         assertThat(lines).contains("mvn -B verify");
-        assertThat(lines.stream().filter(l -> l.contains("mvn")).toList())
+        assertThat(mavenInvocations(lines))
                 .as("the only mvn invocation").containsExactly("mvn -B verify");
         assertThat(Files.isExecutable(ROOT.resolve("ci/verify.sh"))).isTrue();
     }
@@ -143,12 +149,11 @@ class CiWorkflowTest {
         assertThat(lines).contains("set -euo pipefail");
         assertThat(script).contains("id -u").contains("refus").contains("install-jdk.sh")
                 .contains("install-maven.sh").contains("java -version").contains("mvn -v");
-        assertThat(lines.stream().filter(l -> l.contains("mvn")).filter(l -> !l.contains("mvn -v")
-                && !l.contains("install-maven")).toList()).as("the only mvn invocation")
+        assertThat(mavenInvocations(lines)).as("the only mvn invocation")
                 .containsExactly("mvn -B test");
         assertThat(script).doesNotContain("skipTests").doesNotContain("skipITs")
                 .doesNotContain("maven.test.skip").doesNotContain("partialBuild");
-        assertThat(String.join("\n", lines)).doesNotContainPattern("\\b(verify|install|package)\\b(?!\\.sh)")
+        assertThat(String.join("\n", lines)).doesNotContainPattern("\\b(verify|install|package)\\b(?![-.]\\w)")
                 .contains("surefire-reports").contains("ci-artifacts").contains("unit-only");
         assertThat(Files.isExecutable(file)).isTrue();
     }
@@ -176,7 +181,7 @@ class CiWorkflowTest {
         assertThat(scriptLines(script)).contains("set -euo pipefail");
         assertThat(script).containsPattern("JDK_VERSION=\"26\\.\\d+(\\.\\d+)*\"")
                 .contains("temurin26-binaries").contains("sha256sum").contains("uname -m")
-                .contains("jdk_x64_linux").contains("jdk_aarch64_linux");
+                .contains("\"x64\"").contains("\"aarch64\"").contains("_linux_hotspot_");
         java.util.regex.Matcher m = Pattern.compile("[\"']([0-9a-f]{64})[\"']").matcher(script);
         java.util.Set<String> pins = new java.util.HashSet<>();
         while (m.find()) {

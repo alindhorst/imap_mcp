@@ -1,6 +1,7 @@
-# #438: the same full build the merge gate records. Needs a self-hosted act_runner in host mode with the
-# label below (doc/CI.md). Every action is pinned by commit SHA; no secrets are used.
-name: verify
+# #461: unit tests only (test phase), no merge-gate evidence. For a slow (ARM) host; the full verify is
+# ci/verify.sh. Needs a self-hosted act_runner in host mode with the label below. Every action is pinned by
+# commit SHA; no secrets are used.
+name: unit
 
 on:
   pull_request:
@@ -9,12 +10,12 @@ on:
     branches: [master]
 
 concurrency:
-  group: verify-${{ github.ref }}
+  group: unit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    runs-on: imap-mcp-host
+  unit:
+    runs-on: imap-mcp-unit
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -24,10 +25,10 @@ jobs:
           key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             maven-${{ runner.os }}-
-      - run: ci/verify.sh
+      - run: ci/unit.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: verify-reports
+          name: unit-reports
           path: ci-artifacts
           if-no-files-found: ignore
