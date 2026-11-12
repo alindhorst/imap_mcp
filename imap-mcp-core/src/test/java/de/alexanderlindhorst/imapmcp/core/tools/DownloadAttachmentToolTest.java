@@ -642,10 +642,42 @@ class DownloadAttachmentToolTest {
         return new ToolExecutor(Duration.ofSeconds(30), new LogIds(KEYS), MetricsRecorder.NOOP);
     }
 
+    /** Counted down when the (possibly abandoned) worker has left the tool. */
+    java.util.concurrent.CountDownLatch workerDone;
+
+    /** Cancels at {@code at}, then keeps the worker busy for a while, as a slow runner would. */
+    private static DownloadAttachmentTool.StepHook cancelAndDelayAt(DownloadAttachmentTool.Step at) {
+        return (step, ctx) -> {
+            if (step == at) {
+                ctx.cancel();
+                // the cancel interrupted this worker: sleep out the delay regardless, then restore the flag
+                long end = System.nanoTime() + Duration.ofMillis(300).toNanos();
+                boolean interrupted = false;
+                for (long left = end - System.nanoTime(); left > 0; left = end - System.nanoTime()) {
+                    try {
+                        Thread.sleep(Duration.ofNanos(left));
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+    }
+
     private ToolOutcome wrapped(String h, DownloadAttachmentTool.StepHook hook) throws Exception {
         build(hook);
         ToolCallContext ctx = new ToolCallContext(new AccountContext(A), "rid");
-        return executor().wrap(DownloadAttachmentTool.DEFINITION, tool).handle(ctx,
+        workerDone = new java.util.concurrent.CountDownLatch(1);
+        return executor().wrap(DownloadAttachmentTool.DEFINITION, (c, a) -> {
+            try {
+                return tool.handle(c, a);
+            } finally {
+                workerDone.countDown();
+            }
+        }).handle(ctx,
                 Map.of("account", acctHandle, "message", h, "part", "2"));
     }
 
@@ -653,44 +685,35 @@ class DownloadAttachmentToolTest {
     void aCancelBeforePublicationIsAPlainTimeoutAndPublishesNothing() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.BEFORE_PUBLISH) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndDelayAt(DownloadAttachmentTool.Step.BEFORE_PUBLISH));
 
         Map<String, Object> e = error(o);
         assertThat(e).containsEntry("code", "TIMEOUT");
         assertThat(e).doesNotContainKey("details");
         awaitOnlyFinalNames();
+        assertThat(workerDone.getCount()).as("the abandoned worker has finished").isZero();
     }
 
     @Test
     void aCancelBetweenSizeCheckAndFetchIsAPlainTimeoutAndLeavesNoFile() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.AFTER_SIZE_CHECK) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndDelayAt(DownloadAttachmentTool.Step.AFTER_SIZE_CHECK));
 
         assertThat(error(o)).containsEntry("code", "TIMEOUT");
         awaitOnlyFinalNames();
+        assertThat(workerDone.getCount()).as("the abandoned worker has finished").isZero();
     }
 
     @Test
     void aCancelRightAfterTheMutationMarkIsOutcomeUnknown() throws Exception {
         String h = deliver(mixed(attachment("application/pdf", "a.pdf", random(100))));
 
-        ToolOutcome o = wrapped(h, (step, ctx) -> {
-            if (step == DownloadAttachmentTool.Step.AFTER_BEGIN_MUTATION) {
-                ctx.cancel();
-            }
-        });
+        ToolOutcome o = wrapped(h, cancelAndDelayAt(DownloadAttachmentTool.Step.AFTER_BEGIN_MUTATION));
 
         assertThat(error(o)).containsEntry("code", "OUTCOME_UNKNOWN");
         awaitOnlyFinalNames();
+        assertThat(workerDone.getCount()).as("the abandoned worker has finished").isZero();
     }
 
     @Test
