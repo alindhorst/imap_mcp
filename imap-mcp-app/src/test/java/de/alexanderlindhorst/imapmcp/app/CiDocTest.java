@@ -30,6 +30,11 @@ class CiDocTest {
     }
 
     @Test
+    void readmeBadgesAreMentioned() throws IOException {
+        assertThat(doc()).contains("badge").contains("no merge-gate evidence");
+    }
+
+    @Test
     void githubSectionAndOwnerStepsAreCovered() throws IOException {
         assertThat(doc()).contains("ubuntu-24.04").contains("permissions").contains("push mirror")
                 .contains("deploy key").contains("default branch").contains("check-runs");
