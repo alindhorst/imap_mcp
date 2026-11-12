@@ -68,7 +68,7 @@ The registration token (Settings, Actions, Runners, "Create new runner" at repos
 - **Permissions and secrets:** `permissions: contents: read`, no secrets.
 - **Triggers:** `push` and `workflow_dispatch` only. There is no `pull_request` or `pull_request_target` trigger, so a fork PR runs nothing. PRs live on Gitea; a PR branch reaches GitHub by a push (see the next section).
 - **Artifacts:** the surefire/failsafe reports and, on failure, the compose logs of the deployed IT are uploaded for 7 days. On a public repository they are public; they hold only throwaway test credentials.
-- **Runtime:** estimated 45 to 70 min on 4 vCPU, with `timeout-minutes: 120`; not measured yet.
+- **Runtime:** measured in run 43304462127 (2026-11-12, cold Maven cache): job wall time 33 min 25 s, of which `ci/verify.sh` 30 min 06 s, "Free disk space" 2 min 29 s and `ci/prepull-images.sh` 36 s. A warm-cache run is not measured yet. The sums of the test-class times are about 29 min (1733.5 s), the largest shares in `imap-mcp-it` failsafe (774.8 s default execution, 268.7 s `deployed-it`) and `imap-mcp-core` (383.6 s). The job keeps `timeout-minutes: 120`.
 - **Private repository:** it would get 2 vCPU and 7 GB, roughly twice the time, and the minutes count against the plan quota. Not recommended without a larger runner.
 
 ## How commits reach GitHub (owner decision)

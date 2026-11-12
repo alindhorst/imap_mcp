@@ -66,9 +66,11 @@ Verified by the deployed integration tests of `imap-mcp-it` (`*DeployedIT`; see 
 - `OriginDeployedIT`: the `Origin` behaviour of section 4 and that linked accounts survive an app restart. The `Host` check is not tested through Caddy: a foreign name is answered by Caddy itself and never reaches the app.
 - `ConnectorContractDeployedIT`: the client's connector sequence conforms to the committed connector fixture and replays its statuses. That fixture is still `source: assumed`, so this proves the stack against an assumed sequence only; the log line of the run names the source.
 
+The same `*DeployedIT` suite also ran green with native Docker on a GitHub-hosted CI runner (`ubuntu-24.04`, x64): GitHub Actions run `verify` 43304462127 on commit 48c29d1 on 2026-11-12, as a non-root user and with a cold Maven cache. The run had 3270 tests, 0 failures, 0 errors, 0 skipped, of them 48 deployed-IT tests in 8 classes, and every `*IT` class of `imap-mcp-it` produced a report. `ConnectorContractDeployedIT` ran with `source=assumed` there too. The Docker engine and compose versions and the verbatim `test-completeness gate: OK (...)` line were not recorded, because the job log was not kept; the gate passed because the run was green (it fails `verify` on any skip).
+
 An earlier manual run (rootless Podman 5.8.2, `podman compose` and podman-compose 1.6.0) also checked: both databases and the Flyway migrations, the resolved realm placeholders, and the refusal of a token without the audience.
 
-Not verified, because it needs a public run or a runner: the real Claude connector (whether it sends an `Origin` and which, its `User-Agent` and protocol version, whether it accepts metadata without `none`), the public host with DNS and Let's Encrypt (ports 80 and 443), the browser login with TOTP, a run with native Docker as the engine (the tests ran on rootless Podman), and a run on a CI runner. These are what the checks in section 3 are for.
+Not verified, because it needs a public run: the real Claude connector (whether it sends an `Origin` and which, its `User-Agent` and protocol version, whether it accepts metadata without `none`), the public host with DNS and Let's Encrypt (ports 80 and 443), and the browser login with TOTP. These are what the checks in section 3 are for.
 
 ## 7. Security notes
 
