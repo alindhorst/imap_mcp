@@ -142,6 +142,7 @@ class GithubWorkflowTest {
     void checkoutConcurrencyCacheAndUpload() throws IOException {
         JsonNode steps = verifyJob().path("steps");
         assertThat(steps.get(0).path("with").path("fetch-depth").asString()).isEqualTo("0");
+        assertThat(steps.get(0).path("with").path("persist-credentials").asString()).isEqualTo("false");
         JsonNode concurrency = workflow().path("concurrency");
         assertThat(concurrency.path("group").asString()).contains("github.ref");
         String cancel = concurrency.path("cancel-in-progress").asString();
@@ -252,17 +253,17 @@ class GithubWorkflowTest {
     @Test
     void prepullListCoversEveryDigestPinnedImage() throws Exception {
         Set<String> expected = new LinkedHashSet<>();
-        for (Path p : List.of(ROOT.resolve("dist/docker/compose.yaml"), ROOT.resolve(
-                "imap-mcp-it/src/test/java/de/alexanderlindhorst/imapmcp/it/ItImages.java"))) {
+        for (Path p : List.of(ROOT.resolve("dist/docker/compose.yaml"), ROOT.resolve("dist/docker/Dockerfile"),
+                ROOT.resolve("imap-mcp-it/src/test/java/de/alexanderlindhorst/imapmcp/it/ItImages.java"))) {
             Matcher m = DIGEST_IMAGE.matcher(read(p));
             while (m.find()) {
                 expected.add(m.group());
             }
         }
-        assertThat(expected).hasSizeGreaterThanOrEqualTo(7);
+        assertThat(expected).hasSizeGreaterThanOrEqualTo(8);
         String all = String.join("\n", expected);
         assertThat(all).contains("postgres:").contains("keycloak:").contains("caddy:").contains("dovecot:")
-                .contains("squid:");
+                .contains("squid:").contains("eclipse-temurin:");
 
         ProcessBuilder pb = new ProcessBuilder(PREPULL.toAbsolutePath().toString(), "--list");
         pb.directory(ROOT.toFile());
