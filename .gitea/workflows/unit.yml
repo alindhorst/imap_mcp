@@ -1,6 +1,8 @@
 # #461: unit tests only (test phase), no merge-gate evidence. For a slow (ARM) host; the full verify is
 # ci/verify.sh. Needs a self-hosted act_runner in host mode with the label below. Every action is pinned by
 # commit SHA; no secrets are used.
+# Runner: needs the label imap-mcp-unit:host (host mode; container mode runs as root, which ci/unit.sh refuses).
+# See doc/CI.md.
 name: unit
 
 on:
