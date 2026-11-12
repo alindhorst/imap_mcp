@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -18,7 +19,7 @@ class CiWorkflowTest {
 
     // Surefire runs with the module directory as working directory.
     private static final Path ROOT = Path.of("..");
-    private static final Path WORKFLOW = ROOT.resolve(".gitea/workflows/verify.yml");
+    private static final Path WORKFLOW = ROOT.resolve(".gitea/workflows/unit.yml");
     private static final Pattern SHA_REF = Pattern.compile("[^@\\s]+@[0-9a-f]{40}(\\s+#.*)?");
 
     private static String read(Path p) throws IOException {
@@ -30,8 +31,8 @@ class CiWorkflowTest {
     }
 
     private static JsonNode verifyJob() throws IOException {
-        JsonNode job = workflow().path("jobs").path("verify");
-        assertThat(job.isObject()).as("job named verify").isTrue();
+        JsonNode job = workflow().path("jobs").path("unit");
+        assertThat(job.isObject()).as("job named unit").isTrue();
         return job;
     }
 
@@ -45,6 +46,12 @@ class CiWorkflowTest {
             }
         }
         return out;
+    }
+
+    /** Lines that run Maven: the version assertion (mvn -v) and the install-maven.sh call are not builds. */
+    private static List<String> mavenInvocations(List<String> lines) {
+        return lines.stream().filter(l -> l.contains("mvn") && !l.contains("mvn -v")
+                && !l.contains("install-maven.sh")).toList();
     }
 
     @Test
@@ -73,13 +80,31 @@ class CiWorkflowTest {
                 runs.add(step.path("run").asString().strip());
             }
         }
-        assertThat(runs).contains("ci/verify.sh");
+        assertThat(runs).contains("ci/unit.sh");
         assertThat(String.join("\n", runs)).doesNotContain("mvn");
         assertThat(read(WORKFLOW)).doesNotContain("mvn ");
     }
 
     @Test
-    void theWorkflowRunsTheFullBuildAndTakesNoShortcut() throws IOException {
+    void theWorkflowIsUnitOnlyAndTheVerifyWorkflowIsGone() throws IOException {
+        assertThat(Files.exists(ROOT.resolve(".gitea/workflows/verify.yml"))).isFalse();
+        JsonNode wf = workflow();
+        assertThat(wf.path("name").asString()).isEqualTo("unit");
+        assertThat(wf.path("jobs").has("verify")).isFalse();
+        assertThat(wf.path("jobs").path("unit").path("runs-on").asString()).isEqualTo("ubuntu-latest");
+        assertThat(wf.path("jobs").path("unit").path("steps").toString()).contains("unit-reports");
+        assertThat(read(WORKFLOW)).contains("container mode").contains("container.network")
+                .contains("container.docker_host").contains("doc/CI.md").doesNotContain("imap-mcp-unit");
+        String image = wf.path("jobs").path("unit").path("container").path("image").asString();
+        assertThat(image).matches("[a-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}");
+        assertThat(wf.path("jobs").path("unit").path("env").path("IMAP_MCP_CI_DROP_ROOT").asString()).isEqualTo("1");
+        assertThat(wf.path("jobs").path("unit").path("container").size()).as("image only").isEqualTo(1);
+        assertThat(read(WORKFLOW)).doesNotContain("options:").doesNotContain("volumes:").doesNotContain("privileged")
+                .doesNotContain("docker.sock").doesNotContain("services:");
+    }
+
+    @Test
+    void theWorkflowTakesNoShortcut() throws IOException {
         String text = read(WORKFLOW);
         assertThat(text).doesNotContainIgnoringCase("skipITs")
                 .doesNotContainIgnoringCase("skipTests")
@@ -108,7 +133,8 @@ class CiWorkflowTest {
     @Test
     void theMavenCacheIsKeyedOnAllPomFiles() throws IOException {
         String text = read(WORKFLOW);
-        assertThat(text).contains("hashFiles('**/pom.xml')").contains("~/.m2/repository");
+        assertThat(text).contains("hashFiles('**/pom.xml')").contains("/home/ci/.m2/repository")
+                .contains("/home/ci/.cache/imap-mcp-ci").contains("runner.arch").doesNotContain("~/");
     }
 
     @Test
@@ -120,18 +146,95 @@ class CiWorkflowTest {
         assertThat(script).containsPattern("JDK_VERSION=\"?26\\.\\d+(\\.\\d+)*\"?");
         assertThat(script).contains("java -version");
         assertThat(lines).contains("mvn -B verify");
-        assertThat(lines.stream().filter(l -> l.contains("mvn")).toList())
+        assertThat(mavenInvocations(lines))
                 .as("the only mvn invocation").containsExactly("mvn -B verify");
         assertThat(Files.isExecutable(ROOT.resolve("ci/verify.sh"))).isTrue();
     }
 
     @Test
-    void theJdkIsAnExactTemurinBuildVerifiedBySha256() throws IOException {
+    void theUnitScriptRunsOnlyMvnTestOnTheAssertedToolchain() throws IOException {
+        Path file = ROOT.resolve("ci/unit.sh");
+        String script = read(file);
+        List<String> lines = scriptLines(script);
+        assertThat(lines).contains("set -euo pipefail");
+        assertThat(script).contains("id -u").contains("refus").contains("install-jdk.sh")
+                .contains("install-maven.sh").contains("java -version").contains("mvn -v");
+        assertThat(mavenInvocations(lines)).as("the only mvn invocation")
+                .containsExactly("mvn -B test");
+        assertThat(script).doesNotContain("skipTests").doesNotContain("skipITs")
+                .doesNotContain("maven.test.skip").doesNotContain("partialBuild");
+        assertThat(String.join("\n", lines)).doesNotContainPattern("\\b(verify|install|package)\\b(?![-.]\\w)")
+                .contains("surefire-reports").contains("ci-artifacts").contains("unit-only");
+        assertThat(Files.isExecutable(file)).isTrue();
+    }
+
+    @Test
+    void theUnitScriptDropsRootOnlyWhenAskedTo() throws IOException {
+        String script = read(ROOT.resolve("ci/unit.sh"));
+        assertThat(script).contains("IMAP_MCP_CI_DROP_ROOT").contains("useradd").contains("chown")
+                .contains("/home/ci").contains("setpriv").contains("env -u IMAP_MCP_CI_DROP_ROOT");
+    }
+
+    @Test
+    void theUnitScriptForcesAUtf8LocaleForTheBareJobContainer() throws IOException {
+        // the job image has no locale set; non-ASCII file names in the tests then fail with the ASCII file system encoding
+        assertThat(scriptLines(read(ROOT.resolve("ci/unit.sh")))).contains("export LC_ALL=C.UTF-8");
+    }
+
+    @Test
+    void theUnitScriptRefusesRootWithoutTheFlagAndDoesNotRunMaven(@TempDir Path tmp)
+            throws IOException, InterruptedException {
+        Path stubs = Files.createDirectory(tmp.resolve("bin"));
+        Path marker = tmp.resolve("mvn-called");
+        stub(stubs.resolve("id"), "echo 0");
+        stub(stubs.resolve("mvn"), "touch '" + marker + "'");
+        ProcessBuilder pb = new ProcessBuilder("bash", ROOT.resolve("ci/unit.sh").toAbsolutePath().toString());
+        pb.environment().put("PATH", stubs + ":" + System.getenv("PATH"));
+        pb.environment().remove("IMAP_MCP_CI_DROP_ROOT");
+        pb.redirectErrorStream(true);
+        Process proc = pb.start();
+        String out = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(proc.waitFor()).isNotZero();
+        assertThat(out).contains("refusing");
+        assertThat(marker).doesNotExist();
+    }
+
+    private static void stub(Path file, String body) throws IOException {
+        Files.writeString(file, "#!/bin/sh\n" + body + "\n");
+        assertThat(file.toFile().setExecutable(true)).isTrue();
+    }
+
+    @Test
+    void theMavenIsAnExactReleaseVerifiedBySha512() throws IOException {
+        Path file = ROOT.resolve("ci/install-maven.sh");
+        String script = read(file);
+        assertThat(scriptLines(script)).contains("set -euo pipefail");
+        assertThat(script).containsPattern("MAVEN_VERSION=\"3\\.9\\.\\d+\"")
+                .containsPattern("MAVEN_SHA512=\"[0-9a-f]{128}\"").contains("sha512sum")
+                .contains("archive.apache.org/dist/maven/maven-3");
+        assertThat(script).doesNotContain("latest");
+        assertThat(Files.isExecutable(file)).isTrue();
+    }
+
+    @Test
+    void theVerifyScriptUsesThePinnedMaven() throws IOException {
+        assertThat(read(ROOT.resolve("ci/verify.sh"))).contains("install-maven.sh").contains("mvn -v");
+    }
+
+    @Test
+    void theJdkIsAnExactTemurinBuildVerifiedBySha256PerArchitecture() throws IOException {
         String script = read(ROOT.resolve("ci/install-jdk.sh"));
         assertThat(scriptLines(script)).contains("set -euo pipefail");
-        assertThat(script).containsPattern("JDK_SHA256=\"[0-9a-f]{64}\"")
-                .containsPattern("JDK_VERSION=\"26\\.\\d+(\\.\\d+)*\"")
-                .contains("temurin26-binaries").contains("sha256sum");
+        assertThat(script).containsPattern("JDK_VERSION=\"26\\.\\d+(\\.\\d+)*\"")
+                .contains("temurin26-binaries").contains("sha256sum").contains("uname -m")
+                .contains("\"x64\"").contains("\"aarch64\"").contains("_linux_hotspot_");
+        java.util.regex.Matcher m = Pattern.compile("[\"']([0-9a-f]{64})[\"']").matcher(script);
+        java.util.Set<String> pins = new java.util.HashSet<>();
+        while (m.find()) {
+            pins.add(m.group(1));
+        }
+        assertThat(pins).as("one sha256 per architecture").hasSize(2);
+        assertThat(script).contains("x86_64").contains("aarch64").contains("arm64").contains("exit 1");
         assertThat(script).doesNotContain("latest");
         assertThat(Files.isExecutable(ROOT.resolve("ci/install-jdk.sh"))).isTrue();
     }
