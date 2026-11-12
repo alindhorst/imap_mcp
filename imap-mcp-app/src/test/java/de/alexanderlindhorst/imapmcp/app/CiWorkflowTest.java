@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -90,9 +91,16 @@ class CiWorkflowTest {
         JsonNode wf = workflow();
         assertThat(wf.path("name").asString()).isEqualTo("unit");
         assertThat(wf.path("jobs").has("verify")).isFalse();
-        assertThat(wf.path("jobs").path("unit").path("runs-on").asString()).isEqualTo("imap-mcp-unit");
+        assertThat(wf.path("jobs").path("unit").path("runs-on").asString()).isEqualTo("ubuntu-latest");
         assertThat(wf.path("jobs").path("unit").path("steps").toString()).contains("unit-reports");
-        assertThat(read(WORKFLOW)).contains("imap-mcp-unit:host").contains("doc/CI.md");
+        assertThat(read(WORKFLOW)).contains("container mode").contains("container.network")
+                .contains("container.docker_host").contains("doc/CI.md").doesNotContain("imap-mcp-unit");
+        String image = wf.path("jobs").path("unit").path("container").path("image").asString();
+        assertThat(image).matches("[a-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}");
+        assertThat(wf.path("jobs").path("unit").path("env").path("IMAP_MCP_CI_DROP_ROOT").asString()).isEqualTo("1");
+        assertThat(wf.path("jobs").path("unit").path("container").size()).as("image only").isEqualTo(1);
+        assertThat(read(WORKFLOW)).doesNotContain("options:").doesNotContain("volumes:").doesNotContain("privileged")
+                .doesNotContain("docker.sock").doesNotContain("services:");
     }
 
     @Test
@@ -125,7 +133,8 @@ class CiWorkflowTest {
     @Test
     void theMavenCacheIsKeyedOnAllPomFiles() throws IOException {
         String text = read(WORKFLOW);
-        assertThat(text).contains("hashFiles('**/pom.xml')").contains("~/.m2/repository");
+        assertThat(text).contains("hashFiles('**/pom.xml')").contains("/home/ci/.m2/repository")
+                .contains("/home/ci/.cache/imap-mcp-ci").contains("runner.arch").doesNotContain("~/");
     }
 
     @Test
@@ -157,6 +166,36 @@ class CiWorkflowTest {
         assertThat(String.join("\n", lines)).doesNotContainPattern("\\b(verify|install|package)\\b(?![-.]\\w)")
                 .contains("surefire-reports").contains("ci-artifacts").contains("unit-only");
         assertThat(Files.isExecutable(file)).isTrue();
+    }
+
+    @Test
+    void theUnitScriptDropsRootOnlyWhenAskedTo() throws IOException {
+        String script = read(ROOT.resolve("ci/unit.sh"));
+        assertThat(script).contains("IMAP_MCP_CI_DROP_ROOT").contains("useradd").contains("chown")
+                .contains("/home/ci").contains("setpriv").contains("env -u IMAP_MCP_CI_DROP_ROOT");
+    }
+
+    @Test
+    void theUnitScriptRefusesRootWithoutTheFlagAndDoesNotRunMaven(@TempDir Path tmp)
+            throws IOException, InterruptedException {
+        Path stubs = Files.createDirectory(tmp.resolve("bin"));
+        Path marker = tmp.resolve("mvn-called");
+        stub(stubs.resolve("id"), "echo 0");
+        stub(stubs.resolve("mvn"), "touch '" + marker + "'");
+        ProcessBuilder pb = new ProcessBuilder("bash", ROOT.resolve("ci/unit.sh").toAbsolutePath().toString());
+        pb.environment().put("PATH", stubs + ":" + System.getenv("PATH"));
+        pb.environment().remove("IMAP_MCP_CI_DROP_ROOT");
+        pb.redirectErrorStream(true);
+        Process proc = pb.start();
+        String out = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(proc.waitFor()).isNotZero();
+        assertThat(out).contains("refusing");
+        assertThat(marker).doesNotExist();
+    }
+
+    private static void stub(Path file, String body) throws IOException {
+        Files.writeString(file, "#!/bin/sh\n" + body + "\n");
+        assertThat(file.toFile().setExecutable(true)).isTrue();
     }
 
     @Test
