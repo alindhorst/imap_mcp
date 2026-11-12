@@ -1,0 +1,46 @@
+# #462: the full build of the merge gate on a GitHub-hosted runner (native Docker, 4 vCPU). Runs only on push
+# and by hand: PRs live on Gitea, and on a public repository a fork PR must run nothing. The head is merged with
+# the current master first (ci/merge-master.sh). Every action is pinned by commit SHA; no secrets are used.
+# Artifacts on a public repository are public; the reports and compose logs hold only throwaway test credentials.
+name: verify
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          df -h /
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-
+      - run: ci/merge-master.sh
+      - run: ci/prepull-images.sh
+      - run: ci/verify.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: verify-reports
+          path: ci-artifacts
+          retention-days: 7
+          if-no-files-found: ignore
