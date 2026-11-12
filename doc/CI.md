@@ -10,6 +10,8 @@ This document is an instruction for the owner. SPEC 5.8 (v0.26) splits CI into t
 - **`unit`** gives fast feedback on the owner's own (ARM) host. It runs no failsafe tests, no deployed IT and no test-completeness gate, so a green `unit` is no merge-gate evidence and must never be read as one.
 - **`verify`** is the same build the merge gate records, run on the PR head merged with the current master (`ci/merge-master.sh`). The head and master SHAs it tested are written to the job summary (`head=<sha> master=<sha|absent> merged=<yes|no> basis=<merged|contains|self|head-only> base=<master|main|none>`). `master=` is exactly the SHA the build was based on: origin's `master`, else origin's `main` (`base=`). `basis=` says how: `merged` (a merge commit was built), `contains` (the base was already an ancestor of the head), `self` (the ref is the base) or `head-only` (no base: the line is written and the job fails with "no origin master or main: cannot build the head merged with master").
 
+The README shows both badges: `verify` is the full GitHub build, `unit` is the Gitea unit tests only and is no merge-gate evidence; the local merge gate (the recorded `mvn verify` before approval) stays the merge gate.
+
 Both workflows use no secrets. The JDK and Maven are never taken from the runner: the scripts fetch them and verify them against pinned checksums (see "Pins" below).
 
 ## The Gitea `unit` runner (optional, the owner's choice)

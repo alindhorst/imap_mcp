@@ -1,5 +1,8 @@
 # IMAP MCP
 
+[![verify](https://github.com/alindhorst/imap_mcp/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/alindhorst/imap_mcp/actions/workflows/verify.yml)\
+[![unit](http://spacedock:3000/lindhrst/imap_mcp/actions/workflows/unit.yml/badge.svg?branch=master)](http://spacedock:3000/lindhrst/imap_mcp/actions?workflow=unit.yml)
+
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM client search, read and organize mail in IMAP mailboxes. Changes are reversible, except the gated permanent deletion from Trash that the user confirms each time. Java 25, official MCP Java SDK, Jakarta Mail (Angus Mail). IMAP only; sending mail is out of scope for now.
 
 > **Status:** phase v3a: read-only tools, reversible write tools (enabled by default, turned off per account by `readOnly`), `download_attachment` (needs `tools.download.dir`) and `purge_messages` (needs `allowPurge`; `stdio`, and `http-public` with `purge.enabled`), with `stdio` and `http-local`. `http-public` (v3b) is available as described below, including the linking surface at `/accounts`; see "Scope by phase".
