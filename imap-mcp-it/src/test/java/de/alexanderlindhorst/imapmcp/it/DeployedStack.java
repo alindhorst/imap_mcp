@@ -3,13 +3,10 @@ package de.alexanderlindhorst.imapmcp.it;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.exception.DockerException;
 import com.github.dockerjava.api.model.Network;
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
-import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -245,20 +242,8 @@ final class DeployedStack {
     }
 
     private void awaitProxy() throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
-        while (true) {
-            try {
-                if (proxyConnect(new java.net.URI(mcpOrigin()).getAuthority()).contains(" 200")) {
-                    return;
-                }
-            } catch (IOException e) {
-                // proxy not listening yet
-            }
-            if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("the forward proxy does not tunnel to Caddy after 90 s");
-            }
-            Thread.sleep(1000);
-        }
+        ProxyReadiness.await("127.0.0.1", proxyPort, new java.net.URI(mcpOrigin()).getAuthority(),
+                Duration.ofSeconds(90), Duration.ofSeconds(1), 5000, 15000);
     }
 
     // ---- teardown ------------------------------------------------------------------------------------------
@@ -352,15 +337,7 @@ final class DeployedStack {
 
     /** Status line the forward proxy answers to a raw {@code CONNECT <authority>}. */
     String proxyConnect(String authority) throws IOException {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", proxyPort), 5000);
-            socket.setSoTimeout(15000);
-            socket.getOutputStream().write(("CONNECT " + authority + " HTTP/1.1\r\nHost: " + authority + "\r\n\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-            socket.getOutputStream().flush();
-            return new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII))
-                    .readLine();
-        }
+        return ProxyReadiness.connect("127.0.0.1", proxyPort, authority, 5000, 15000);
     }
 
     String backendSubnet() {
