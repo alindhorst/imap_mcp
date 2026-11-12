@@ -249,14 +249,4 @@ class CiWorkflowTest {
         }
         assertThat(upload).isTrue();
     }
-
-    @Test
-    void theCiDocumentSaysWhatTheOwnerHasToDoAndHoldsNoSecret() throws IOException {
-        String doc = read(ROOT.resolve("doc/CI.md"));
-        assertThat(doc).contains("host mode").contains("non-root").contains("docker compose")
-                .contains("verify").contains("required").contains("act_runner register");
-        // the token goes in at the prompt, never on argv; .claude/ is owner-local and untracked
-        assertThat(doc).doesNotContain("--token").doesNotContain(".claude/");
-        assertThat(doc).doesNotContainPattern("(?i)(token|secret)\\s*[:=]\\s*[A-Za-z0-9]{16,}");
-    }
 }

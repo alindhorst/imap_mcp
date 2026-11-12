@@ -1,44 +1,106 @@
-# CI: the `verify` workflow
+# CI: the Gitea `unit` and the GitHub `verify` workflows
 
-`.gitea/workflows/verify.yml` runs the same `mvn -B verify` that the merge gate records (SPEC 5.8), with no partial build, through the one entry point `ci/verify.sh`. This document is an instruction for the owner. At the time of writing there is no runner, and `verify` is not yet a required check or part of the merge gate; both are owner decisions (steps below).
+This document is an instruction for the owner. SPEC 5.8 (v0.26) splits CI into two workflows with two contexts that must never be confused.
 
-What the job does:
+| Context | Where | Files | What it runs | Merge gate |
+| --- | --- | --- | --- | --- |
+| `unit` | Gitea Actions | `.gitea/workflows/unit.yml`, `ci/unit.sh` | `mvn -B test` | no merge-gate evidence |
+| `verify` | GitHub Actions | `.github/workflows/verify.yml`, `ci/verify.sh` | the full `mvn -B verify` | the same build the gate records |
 
-- triggers on `pull_request` to `master` and on `push` to `master`; one run per ref (`concurrency`), `timeout-minutes: 60`;
-- runs on the runner label `imap-mcp-host`;
-- `ci/verify.sh` refuses to run as uid 0, installs the exact Temurin JDK 26.0.2.1+1 (`ci/install-jdk.sh`, tarball verified against a pinned sha256) under `~/.cache/imap-mcp-ci`, asserts `java -version`, then runs `mvn -B verify`. Surefire/failsafe reports go to the artifact `verify-reports`; on failure also the compose logs of the deployed IT (`imap-mcp-it/target/it-compose/*/logs`);
-- the Maven repository cache is keyed on the hash of all `pom.xml`;
-- no secrets are used or needed. Every action is pinned by commit SHA (checkout v4.3.1, cache v4.3.0, upload-artifact v4.6.2); update them by looking up the tag's commit with `git ls-remote --tags <repo-url> <tag>` and replace the SHA and the comment.
+- **`unit`** gives fast feedback on the owner's own (ARM) host. It runs no failsafe tests, no deployed IT and no test-completeness gate, so a green `unit` is no merge-gate evidence and must never be read as one.
+- **`verify`** is the same build the merge gate records, run on the PR head merged with the current master (`ci/merge-master.sh`). The head and master SHAs it tested are written to the job summary (`head=<sha> master=<sha> merged=<yes|no>`).
 
-## Runner prerequisites
+Both workflows use no secrets. The JDK and Maven are never taken from the runner: the scripts fetch them and verify them against pinned checksums (see "Pins" below).
 
-- A dedicated VM (not a workstation with other duties); Linux x86_64, about 6 GB RAM free for a build with the compose-based integration tests, and disk for the container images (plan 30 GB) plus the Maven cache.
-- A **non-root** user (for example `ci-runner`) that runs the runner. `ci/verify.sh` fails for uid 0 on purpose: the test-completeness gate would otherwise see the root-only skip of `StateDirectoryTest` as a normal case.
-- Docker for that user, either rootless Docker or membership in the `docker` group (the latter is root-equivalent on that VM, which is why the VM is dedicated), with the `docker compose` plugin installed in a pinned version (tested here: Docker Compose 5.1.2 with Docker 29.4.2; record the version you install).
-- Maven 3.9.6 or newer, `git`, `curl`, `tar`, `sha256sum` and Node.js (the actions are JavaScript) on the PATH of the runner user. The JDK is not installed by hand; the job fetches and verifies it.
-- Outgoing access to the Gitea host, github.com (JDK download), Maven Central and the container registries the compose files pull from.
+## The Gitea `unit` runner (optional, the owner's choice)
 
-## Runner mode
+`unit` needs a Gitea runner. Without one, the `unit` status stays pending, so it must not be a required check until a runner exists and has produced a green run.
 
-Use `act_runner` in **host mode**: the label maps to `host`, so jobs run directly on the VM. Not container mode (compose bind mounts are resolved on the Docker daemon host, so a job-container workspace breaks the deployed IT) and not Docker-in-Docker (privileged, no image cache). Testcontainers needs no `TESTCONTAINERS_HOST_OVERRIDE` in host mode, and Ryuk stays on. Set `capacity: 1` in the runner config: the integration tests are heavy and share the Docker daemon.
+### Why the first workflow never ran
 
-## Registration
+The first Gitea workflow (#438) asked for a runner label `imap-mcp-host`, which the owner's runner does not have, so it never ran: Gitea showed the jobs as Waiting with "No matching online runner with label: imap-mcp-host", and not one task was ever picked up. It also assumed host mode and an x64 JDK. That design is gone. The `unit` job runs in container mode on the runner's default label.
 
-The owner creates a registration token in Gitea (repository, organisation or instance Settings, Actions, Runners, "Create new runner"). The token is given to the runner once and is never committed, written into a file of this repository or put into an issue.
+### How the job runs
 
-```
-# as the non-root runner user, on the VM
-act_runner generate-config > config.yaml          # set runner.capacity: 1
-act_runner register                               # prompts, see below
-act_runner daemon --config config.yaml            # run it as a systemd user service in practice
-```
+- **Label and image:** `runs-on: ubuntu-latest`, the act_runner default label. The job container image is pinned in the workflow by a multi-arch index digest (`linux/arm64` and `linux/amd64`), so the same workflow runs on an ARM and on an x86_64 host.
+- **Root and the privilege drop:** jobs run as root in the job container. Several file-permission tests behave differently as root, so `ci/unit.sh` refuses uid 0 unless the workflow sets `IMAP_MCP_CI_DROP_ROOT=1`. With the flag it creates the unprivileged user `ci` (home `/home/ci`), hands the checkout to it and re-executes itself as `ci` without the flag, so it cannot loop. As a non-root user it runs directly.
+- **No Docker:** no unit test needs Docker, and the job uses no secret. Testcontainers is used only by the failsafe tests of `imap-mcp-it`, which `unit` does not run.
+- **JDK and Maven:** `ci/install-jdk.sh` picks the Temurin tarball by `uname -m` (x86_64 or aarch64, each with its own pinned sha256); `ci/install-maven.sh` installs Maven 3.9.x. Both land under `/home/ci`, which the workflow caches with a key that includes the runner architecture.
+- **Runtime:** unit-only, measured on x86_64: 728 s (about 12 min) with system Maven on a 16-core workstation, and 13 min 05 s in the pinned job image under Podman. ARM: to be measured by the owner; expect roughly 2x to 4x the x86_64 time, and the deadline and timing tests are the most likely to flake on a slow host. The job has `timeout-minutes: 60`.
 
-`act_runner register` asks interactively for the instance URL (`http://spacedock:3000`), the registration token (paste it at the prompt), the runner name (for example `imap-mcp-ci-1`) and the labels (`imap-mcp-host:host`). Use the interactive form: a token passed as a command-line argument is visible to every local user in the process list and ends up in the shell history. The runner label must equal `runs-on` in the workflow: `imap-mcp-host`.
+### Prerequisites
 
-## Try it before relying on it
+- **Runner:** a containerised or native `act_runner` with the default labels, x86_64 or aarch64 (check with `uname -m`). Everything the job needs is in the pinned job image: Node.js (the `actions/*` steps are JavaScript), bash, git, curl, tar, sha256sum, sha512sum, openssl, useradd and setpriv.
+- **Network:** outbound access to github.com (the actions and the JDK), archive.apache.org (Maven), Maven Central and Docker Hub (the job image).
+- **Repository:** Actions must be enabled in the repository Settings.
 
-Open a pull request (or push to `master`) and check that the `verify` run starts and finishes green. Until a runner with the label exists, the run stays queued. Locally, `ci/verify.sh` can be run by a non-root user with Docker; `act_runner exec -W .gitea/workflows/verify.yml` runs the workflow on a workstation that has `act_runner` installed.
+### Runner `config.yaml`
 
-## Making `verify` a required check (owner decision)
+Set these in the runner's `config.yaml` and restart the runner afterwards:
 
-Once at least one successful run exists, the owner may require it: in Gitea, repository Settings, Branches, the rule for `master`, enable "Enable status check" and select the context of the job, `verify` (shown as `verify / verify (pull_request)` in the list, taken from the workflow and job name). Adding it to the owner's local merge gate is a separate decision. Until then a green run is evidence, not enforcement.
+- `container.network`: the Docker network of the Gitea compose project (find it with `docker network ls`; often `<project>_gitea_net`). Without it, job containers cannot resolve the Gitea instance URL, and checkout and artifact upload fail.
+- `container.docker_host: "-"`: the runner keeps using the daemon, but job containers no longer get the Docker socket mounted. With the default every job container receives `/var/run/docker.sock`, and a mounted `docker.sock` is root-equivalent control of the host. The unit job needs no Docker.
+- `container.privileged: false` and `container.valid_volumes: []`: no privileged job containers, no host volumes.
+- `cache.host`: only if the cache step warns that it cannot reach the cache server; set it to an address reachable from the job network. Without it the job just runs without the cache.
+
+### The registration token
+
+The registration token (Settings, Actions, Runners, "Create new runner" at repository, user or site level) belongs neither in this repository nor in a compose file under version control. Put it in an environment file with mode 0600 that the runner container reads, or paste it at the prompt of the interactive `act_runner register`; never on the command line, where every local user sees it in the process list and the shell history keeps it. If a token was ever exposed (committed, pasted into a ticket or a shared file), revoke or rotate it.
+
+### Labels and the "Waiting" state
+
+- **Where to see the labels:** repository, user and site-admin Settings, Actions, Runners list each runner with its status (Idle, Active or Offline), its labels and its scope. In `config.yaml` they are `runner.labels`; an empty list means the defaults (`ubuntu-latest` and similar, each mapped to a Docker image).
+- **Changing them:** edit `runner.labels` in `config.yaml` and restart the runner, which declares its labels at start-up; or re-register with the interactive `act_runner register`.
+- **Troubleshooting:** a job that stays Waiting with "No matching online runner with label: ..." means a label or scope mismatch, or an offline runner. Compare the `runs-on` value of the workflow with the labels in the Runners list, and check that the runner's scope covers this repository. A runner with only custom labels never picks up a job that asks for `ubuntu-latest`.
+
+### Try it, then require it
+
+1. Push a branch or open a pull request and check that the `unit` run starts and ends green. Note the wall time.
+2. Only after a green run, make `unit` a required status check: Gitea repository Settings, Branches, the rule for `master`, "Enable status check", and select the context shown for the job `unit`.
+3. Cancel stale Waiting runs of the old workflow on the Actions page; new pushes no longer create them.
+
+## The GitHub `verify` workflow
+
+`.github/workflows/verify.yml` runs `ci/merge-master.sh`, `ci/prepull-images.sh` and then `ci/verify.sh`, the full `mvn -B verify` with the compose-based integration tests and the test-completeness gate.
+
+- **Runner:** `ubuntu-24.04`, GitHub-hosted, x64, with native Docker; on a public repository 4 vCPU and 16 GB. It has everything installed; nothing needs to be installed by hand.
+- **Permissions and secrets:** `permissions: contents: read`, no secrets.
+- **Triggers:** `push` and `workflow_dispatch` only. There is no `pull_request` or `pull_request_target` trigger, so a fork PR runs nothing. PRs live on Gitea; a PR branch reaches GitHub by a push (see the next section).
+- **Artifacts:** the surefire/failsafe reports and, on failure, the compose logs of the deployed IT are uploaded for 7 days. On a public repository they are public; they hold only throwaway test credentials.
+- **Runtime:** estimated 45 to 70 min on 4 vCPU, with `timeout-minutes: 120`; not measured yet.
+- **Private repository:** it would get 2 vCPU and 7 GB, roughly twice the time, and the minutes count against the plan quota. Not recommended without a larger runner.
+
+## How commits reach GitHub (owner decision)
+
+GitHub only runs `verify` for commits it has. Three options, each with its consequence for the merge gate:
+
+**(a) A Gitea push mirror over SSH with "sync on commit" (recommended).** Steps:
+
+1. Change the GitHub default branch to `master`, because the mirror prunes `main`.
+2. Create the push mirror in the Gitea repository settings, and add the public key Gitea generates as a GitHub deploy key with write access.
+3. Check the log of the first sync for rejected refs.
+
+Consequence: every Gitea branch becomes public at once, including unreviewed ticket branches. A secret committed by mistake must be rotated, because GitHub keeps orphaned commits. Check the commit author e-mail addresses in the history too: they become public with every push.
+
+**(b) The owner pushes the PR branch to GitHub by hand before the gate.** No automatic publication, one manual step per PR.
+
+**(c) Master only, after the merge.** `verify` then runs after the fact: a post-merge signal with no effect on the gate.
+
+## Using the result
+
+Gitea branch protection cannot see GitHub checks. The `verify` result is therefore enforced, if at all, by the owner's local merge script, not by Gitea. A check there should do the following:
+
+- query `GET https://api.github.com/repos/alindhorst/imap_mcp/commits/<sha>/check-runs` (unauthenticated, 60 requests per hour) for the PR head;
+- require a check-run named `verify` with `conclusion: success`;
+- require that it comes from the workflow at `.github/workflows/verify.yml`, on the event `push`, in that repository and not in a fork;
+- require that `head=` and `master=` of its job summary match the PR head and the current master.
+
+Gitea branch protection may additionally require `unit` once a Gitea runner exists (see above). `unit` alone never replaces `verify`.
+
+## Pins and how to update them
+
+- **Actions** (checkout, cache, upload-artifact) are pinned by commit SHA with the tag in a comment, in both workflows. To update one, look up the tag's commit with `git ls-remote --tags <repo-url> <tag>` and replace the SHA and the comment.
+- **JDK:** version and sha256 per architecture in `ci/install-jdk.sh`; the source is the checksum file of the Adoptium release named in the script.
+- **Maven:** version and sha512 in `ci/install-maven.sh`; the source is the `.sha512` file next to the binary on archive.apache.org.
+- **Job image of `unit`:** the multi-arch index digest in `.gitea/workflows/unit.yml`. Update it by looking up the digest of the new tag and checking that the index has `linux/arm64` and `linux/amd64`.
+- **Runner image of `verify`:** `ubuntu-24.04` in `.github/workflows/verify.yml`. GitHub retires old images; move to the next LTS image deliberately and re-measure.
