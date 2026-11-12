@@ -54,6 +54,11 @@ final class DeployedCompose {
         return this;
     }
 
+    /** Registers a file collection (stub, red). */
+    DeployedCompose collectingFiles(String service, String containerPath) {
+        return this;
+    }
+
     /** Starts the project; any failure (also the bound) saves the logs and is rethrown as IllegalStateException. */
     void start(Duration bound) {
         container.withStartupTimeout(bound);
