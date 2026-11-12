@@ -163,11 +163,21 @@ class StackPreflightDeployedIT {
             canaries.put("CA_KEY_LINE_" + i++, line);
         }
         StringBuilder scanned = new StringBuilder(stack.capturedOutput());
-        try (var logs = Files.list(stack.runDir().resolve("logs"))) {
+        // the saved logs and the files collected from the containers (app file log, squid logs): all of it is
+        // uploaded as a public artifact on a failure
+        int appFiles = 0;
+        try (var logs = Files.walk(stack.runDir().resolve("logs"))) {
             for (var f : (Iterable<java.nio.file.Path>) logs::iterator) {
-                scanned.append(Files.readString(f));
+                if (!Files.isRegularFile(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                if (f.startsWith(stack.runDir().resolve("logs/app-files"))) {
+                    appFiles++;
+                }
+                scanned.append(new String(Files.readAllBytes(f), java.nio.charset.StandardCharsets.UTF_8));
             }
         }
+        assertThat(appFiles).as("regular files collected from the app's /logs").isPositive();
         for (String file : List.of("it-compose.override.yaml", "squid.conf")) {
             scanned.append(Files.readString(stack.runDir().resolve(file)));
         }

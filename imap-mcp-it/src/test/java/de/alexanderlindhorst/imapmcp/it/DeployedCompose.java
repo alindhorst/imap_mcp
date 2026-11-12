@@ -36,6 +36,10 @@ final class DeployedCompose {
     private final String project;
     private final Path dir;
     private final ComposeContainer container;
+    private final List<FileItem> collected = new ArrayList<>();
+
+    private record FileItem(String service, String path) {
+    }
 
     DeployedCompose(String project, Path dir, List<String> files) {
         this.project = project;
@@ -51,6 +55,15 @@ final class DeployedCompose {
 
     DeployedCompose waitingForHealthy(String service) {
         container.waitingFor(service, Wait.forHealthcheck());
+        return this;
+    }
+
+    /**
+     * Registers a path of a service container whose files {@link #saveLogs} copies out (engine archive copy, which
+     * also works on an exited container) below {@code logs/<service>-files/}.
+     */
+    DeployedCompose collectingFiles(String service, String containerPath) {
+        collected.add(new FileItem(service, containerPath));
         return this;
     }
 
@@ -218,9 +231,17 @@ final class DeployedCompose {
         return dir.resolve("logs");
     }
 
-    /** Saves the log of every container of the project, running or not, as {@code <service>.log}. */
+    private static final long FILE_CAP = 4L << 20;
+    private static final long ITEM_CAP = 16L << 20;
+
+    /**
+     * Saves the log of every container of the project, running or not, as {@code <service>.log}, the registered
+     * files below {@code <service>-files/} and {@code containers.txt} (see {@link ContainerFacts}). A failure on one
+     * item never stops the others; containers.txt notes it without any exception text.
+     */
     void saveLogs() throws IOException {
         Files.createDirectories(logsDir());
+        List<String> lines = new ArrayList<>();
         for (Container c : projectContainers(true)) {
             String service = c.getLabels().getOrDefault(SERVICE_LABEL, c.getId().substring(0, 12));
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -236,6 +257,41 @@ final class DeployedCompose {
                 Thread.currentThread().interrupt();
             }
             Files.write(logsDir().resolve(service + ".log"), out.toByteArray());
+            lines.add(factsOf(c, service).line());
+        }
+        for (FileItem item : collected) {
+            if (!collectFiles(item)) {
+                lines.add("note: files of " + item.service() + " " + item.path() + " not collected");
+            }
+        }
+        Files.write(logsDir().resolve("containers.txt"), lines);
+    }
+
+    private ContainerFacts factsOf(Container c, String service) {
+        try {
+            var state = client().inspectContainerCmd(c.getId()).exec().getState();
+            var health = state.getHealth();
+            return new ContainerFacts(service, state.getStatus(), c.getStatus(),
+                    health == null ? null : health.getStatus(), state.getExitCodeLong() == null ? -1
+                            : state.getExitCodeLong());
+        } catch (RuntimeException e) {
+            return new ContainerFacts(service, c.getState(), c.getStatus(), null, -1);
+        }
+    }
+
+    private boolean collectFiles(FileItem item) {
+        try {
+            Container c = projectContainers(true).stream()
+                    .filter(x -> item.service().equals(x.getLabels().get(SERVICE_LABEL))).findFirst().orElse(null);
+            if (c == null) {
+                return false;
+            }
+            try (java.io.InputStream tar = client().copyArchiveFromContainerCmd(c.getId(), item.path()).exec()) {
+                TarExtractor.extract(tar, logsDir().resolve(item.service() + "-files"), FILE_CAP, ITEM_CAP);
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            return false;
         }
     }
 

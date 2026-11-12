@@ -29,7 +29,7 @@ class ComposeLifecycleDeployedIT {
                 services:
                   svc:
                     image: %s
-                    entrypoint: ["sleep", "600"]
+                    entrypoint: ["sh", "-c", "mkdir -p /tmp/x; echo marker > /tmp/x/m.log; sleep 600"]
                     ports: ["127.0.0.1::3128"]
                     volumes: ["data:/data"]
                     healthcheck:
@@ -75,12 +75,19 @@ class ComposeLifecycleDeployedIT {
     @Test
     void aFailedStartFailsLeavesLogsAndLeavesNothingBehind() throws Exception {
         stack(false);
-        DeployedCompose compose = new DeployedCompose(project(), dir, List.of("compose.yaml"));
+        DeployedCompose compose = new DeployedCompose(project(), dir, List.of("compose.yaml"))
+                .collectingFiles("svc", "/tmp/x");
         try {
             assertThatThrownBy(() -> compose.start(Duration.ofMinutes(3))).isInstanceOf(RuntimeException.class);
             assertThat(compose.logsDir()).isDirectory();
             try (Stream<Path> files = Files.list(compose.logsDir())) {
                 assertThat(files.toList()).isNotEmpty();
+            }
+            String containers = Files.readString(compose.logsDir().resolve("containers.txt"));
+            assertThat(containers).contains("service=svc").containsPattern("health=(unhealthy|starting)");
+            try (Stream<Path> files = Files.walk(compose.logsDir().resolve("svc-files"))) {
+                Path marker = files.filter(f -> f.getFileName().toString().equals("m.log")).findFirst().orElseThrow();
+                assertThat(Files.readString(marker)).isEqualTo("marker\n");
             }
         } finally {
             compose.stop();
