@@ -188,36 +188,54 @@ class GithubWorkflowTest {
         return out;
     }
 
-    @Test
-    void mergeMasterMergesANewerMasterAndNamesBothShas(@TempDir Path tmp) throws Exception {
-        Map<String, String> env = Map.of(
-                "GIT_AUTHOR_NAME", "t", "GIT_AUTHOR_EMAIL", "t@example.invalid",
-                "GIT_COMMITTER_NAME", "t", "GIT_COMMITTER_EMAIL", "t@example.invalid",
-                "GIT_CONFIG_GLOBAL", "/dev/null", "GIT_CONFIG_SYSTEM", "/dev/null");
+    /** A local origin (bare) and a clone with merge-master.sh copied in; see {@link #fixture}. */
+    private record Fixture(Path origin, Path work, Path script, Path summary, Map<String, String> env,
+            Map<String, String> runEnv, String head) {}
+
+    private static final Map<String, String> GIT_ENV = Map.of(
+            "GIT_AUTHOR_NAME", "t", "GIT_AUTHOR_EMAIL", "t@example.invalid",
+            "GIT_COMMITTER_NAME", "t", "GIT_COMMITTER_EMAIL", "t@example.invalid",
+            "GIT_CONFIG_GLOBAL", "/dev/null", "GIT_CONFIG_SYSTEM", "/dev/null");
+
+    private static void commitFile(Path clone, String file, String content) throws Exception {
+        Files.writeString(clone.resolve(file), content);
+        git(clone, GIT_ENV, "add", ".");
+        git(clone, GIT_ENV, "commit", "-m", file);
+    }
+
+    /**
+     * Origin holds the given branches, all at one base commit. The clone has {@code ref} checked out; unless that
+     * branch is the base itself it carries one own commit. With {@code moved} the base branch in origin gets a
+     * newer commit (touching the same file as the head when {@code conflict}).
+     */
+    private static Fixture fixture(Path tmp, List<String> originBranches, String ref, boolean moved, boolean conflict)
+            throws Exception {
+        Map<String, String> env = GIT_ENV;
         Path origin = tmp.resolve("origin.git");
         Path clone = tmp.resolve("clone");
         Files.createDirectories(origin);
         git(origin, env, "init", "--bare", "-b", "master");
         git(tmp, env, "clone", origin.toString(), "clone");
-        Files.writeString(clone.resolve("base.txt"), "base\n");
-        git(clone, env, "add", ".");
-        git(clone, env, "commit", "-m", "base");
-        git(clone, env, "push", "origin", "HEAD:refs/heads/master");
-        git(clone, env, "checkout", "-b", "feature");
-        Files.writeString(clone.resolve("feature.txt"), "feature\n");
-        git(clone, env, "add", ".");
-        git(clone, env, "commit", "-m", "feature");
+        commitFile(clone, "base.txt", "base\n");
+        for (String b : originBranches) {
+            git(clone, env, "push", "origin", "HEAD:refs/heads/" + b);
+        }
+        boolean hasMaster = originBranches.contains("master");
+        boolean hasMain = originBranches.contains("main");
+        String baseName = hasMaster ? "master" : hasMain ? "main" : null;
+        boolean isBase = ref.equals("master") || (ref.equals("main") && !hasMaster);
+        git(clone, env, "checkout", "-B", ref);
+        if (!isBase) {
+            commitFile(clone, conflict ? "x.txt" : "feature.txt", "feature\n");
+        }
         String head = git(clone, env, "rev-parse", "HEAD");
-        // master moves on after the branch was cut
-        git(clone, env, "checkout", "master");
-        Files.writeString(clone.resolve("master.txt"), "master\n");
-        git(clone, env, "add", ".");
-        git(clone, env, "commit", "-m", "newer master");
-        git(clone, env, "push", "origin", "HEAD:refs/heads/master");
-        String master = git(clone, env, "rev-parse", "HEAD");
-        git(clone, env, "checkout", "feature");
-        git(clone, env, "update-ref", "-d", "refs/remotes/origin/master");
-
+        if (moved) {
+            git(clone, env, "checkout", "-b", "mover", "origin/" + (baseName == null ? "master" : baseName));
+            commitFile(clone, conflict ? "x.txt" : "newer.txt", "newer\n");
+            git(clone, env, "push", "origin", "HEAD:refs/heads/" + baseName);
+            git(clone, env, "checkout", ref);
+        }
+        git(clone, env, "remote", "prune", "origin");
         Files.createDirectories(clone.resolve("ci"));
         Path script = clone.resolve("ci/merge-master.sh");
         Files.copy(MERGE, script);
@@ -226,19 +244,93 @@ class GithubWorkflowTest {
         Path summary = tmp.resolve("summary.md");
         Map<String, String> runEnv = new java.util.HashMap<>(env);
         runEnv.put("GITHUB_STEP_SUMMARY", summary.toString());
-        runEnv.put("GITHUB_REF_NAME", "feature");
+        runEnv.put("GITHUB_REF_NAME", ref);
+        return new Fixture(origin, clone, script, summary, env, runEnv, head);
+    }
 
-        Result r = run(clone, runEnv, script.toString());
+    /** Runs the script and checks the exact summary line (stderr and step summary), exit 0 and no push. */
+    private static void assertRow(Path tmp, List<String> originBranches, String ref, boolean moved, String baseName,
+            String basis, boolean expectMerge) throws Exception {
+        Fixture f = fixture(tmp, originBranches, ref, moved, false);
+        String refsBefore = git(f.origin(), f.env(), "for-each-ref");
+        String baseSha = baseName.equals(ref) && basis.equals("self") ? f.head()
+                : git(f.origin(), f.env(), "rev-parse", "refs/heads/" + baseName);
+        Result r = run(f.work(), f.runEnv(), f.script().toString());
         assertThat(r.exit()).as(r.stderr()).isZero();
-        String expected = "head=" + head + " master=" + master + " merged=yes";
+        String expected = "head=" + f.head() + " master=" + baseSha + " merged=" + (expectMerge ? "yes" : "no")
+                + " basis=" + basis + " base=" + baseName;
         assertThat(r.stderr()).contains(expected);
-        assertThat(read(summary)).contains(expected);
-        assertThat(git(clone, env, "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).hasSize(3);
-        assertThat(clone.resolve("master.txt")).exists();
-        assertThat(clone.resolve("feature.txt")).exists();
-        // nothing was pushed
-        assertThat(git(origin, env, "rev-parse", "refs/heads/master")).isEqualTo(master);
-        assertThat(git(origin, env, "branch", "--list", "feature")).isEmpty();
+        assertThat(read(f.summary())).contains(expected);
+        String parents = git(f.work(), f.env(), "rev-list", "--parents", "-n", "1", "HEAD");
+        if (expectMerge) {
+            assertThat(parents.split(" ")).hasSize(3);
+            assertThat(f.work().resolve("newer.txt")).exists();
+        } else {
+            assertThat(git(f.work(), f.env(), "rev-parse", "HEAD")).isEqualTo(f.head());
+        }
+        assertThat(git(f.origin(), f.env(), "for-each-ref")).isEqualTo(refsBefore);
+    }
+
+    @Test
+    void refMasterBuildsTheHeadAsSelf(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("master"), "master", false, "master", "self", false);
+    }
+
+    @Test
+    void refMainWithOriginMasterMergesMaster(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("master", "main"), "main", true, "master", "merged", true);
+    }
+
+    @Test
+    void refMainWithOriginMasterContainingItIsUnchanged(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("master", "main"), "main", false, "master", "contains", false);
+    }
+
+    @Test
+    void refMainWithoutOriginMasterIsItsOwnBase(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("main"), "main", false, "main", "self", false);
+    }
+
+    @Test
+    void otherRefWithOriginMasterMergesANewerMaster(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("master"), "feature", true, "master", "merged", true);
+    }
+
+    @Test
+    void otherRefAlreadyContainingMasterIsUnchanged(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("master"), "feature", false, "master", "contains", false);
+    }
+
+    @Test
+    void otherRefWithoutMasterMergesANewerMain(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("main"), "feature", true, "main", "merged", true);
+    }
+
+    @Test
+    void otherRefWithoutMasterContainingMainIsUnchanged(@TempDir Path tmp) throws Exception {
+        assertRow(tmp, List.of("main"), "feature", false, "main", "contains", false);
+    }
+
+    @Test
+    void otherRefWithNeitherMasterNorMainWritesTheLineAndFails(@TempDir Path tmp) throws Exception {
+        Fixture f = fixture(tmp, List.of("develop"), "feature", false, false);
+        String refsBefore = git(f.origin(), f.env(), "for-each-ref");
+        Result r = run(f.work(), f.runEnv(), f.script().toString());
+        assertThat(r.exit()).as(r.stderr()).isNotZero();
+        String expected = "head=" + f.head() + " master=absent merged=no basis=head-only base=none";
+        assertThat(r.stderr()).contains(expected)
+                .contains("no origin master or main: cannot build the head merged with master");
+        assertThat(read(f.summary())).contains(expected);
+        assertThat(git(f.origin(), f.env(), "for-each-ref")).isEqualTo(refsBefore);
+    }
+
+    @Test
+    void aMergeConflictStillFails(@TempDir Path tmp) throws Exception {
+        Fixture f = fixture(tmp, List.of("master"), "feature", true, true);
+        String refsBefore = git(f.origin(), f.env(), "for-each-ref");
+        Result r = run(f.work(), f.runEnv(), f.script().toString());
+        assertThat(r.exit()).as(r.stderr()).isNotZero();
+        assertThat(git(f.origin(), f.env(), "for-each-ref")).isEqualTo(refsBefore);
     }
 
     @Test

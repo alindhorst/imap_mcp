@@ -36,6 +36,14 @@ class CiDocTest {
     }
 
     @Test
+    void mergeMasterSummaryFormatAndBaseAreDocumented() throws IOException {
+        assertThat(doc()).contains(
+                "head=<sha> master=<sha|absent> merged=<yes|no> basis=<merged|contains|self|head-only> "
+                        + "base=<master|main|none>")
+                .contains("basis=").contains("base=main");
+    }
+
+    @Test
     void containerModeRunnerSetupIsCovered() throws IOException {
         assertThat(doc()).contains("ubuntu-latest").contains("container.network").contains("docker_host")
                 .contains("docker.sock").contains("IMAP_MCP_CI_DROP_ROOT").contains("No matching online runner")
