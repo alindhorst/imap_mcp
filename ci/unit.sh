@@ -23,6 +23,9 @@ if [ "$(id -u)" -eq 0 ]; then
     exec setpriv --reuid=ci --regid=ci --init-groups env -u IMAP_MCP_CI_DROP_ROOT HOME=/home/ci "$ROOT/ci/unit.sh"
 fi
 
+# The job image sets no locale; with the ASCII file system encoding the tests with non-ASCII file names fail.
+export LC_ALL=C.UTF-8
+
 JAVA_HOME="$("$ROOT/ci/install-jdk.sh")"
 export JAVA_HOME
 MAVEN_HOME="$("$ROOT/ci/install-maven.sh")"
