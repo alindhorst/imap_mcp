@@ -36,6 +36,16 @@ class ReadmeTest {
         readme = Files.readString(Path.of("..", "README.md"));
     }
 
+    /** #478: the two build badges sit directly under the H1, GitHub first, Gitea right underneath. */
+    @Test
+    void buildBadgesSitUnderTheTitleGithubThenGitea() {
+        String verify = "[![verify](https://github.com/alindhorst/imap_mcp/actions/workflows/verify.yml/badge.svg"
+                + "?branch=main)](https://github.com/alindhorst/imap_mcp/actions/workflows/verify.yml)";
+        String unit = "[![unit](http://spacedock:3000/lindhrst/imap_mcp/actions/workflows/unit.yml/badge.svg"
+                + "?branch=master)](http://spacedock:3000/lindhrst/imap_mcp/actions?workflow=unit.yml)";
+        assertThat(readme.replace("\r\n", "\n")).startsWith("# IMAP MCP\n\n" + verify + "\\\n" + unit + "\n\nAn [MCP]");
+    }
+
     private static List<String> yamlBlocks() {
         List<String> blocks = new ArrayList<>();
         Matcher m = Pattern.compile("(?s)```yaml\\R(.*?)```").matcher(readme);
