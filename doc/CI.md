@@ -8,7 +8,7 @@ This document is an instruction for the owner. SPEC 5.8 (v0.26) splits CI into t
 | `verify` | GitHub Actions | `.github/workflows/verify.yml`, `ci/verify.sh` | the full `mvn -B verify` | the same build the gate records |
 
 - **`unit`** gives fast feedback on the owner's own (ARM) host. It runs no failsafe tests, no deployed IT and no test-completeness gate, so a green `unit` is no merge-gate evidence and must never be read as one.
-- **`verify`** is the same build the merge gate records, run on the PR head merged with the current master (`ci/merge-master.sh`). The head and master SHAs it tested are written to the job summary (`head=<sha> master=<sha> merged=<yes|no>`).
+- **`verify`** is the same build the merge gate records, run on the PR head merged with the current master (`ci/merge-master.sh`). The head and master SHAs it tested are written to the job summary (`head=<sha> master=<sha|absent> merged=<yes|no> basis=<merged|contains|self|head-only> base=<master|main|none>`). `master=` is exactly the SHA the build was based on: origin's `master`, else origin's `main` (`base=`). `basis=` says how: `merged` (a merge commit was built), `contains` (the base was already an ancestor of the head), `self` (the ref is the base) or `head-only` (no base: the line is written and the job fails with "no origin master or main: cannot build the head merged with master").
 
 Both workflows use no secrets. The JDK and Maven are never taken from the runner: the scripts fetch them and verify them against pinned checksums (see "Pins" below).
 
@@ -94,7 +94,7 @@ Gitea branch protection cannot see GitHub checks. The `verify` result is therefo
 - query `GET https://api.github.com/repos/alindhorst/imap_mcp/commits/<sha>/check-runs` (unauthenticated, 60 requests per hour) for the PR head;
 - require a check-run named `verify` with `conclusion: success`;
 - require that it comes from the workflow at `.github/workflows/verify.yml`, on the event `push`, in that repository and not in a fork;
-- require that `head=` and `master=` of its job summary match the PR head and the current master.
+- require that `head=` and `master=` of its job summary match the PR head and the current master. The script cannot know Gitea's master: `base=main` is only a stand-in (GitHub's default branch), and this `master=` comparison is what guards it. With option (b) the owner keeps GitHub's master or main current, since the base is whatever GitHub has; once the default branch is `master` (option a) the `main` fallback is unused.
 
 Gitea branch protection may additionally require `unit` once a Gitea runner exists (see above). `unit` alone never replaces `verify`.
 
