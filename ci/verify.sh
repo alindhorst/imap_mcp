@@ -23,6 +23,13 @@ if [ "$actual" != "$JDK_VERSION" ]; then
     exit 1
 fi
 
+MAVEN_HOME="$("$ROOT/ci/install-maven.sh")"
+export PATH="$MAVEN_HOME/bin:$PATH"
+if ! mvn -v 2>/dev/null | grep -q "^Apache Maven 3\.9\."; then
+    echo "ci/verify.sh: pinned Maven 3.9.x is not first on PATH" >&2
+    exit 1
+fi
+
 # Reports and, on failure, the compose logs of the deployed IT go to ci-artifacts/ (picked up by the workflow).
 collect() {
     rc=$?
