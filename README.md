@@ -512,7 +512,7 @@ It drives the production `http-public` wiring against the real provider: refresh
 - `IMAP_MCP_SMOKE_OAUTH_WRITE=1`: also set and clear the flagged flag on one INBOX message.
 - `IMAP_MCP_SMOKE_OAUTH_PURGE_SUBJECT`: purge from Trash the messages with exactly this subject (at most 3). Put a throwaway message in Trash first. Without this variable nothing is purged.
 
-Getting the refresh token: either link the test mailbox through the linking surface (`/accounts`) of a test `http-public` deployment with the provider configured (SPEC 5.3) and read the token from your own test database, or run the provider's authorization-code flow by hand (`access_type=offline` and `prompt=consent` for Google; the `offline_access` scope for Microsoft) and exchange the code at the token endpoint. Use a dedicated test account. Never put the token on a command line that is logged or committed.
+Getting the refresh token: run the provider's authorization-code flow by hand (`access_type=offline` and `prompt=consent` for Google; the `offline_access` scope for Microsoft) and exchange the code at the token endpoint. The linking surface (`/accounts`) of a test `http-public` deployment with the provider configured (SPEC 5.3) can check your registration and redirect URI end to end, but it never exposes the token: it is stored envelope-encrypted and cannot be read back. Use a dedicated test account. Never put the token on a command line that is logged or committed.
 
 ### Notes
 
