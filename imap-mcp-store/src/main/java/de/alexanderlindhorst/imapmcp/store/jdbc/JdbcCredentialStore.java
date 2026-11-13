@@ -108,6 +108,20 @@ public final class JdbcCredentialStore implements CredentialStore {
      */
     public void insertWith(Connection c, TenantId tenant, AccountId account, int version, char[] secret)
             throws SQLException {
+        insertKind(c, tenant, account, version, secret, "password");
+    }
+
+    /**
+     * As {@link #insertWith} for an {@code oauth_refresh} credential (the refresh token of an upstream OAuth account,
+     * SPEC 5.7). The password reader never reads this kind.
+     */
+    public void insertRefreshWith(Connection c, TenantId tenant, AccountId account, int version, char[] token)
+            throws SQLException {
+        insertKind(c, tenant, account, version, token, "oauth_refresh");
+    }
+
+    private void insertKind(Connection c, TenantId tenant, AccountId account, int version, char[] secret,
+            String kind) throws SQLException {
         UUID tenantUuid = parse(tenant);
         if (tenantUuid == null) {
             throw new IllegalArgumentException("tenant id is not a UUID");
@@ -125,14 +139,15 @@ public final class JdbcCredentialStore implements CredentialStore {
         }
         try (PreparedStatement ps = c.prepareStatement(
                 "INSERT INTO credential (tenant_id, account_id, version, kind, kek_id, wrapped_dek, nonce,"
-                        + " ciphertext) VALUES (?, ?, ?, 'password', ?, ?, ?, ?)")) {
+                        + " ciphertext) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
             ps.setObject(1, tenantUuid);
             ps.setString(2, account.value());
             ps.setInt(3, version);
-            ps.setString(4, sealed.kekId());
-            ps.setBytes(5, sealed.wrappedDek());
-            ps.setBytes(6, sealed.nonce());
-            ps.setBytes(7, sealed.ciphertext());
+            ps.setString(4, kind);
+            ps.setString(5, sealed.kekId());
+            ps.setBytes(6, sealed.wrappedDek());
+            ps.setBytes(7, sealed.nonce());
+            ps.setBytes(8, sealed.ciphertext());
             ps.executeUpdate();
         }
     }
