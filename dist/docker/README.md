@@ -27,7 +27,7 @@ Images are pinned by digest (Keycloak, Postgres and Temurin as in the integratio
 - Two DNS names pointing to the host: `MCP_HOST` (this server) and `IDP_HOST` (Keycloak). Two names keep the origins apart, so Keycloak pages cannot touch the cookies of `/accounts`.
 - Inbound 80 and 443 (Let's Encrypt validates on both), outbound 443 (ACME, IdP) and 993 or 143 (your IMAP server).
 - An email address for ACME.
-- A built jar. Either the released 0.4.0 jar, or build it: `mvn -B -q -pl imap-mcp-app -am package -DskipTests` and copy `imap-mcp-app/target/imap-mcp-app-<version>-all.jar` to `dist/docker/jar/imap-mcp.jar`. The jar needs Java 25; it runs only on the image's runtime.
+- A built jar. Either the released 0.5.0 jar, or build it: `mvn -B -q -pl imap-mcp-app -am package -DskipTests` and copy `imap-mcp-app/target/imap-mcp-app-<version>-all.jar` to `dist/docker/jar/imap-mcp.jar`. The jar needs Java 25; it runs only on the image's runtime.
 - Rootless podman: binding 80 and 443 needs `sysctl net.ipv4.ip_unprivileged_port_start=80` (a system setting you make yourself), or forward 80 to `HTTP_PORT` and 443 to `HTTPS_PORT` (for example 8081 and 8443) with firewalld or nftables and set both in `.env`. Open the ports in firewalld.
 
 ## Public setup
