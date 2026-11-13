@@ -43,6 +43,17 @@ What is stated as observed comes from the deployed integration tests (section 6,
 - **Scopes in the authorization request.** Observed with the shipped realm: `openid` is accepted in addition to the two `imap-mcp` scopes; `offline_access`, `profile` and `email` are refused with `invalid_scope`. A write-scope refusal on a tool call is a `PERMISSION_DENIED` tool result, not an HTTP challenge; a token with only the write scope gets 403 `insufficient_scope`, and authorizing again with both scopes works.
 - **Refresh token rotation.** The shipped realm rotates refresh tokens (`revokeRefreshToken` true, `refreshTokenMaxReuse` 0). Observed: every refresh returns a new refresh token and the old one is refused with `invalid_grant`; presenting the old one again also revokes the session, so the new one is refused too. Two refreshes with the same token at the same moment usually end with one 200 and one `invalid_grant`, after which the new token of the winner is refused as well, so the client is logged out; in some rounds both succeeded. That is a plausible cause of sporadic reconnects. Recommendation, not tested: keep rotation, and if reconnects after refresh races are seen, raise `refreshTokenMaxReuse` to 1 (Realm settings, Tokens). That variant itself has not been tested, and the shipped realm is unchanged.
 
+Upstream OAuth (XOAUTH2 for Gmail and Microsoft 365, [README](../README.md#upstream-oauth-experimental-unverified)) is built on the following assumptions. None has been verified against the real providers; each bullet gives the symptom to look for. A user sees `relink_required` or `xoauth2_rejected` as a tool error, the operator sees the others in the log and metrics.
+
+- **Upstream OAuth endpoints and scopes.** Assumed: the fixed endpoints and scopes of `google` and `microsoft` (SPEC 5.7) are right. Symptom: the provider's sign-in page shows an error, or `oauth_client_rejected` at the first refresh.
+- **Refresh token on re-consent.** Assumed: a refresh token is returned again on re-consent with `prompt=consent`. Symptom: a re-link succeeds at the provider but stores nothing, or the next refresh gives `relink_required`.
+- **Microsoft refresh tokens.** Assumed: Microsoft rotates refresh tokens, and its access tokens last 60 to 90 minutes. Symptom: `relink_required` after a refresh race, or the metric `oauth_grant_lost` rising after a failed commit.
+- **Google apps in "Testing" status.** Assumed: their refresh tokens expire after 7 days. Symptom: a weekly `relink_required` for every Google account; publish the app or accept the weekly re-link.
+- **Gmail restricted-scope verification.** Assumed: a public app needs the restricted-scope verification (CASA) for `https://mail.google.com/`. Symptom: the provider shows an "unverified app" warning or refuses users outside the test users; owner task #325.
+- **Microsoft and IMAP sessions.** Unknown: whether Microsoft drops an open IMAP session at token expiry. Symptom: sporadic connection drops (`UPSTREAM_UNAVAILABLE`) on a long-lived pooled connection; the pool closes a connection before its token expires, so it should show only as a retry.
+- **Gmail XOAUTH2 user.** Assumed: the XOAUTH2 user for Gmail is the mail address. Symptom: `xoauth2_rejected` for every Gmail account while Microsoft works.
+- **Error JSON of a failed `AUTHENTICATE`.** Assumed: the shape of the error the IMAP server answers to a refused XOAUTH2 `AUTHENTICATE`. Symptom: a refused token is not retried once as designed, or `xoauth2_rejected` appears at the first call after a token was renewed.
+
 To replace what is still unknown with facts, record one real connector session with the opt-in kit: [Recording a connector session](../dist/docker/README.md#recording-a-connector-session).
 
 ## 5. Podman notes
@@ -70,7 +81,7 @@ The same `*DeployedIT` suite also ran green with native Docker on a GitHub-hoste
 
 An earlier manual run (rootless Podman 5.8.2, `podman compose` and podman-compose 1.6.0) also checked: both databases and the Flyway migrations, the resolved realm placeholders, and the refusal of a token without the audience.
 
-Not verified, because it needs a public run: the real Claude connector (whether it sends an `Origin` and which, its `User-Agent` and protocol version, whether it accepts metadata without `none`), the public host with DNS and Let's Encrypt (ports 80 and 443), and the browser login with TOTP. These are what the checks in section 3 are for.
+Not verified, because it needs a public run: real Google/Microsoft upstream OAuth (linking, refresh and XOAUTH2 login; tested only against a fake provider, until a run of the smoke harness #328 is recorded here), the real Claude connector (whether it sends an `Origin` and which, its `User-Agent` and protocol version, whether it accepts metadata without `none`), the public host with DNS and Let's Encrypt (ports 80 and 443), and the browser login with TOTP. These are what the checks in section 3 are for.
 
 ## 7. Security notes
 

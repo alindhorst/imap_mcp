@@ -466,11 +466,11 @@ Payloads carry no stack traces, host names or exception text. Codes:
 | `STALE_REFERENCE` | no | the folder changed since the handle was issued (`details.reason` `uidvalidity_changed` or `folder_missing`); re-run the search |
 | `MESSAGE_NOT_FOUND` | no | the message no longer exists |
 | `FOLDER_NOT_FOUND` | no | the folder (or the Trash role folder) does not exist |
-| `AUTH_FAILED` | no | the IMAP server refused the login (`NO` without `[UNAVAILABLE]`); `details.reason` `relink_required` in `http-public` |
+| `AUTH_FAILED` | no | the IMAP server refused the login (`NO` without `[UNAVAILABLE]`); `details.reason` `relink_required` in `http-public`; for an upstream OAuth account (`http-public`) also `xoauth2_rejected` (the server refused the access token or does not offer XOAUTH2; does not count towards a re-link) |
 | `SERVER_BUSY` | yes | pool or server limit reached; wait `retry_after_ms` (2000) |
 | `TIMEOUT` | yes | `tools.deadline` exceeded |
-| `UPSTREAM_UNAVAILABLE` | yes | the IMAP server is unreachable or dropped the connection; also a LOGIN answered `NO [UNAVAILABLE]` (`details.reason` `login_unavailable`, hint "Retry in a minute or later."). **Changed in v0.23 (D14):** before, that LOGIN answer was `AUTH_FAILED`; a client that treated `AUTH_FAILED` as "wrong password, stop" now sees a retryable error. It does not count towards `needs_relink`, and `list_accounts` shows the account as `unreachable` |
-| `UPSTREAM_ERROR` | no | the IMAP server refused the command |
+| `UPSTREAM_UNAVAILABLE` | yes | the IMAP server is unreachable or dropped the connection or, for an upstream OAuth account (`http-public`), the provider's token endpoint failed (`details.reason` `token_refresh_unavailable`, wait `retry_after_ms`, at most 60000); also a LOGIN answered `NO [UNAVAILABLE]` (`details.reason` `login_unavailable`, hint "Retry in a minute or later."). **Changed in v0.23 (D14):** before, that LOGIN answer was `AUTH_FAILED`; a client that treated `AUTH_FAILED` as "wrong password, stop" now sees a retryable error. It does not count towards `needs_relink`, and `list_accounts` shows the account as `unreachable` |
+| `UPSTREAM_ERROR` | no | the IMAP server refused the command; for an upstream OAuth account (`http-public`) `details.reason` `oauth_client_rejected` (the provider refused the server's OAuth client) or `provider_unconfigured` (the account's provider is no longer configured); both need the operator |
 | `UNSUPPORTED` | no | a needed capability is missing (for example `UIDPLUS`, `X-GM-EXT-1`, UTF-8 search); `download_attachment`: `transfer_encoding` or `decode_failed` |
 | `INTERNAL_ERROR` | no | unexpected server error |
 | `PERMISSION_DENIED` | no | `details.reason` is `account_read_only`, `folder_read_only`, `server_denied`, or for `purge_messages` `purge_disabled`, `purge_scope`, `confirmation_unavailable` or `not_confirmed` (`details.elicitation` is `declined`, `cancelled`, `timeout`, `invalid_answer`, `error` or `recently_declined`) |
@@ -606,6 +606,35 @@ Users link their mail accounts in a small server-rendered web application on the
 - **Probe budget:** at most 10 probes per tenant per hour, counted in memory per replica (a global limit is a later, low-priority item, D18). With n replicas a tenant can reach 10 x n per hour, and a restart resets the count. The limiter tracks a bounded number of tenants; when its table is full of active tenants, a tenant that is not in it is refused until entries expire.
 - **Unlink:** deletes the account and its credentials at once and its handles become unknown; idle pooled connections of the account end at the latest with the pool's idle eviction (they are unreachable meanwhile, because the handle is unknown).
 - **Audit:** tenant creation, link, re-link, settings, unlink and every refusal leave an `audit_event` row (type, tenant, account reference, request id and result only, never host, user name, label or password). Expired web sessions and pending logins are deleted every 10 minutes.
+
+#### Upstream OAuth (experimental, unverified)
+
+For mail providers that no longer accept a password (Gmail, Microsoft 365), `http-public` can link an account through the provider's own sign-in (authorization code with PKCE) and log in to IMAP with XOAUTH2. This is `http-public` only and **experimental**: it is built on assumptions that no test or run against the real Google or Microsoft has verified (the list, with the symptom of each, is in section 4 of [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md#4-assumptions-what-the-tests-observed-and-their-symptoms)). It is tested only against a fake provider.
+
+- **Not in `stdio` and `http-local`:** `stdio` and `http-local` have no XOAUTH2; `oauth.upstream` and `auth: xoauth2` there fail startup. For Gmail use an app password there (see "Gmail" above). Microsoft 365 has no single-tenant option for now: it needs `http-public`.
+- **Provider config:** one entry per provider under `oauth.upstream.providers` (the key is the provider id; it matches `[a-z0-9-]{1,32}`). `kind` is `google`, `microsoft` or `generic`. `clientId` and `clientSecret` are required; the secret is a reference (`env:` or `file:` only, resolved at startup and again at use, never logged). `label` is the name shown on the linking page (default the id). `google` and `microsoft` have fixed endpoints, scopes and IMAP host (`imap.gmail.com`, `outlook.office365.com`) and refuse `authorizationEndpoint`, `tokenEndpoint`, `scopes` and `imap`; `microsoft` takes `tenant` (`common`, `organizations`, `consumers` or a GUID; default `organizations`). `generic` needs `authorizationEndpoint` and `tokenEndpoint` (https, the token host a DNS name), `scopes` and `imap` (`host`, `security` `implicit-tls` or `starttls`, `port` 993 or 143 to match). The IMAP host of every provider must also match `ssrf.allowedHosts` (or `ssrf.allowAnyPublicHost`), or startup fails.
+
+```yaml http-public-upstream
+  upstream:
+    providers:
+      google:
+        kind: google
+        clientId: google-client-id-example
+        clientSecret: env:GOOGLE_CLIENT_SECRET
+      microsoft:
+        kind: microsoft
+        tenant: organizations
+        clientId: microsoft-client-id-example
+        clientSecret: file:/run/secrets/microsoft_client_secret
+        label: Microsoft 365
+```
+
+  (This goes under `oauth:` of the example above; add `imap.gmail.com` and `outlook.office365.com` to `ssrf.allowedHosts`.)
+- **Redirect URI:** register `<public.baseUrl>/accounts/oauth/<id>/callback` (for example `https://mail.example.com/accounts/oauth/google/callback`) with the provider. It is derived from `public.baseUrl` and the id and is not configurable.
+- **Linking:** the user opens `/accounts`, picks the provider, gives a name, the mail address (only a hint for the sign-in) and read-only or read and write, and signs in at the provider. Nothing is saved unless the exchange and an IMAP XOAUTH2 login succeed. The refresh token is stored as a credential, encrypted like a password.
+- **Startup WARN:** every `google` or `microsoft` provider logs `Upstream OAuth provider <id> is not verified against the real provider`; and if stored accounts use a provider that is no longer configured, one WARN gives their number.
+- **Re-link:** when the provider refuses the grant (`invalid_grant`), the tool call fails with `AUTH_FAILED` `relink_required` and the `link_url`; on the account's page "Authorize again" repeats the sign-in for the same account (server and address cannot be changed; unlink and add it again for that). A commit that fails after the provider rotated the refresh token loses the grant, so a re-link is needed; it is counted in the metric `oauth_grant_lost`.
+- **Operator errors:** `oauth_client_rejected` (the provider refused the server's OAuth client: check the registration and the secret), `provider_unconfigured` (the account's provider id is not in the config), `token_refresh_unavailable` (the token endpoint is down; retryable), `xoauth2_rejected` (the IMAP server refused or does not offer XOAUTH2). See "Errors".
 
 ## Scope by phase
 
