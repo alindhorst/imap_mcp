@@ -38,7 +38,13 @@ final class TestPki {
     }
 
     /** A server SSL context whose certificate (signed by the test CA) is valid for {@code dnsName} only. */
-    SSLContext serverContext(String dnsName) throws Exception {
+    private final java.util.Map<String, SSLContext> servers = new java.util.HashMap<>();
+
+    synchronized SSLContext serverContext(String dnsName) throws Exception {
+        SSLContext known = servers.get(dnsName);
+        if (known != null) {
+            return known;
+        }
         Path store = dir.resolve("srv-" + dnsName + ".p12");
         Path csr = dir.resolve("srv-" + dnsName + ".csr");
         Path pem = dir.resolve("srv-" + dnsName + ".pem");
@@ -62,6 +68,7 @@ final class TestPki {
         kmf.init(ks, PASS.toCharArray());
         SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(kmf.getKeyManagers(), null, null);
+        servers.put(dnsName, ctx);
         return ctx;
     }
 
