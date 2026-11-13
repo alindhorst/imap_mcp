@@ -93,16 +93,38 @@ final class KeycloakAdmin {
                 KCADM + " " + kcadmArgs + " --config " + CONFIG);
         if (r.exitCode() != 0) {
             // the command's first word only: output and arguments can hold secrets
-            throw new IllegalStateException("kcadm " + kcadmArgs.split(" ")[0] + " failed: " + r);
+            throw new IllegalStateException("kcadm " + kcadmArgs.split(" ")[0] + " failed: " + r + " (" + classify(r.stderr()) + ")");
         }
         return r.stdout();
     }
 
+    private static final String ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    /**
+     * Alphanumeric only: kcadm treats a value starting with '-' (1 in 64 for url-safe base64) as an option and exits 2,
+     * and 24 characters satisfy the realm policy length(14); username and email cannot occur in it.
+     */
     static String newPassword() {
-        return random(24);
+        StringBuilder sb = new StringBuilder(24);
+        for (int i = 0; i < 24; i++) {
+            sb.append(ALNUM.charAt(RANDOM.nextInt(ALNUM.length())));
+        }
+        return sb.toString();
     }
 
+    /** A fixed failure class from kcadm's stderr; the text itself is never returned, it can hold secrets. */
     static String classify(String stderr) {
+        String s = stderr == null ? "" : stderr.toLowerCase(java.util.Locale.ROOT);
+        if (s.contains("invalid user credentials") || s.contains("401") || s.contains("unauthorized")
+                || s.contains("invalid_grant") || s.contains("session not active")) {
+            return "unauthorized";
+        }
+        if (s.contains("password") && (s.contains("invalidpassword") || s.contains("policy"))) {
+            return "policy";
+        }
+        if (s.contains("unknown option") || s.contains("missing required") || s.contains("usage")) {
+            return "usage";
+        }
         return "other";
     }
 
