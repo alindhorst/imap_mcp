@@ -498,6 +498,22 @@ mvn -Psmoke -pl imap-mcp-it -am verify
 
 Every test is skipped, with a reason, when its credentials are not set.
 
+#### XOAUTH2 smoke (Gmail, Microsoft 365)
+
+Status: **pending, not yet run.** The harness (`GmailOAuthLiveSmoke`, `M365OAuthLiveSmoke`) is prepared; the real-provider run is an owner task (#328) and needs the provider registrations of #325. The provider assumptions in SPEC 5.5 stay unverified until a run is recorded.
+
+It drives the production `http-public` wiring against the real provider: refresh and the read tools with PEEK, one reversible write, purge from Trash, a forced refresh, and a revoked token giving `relink_required`. **Docker is needed** for the Postgres container of the stack (and only once the variables below are set); there is no IMAP or token stub.
+
+- `IMAP_MCP_SMOKE_<GMAIL|M365>_USER`: the test address (the IMAP user).
+- `IMAP_MCP_SMOKE_<GMAIL|M365>_OAUTH_CLIENT_ID`: the OAuth client id of your registration.
+- `IMAP_MCP_SMOKE_<GMAIL|M365>_OAUTH_CLIENT_SECRET_REF`: a reference such as `env:MY_GOOGLE_SECRET` or `file:/path` (the secret itself is rejected); `env:` names a variable of the same environment.
+- `IMAP_MCP_SMOKE_<GMAIL|M365>_OAUTH_REFRESH_TOKEN`: a refresh token you obtained (below).
+- Optional: `_OAUTH_TENANT` (Microsoft: `common`, `organizations`, `consumers` or a GUID), `_OAUTH_REVOKED_REFRESH_TOKEN` (a token you revoked; otherwise a made-up one stands in).
+- `IMAP_MCP_SMOKE_OAUTH_WRITE=1`: also set and clear the flagged flag on one INBOX message.
+- `IMAP_MCP_SMOKE_OAUTH_PURGE_SUBJECT`: purge from Trash the messages with exactly this subject (at most 3). Put a throwaway message in Trash first. Without this variable nothing is purged.
+
+Getting the refresh token: run the provider's authorization-code flow by hand (`access_type=offline` and `prompt=consent` for Google; the `offline_access` scope for Microsoft) and exchange the code at the token endpoint. The linking surface (`/accounts`) of a test `http-public` deployment with the provider configured (SPEC 5.3) can check your registration and redirect URI end to end, but it never exposes the token: it is stored envelope-encrypted and cannot be read back. Use a dedicated test account. Never put the token on a command line that is logged or committed.
+
 ### Notes
 
 - Angus Mail enables `UTF8=ACCEPT` by itself for any server that advertises `UTF8=ACCEPT` or `UTF8=ONLY` (not only Gmail; not configurable). Folder names a tool returns or accepts are the server-visible full names and round-trip verbatim either way.

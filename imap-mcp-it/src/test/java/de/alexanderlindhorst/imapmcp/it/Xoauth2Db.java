@@ -43,17 +43,26 @@ final class Xoauth2Db {
      */
     static Seeded insertXoauth2Account(DataSource ds, CredentialCipher cipher, TenantId tenant, String accountId,
             String host, int port, String username, String refreshToken) throws SQLException {
+        return insertXoauth2Account(ds, cipher, tenant, accountId, PROVIDER, "mail", host, port, username, true, false,
+                refreshToken);
+    }
+
+    /** As above for a configured provider (the #328 smoke) with the read-only and purge permissions chosen. */
+    static Seeded insertXoauth2Account(DataSource ds, CredentialCipher cipher, TenantId tenant, String accountId,
+            String providerId, String scope, String host, int port, String username, boolean readOnly,
+            boolean allowPurge, String refreshToken) throws SQLException {
         String handle = newHandle();
         AccountSql.insertAccount(ds, tenant, new MailAccount(new AccountId(accountId), "xoauth2 " + accountId,
                 username + "@example.com", host, port, MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC,
-                username, new SecretRef("db:"), true, false, MailAccount.Auth.XOAUTH2, MailAccount.Status.ACTIVE, 1L,
-                PROVIDER), handle);
+                username, new SecretRef("db:"), readOnly, allowPurge, MailAccount.Auth.XOAUTH2,
+                MailAccount.Status.ACTIVE, 1L, providerId), handle);
         try (Connection c = ds.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO oauth_grant (tenant_id, account_id,"
-                    + " provider_id, scope, refresh_version) VALUES (?, ?, ?, 'mail', 1)")) {
+                    + " provider_id, scope, refresh_version) VALUES (?, ?, ?, ?, 1)")) {
                 ps.setObject(1, UUID.fromString(tenant.value()));
                 ps.setString(2, accountId);
-                ps.setString(3, PROVIDER);
+                ps.setString(3, providerId);
+                ps.setString(4, scope);
                 ps.executeUpdate();
             }
             CredentialCipher.Sealed s = cipher.seal(tenant.value(), accountId, 1, refreshToken.toCharArray());
@@ -119,6 +128,12 @@ final class Xoauth2Db {
     static long refreshCredentials(DataSource ds, Seeded s) throws SQLException {
         return scalar(ds, "SELECT count(*) FROM credential WHERE tenant_id = ? AND account_id = ?"
                 + " AND kind = 'oauth_refresh'", uuid(s.tenant()), s.account().value());
+    }
+
+    /** {@code oauth_grant.refreshed_at} in epoch milliseconds: moves on every token refresh, rotated or not. */
+    static long refreshedAtMillis(DataSource ds, Seeded s) throws SQLException {
+        return scalar(ds, "SELECT (EXTRACT(EPOCH FROM refreshed_at) * 1000)::bigint FROM oauth_grant"
+                + " WHERE tenant_id = ? AND account_id = ?", uuid(s.tenant()), s.account().value());
     }
 
     static long auditCount(DataSource ds, Seeded s, String eventType) throws SQLException {
