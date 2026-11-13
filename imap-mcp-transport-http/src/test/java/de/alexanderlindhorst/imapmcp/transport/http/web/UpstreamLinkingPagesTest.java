@@ -789,6 +789,17 @@ class UpstreamLinkingPagesTest {
     }
 
     @Test
+    void outcomeADisabledTenantGetsAGeneric403PageAndNothingIsStored() throws Exception {
+        world.storeFailure = new UpstreamAccountStore.TenantDisabledException();
+        String state = startAsA();
+
+        Resp r = callback("google", q("state", state) + "&" + q("code", CODE), state);
+
+        assertFailurePage(r, 403, "account linking is not available", "tenant_disabled");
+        assertThat(world.pending).isEmpty();
+    }
+
+    @Test
     void theCallbackOnlyAcceptsGetAndAnUnknownProviderIsNotFound() throws Exception {
         String state = startAsA();
         Resp post = send("POST", "/accounts/oauth/google/callback", "__Host-upstream=" + state,
