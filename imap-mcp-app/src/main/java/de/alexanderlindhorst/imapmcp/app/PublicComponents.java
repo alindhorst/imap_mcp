@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.app;
 import de.alexanderlindhorst.imapmcp.app.config.AppConfig;
 import de.alexanderlindhorst.imapmcp.app.config.AppPaths;
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfig;
+import de.alexanderlindhorst.imapmcp.app.config.UpstreamProvider;
 import de.alexanderlindhorst.imapmcp.core.account.AccountRepository;
 import de.alexanderlindhorst.imapmcp.core.account.Secret;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
@@ -205,6 +206,15 @@ public final class PublicComponents implements AutoCloseable {
         // the linking surface's web client secret must resolve at startup (fail fast); it is read again per use
         AppComponents.wipe(AppComponents.resolveChars(refs, config.oauth().webClientSecret(), "oauth.webClientSecret",
                 paths));
+        for (UpstreamProvider provider : config.oauth().upstreamProviders()) {
+            // fail fast like the web client secret; read again per use. Only the id is ever logged
+            AppComponents.wipe(AppComponents.resolveChars(refs, provider.clientSecret(),
+                    "oauth.upstream.providers." + provider.id() + ".clientSecret", paths));
+            if (provider.kind() != UpstreamProvider.Kind.GENERIC) {
+                LOG.warn("Upstream OAuth provider {} is not verified against the real provider (SPEC 6, D7)",
+                        provider.id());
+            }
+        }
         KeyWrapper wrapper = buildKeyWrapper(config.kms(), refs, clock, paths);
         SsrfPolicy ssrf;
         try {
