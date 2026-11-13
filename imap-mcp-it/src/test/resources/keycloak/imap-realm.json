@@ -2,6 +2,8 @@
   "realm": "imap",
   "enabled": true,
   "sslRequired": "none",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
   "registrationAllowed": false,
   "roles": {
     "realm": [
@@ -41,6 +43,23 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "imap-mcp-upstream",
+      "name": "Generic upstream OAuth provider for the XOAUTH2 linking IT (test)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "upstream-secret-for-tests",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
     }
   ],
   "users": [
