@@ -193,6 +193,7 @@ public final class JdbcLinkedAccountStore implements LinkedAccountStore, Upstrea
             String requestId) {
         String[] ids = inTransaction(tenant, "link", (c, t) -> {
             lockTenant(c, t); // serializes the cap and the duplicate check per tenant
+            requireActiveTenant(c, t);
             try (PreparedStatement dup = c.prepareStatement("SELECT 1 FROM mailbox_account WHERE tenant_id = ?"
                     + " AND auth = 'xoauth2' AND provider_id = ? AND lower(address) = lower(?)")) {
                 dup.setObject(1, t);
@@ -227,6 +228,7 @@ public final class JdbcLinkedAccountStore implements LinkedAccountStore, Upstrea
     @Override
     public boolean relink(TenantId tenant, AccountId id, char[] refreshToken, String scope, String requestId) {
         return inTransaction(tenant, "relink", (c, t) -> {
+            requireActiveTenant(c, t);
             try (Statement st = c.createStatement()) { // a refresh holds the grant lock across its HTTP call
                 st.execute("SET LOCAL lock_timeout = '10s'");
             }
@@ -271,6 +273,18 @@ public final class JdbcLinkedAccountStore implements LinkedAccountStore, Upstrea
             JdbcAuditLog.insertEvent(c, new EventInfo("relink", tenant, id, requestId, "ok"));
             return true;
         });
+    }
+
+    /** A tenant disabled after the flow started gets nothing (SPEC 5.3, D13); read in the transaction. */
+    private static void requireActiveTenant(Connection c, UUID t) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT status FROM tenant WHERE id = ?")) {
+            ps.setObject(1, t);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next() || !"active".equals(rs.getString(1))) {
+                    throw new TenantDisabledException();
+                }
+            }
+        }
     }
 
     private static void lockTenant(Connection c, UUID t) throws SQLException {
