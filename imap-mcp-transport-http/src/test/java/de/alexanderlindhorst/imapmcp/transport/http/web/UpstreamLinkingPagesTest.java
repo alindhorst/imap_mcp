@@ -135,7 +135,7 @@ class UpstreamLinkingPagesTest {
             MailAccount m = new MailAccount(new AccountId("acct-" + n), a.label(), a.address(), a.host(), a.port(),
                     a.security(), a.flavor(), a.address(), new SecretRef("db:"), a.readOnly(), false,
                     MailAccount.Auth.XOAUTH2, MailAccount.Status.ACTIVE, 1L, a.providerId());
-            ResolvedAccount r = new ResolvedAccount(tenant, m, "acc_oauth" + "x".repeat(21) + n);
+            ResolvedAccount r = new ResolvedAccount(tenant, m, "acc_oauthhandle" + "x".repeat(14) + (2 + n % 6));
             accounts.add(r);
             return r;
         }
@@ -333,7 +333,7 @@ class UpstreamLinkingPagesTest {
         MailAccount m = new MailAccount(new AccountId("acct-oauth" + n), "Mine", ADDRESS, "imap.gmail.example", 993,
                 MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GMAIL, ADDRESS, new SecretRef("db:"), true,
                 false, MailAccount.Auth.XOAUTH2, status, 4L, "google");
-        return new ResolvedAccount(t, m, "acc_oauthhandle" + "a".repeat(11) + n);
+        return new ResolvedAccount(t, m, "acc_oauthhandle" + "a".repeat(14) + n);
     }
 
     void assertSafePage(Resp r) {
@@ -369,7 +369,7 @@ class UpstreamLinkingPagesTest {
 
     @Test
     void anUpstreamAccountOffersAuthorizeAgainInsteadOfANewPassword() throws Exception {
-        ResolvedAccount oauth = oauthAccount(A, "1", MailAccount.Status.NEEDS_RELINK);
+        ResolvedAccount oauth = oauthAccount(A, "2", MailAccount.Status.NEEDS_RELINK);
         passwords.accounts.add(oauth);
 
         Resp r = getA("/accounts");
@@ -381,7 +381,7 @@ class UpstreamLinkingPagesTest {
 
     @Test
     void thePasswordRelinkPageOfAnUpstreamAccountIsNotFound() throws Exception {
-        ResolvedAccount oauth = oauthAccount(A, "1", MailAccount.Status.ACTIVE);
+        ResolvedAccount oauth = oauthAccount(A, "2", MailAccount.Status.ACTIVE);
         passwords.accounts.add(oauth);
 
         assertThat(getA("/accounts/relink?account=" + oauth.handle()).status()).isEqualTo(404);
@@ -417,7 +417,7 @@ class UpstreamLinkingPagesTest {
 
     @Test
     void theRelinkFormNamesTheAccountOfTheSessionsTenantOnly() throws Exception {
-        ResolvedAccount oauth = oauthAccount(A, "1", MailAccount.Status.NEEDS_RELINK);
+        ResolvedAccount oauth = oauthAccount(A, "2", MailAccount.Status.NEEDS_RELINK);
         passwords.accounts.add(oauth);
 
         Resp r = getA("/accounts/oauth/google/start?account=" + oauth.handle());
@@ -569,7 +569,7 @@ class UpstreamLinkingPagesTest {
 
     @Test
     void anUpstreamRelinkEndToEndWritesANewVersionForTheNamedAccount() throws Exception {
-        ResolvedAccount oauth = oauthAccount(A, "1", MailAccount.Status.NEEDS_RELINK);
+        ResolvedAccount oauth = oauthAccount(A, "2", MailAccount.Status.NEEDS_RELINK);
         passwords.accounts.add(oauth);
         world.accounts.add(oauth);
         Resp start = postA("/accounts/oauth/google/start", Map.of("account", oauth.handle()));
@@ -797,7 +797,7 @@ class UpstreamLinkingPagesTest {
         assertThat(world.pending).hasSize(1); // nothing was consumed
 
         assertThat(callback("nope", q("state", state) + "&" + q("code", CODE), state).status()).isEqualTo(404);
-        assertThat(callback("Google", q("state", state), state).status()).isEqualTo(404);
+        assertThat(getA("/accounts/oauth/Google/callback?" + q("state", state)).status()).isEqualTo(404);
     }
 
     // ---- no upstream configured ----

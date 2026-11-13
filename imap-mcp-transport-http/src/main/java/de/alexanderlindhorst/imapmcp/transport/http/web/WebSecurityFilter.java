@@ -21,6 +21,12 @@ import org.slf4j.LoggerFactory;
 public final class WebSecurityFilter implements Filter {
 
     static final String CSP = "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+    /** The CSP with an extra {@code form-action} source (an upstream provider's origin, SPEC 5.3 v0.29). */
+    static String csp(String extraFormActionSource) {
+        return "default-src 'none'; form-action 'self' " + extraFormActionSource
+                + "; base-uri 'none'; frame-ancestors 'none'";
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(WebSecurityFilter.class);
 
     private final WebConfig config;
