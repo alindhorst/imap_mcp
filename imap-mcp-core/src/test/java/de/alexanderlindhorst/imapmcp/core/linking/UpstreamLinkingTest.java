@@ -653,6 +653,25 @@ class UpstreamLinkingTest {
     }
 
     @Test
+    void aTenantDisabledMeanwhileStoresNothingAndIsAuditedForLinkAndRelink() {
+        UpstreamLinker l = linker();
+        fake.storeFailure = new UpstreamAccountStore.TenantDisabledException();
+        String s = startLink(l, T1, GOOGLE);
+
+        assertThat(l.callback(s, s, "google", CODE, null)).isEqualTo(done(UpstreamOutcome.TENANT_DISABLED));
+        assertThat(fake.pending).isEmpty(); // the pending row is gone (consumed first)
+
+        ResolvedAccount a = oauthAccount(T1, "7", "google", ADDRESS);
+        fake.accounts.add(a);
+        UpstreamLinker.Started st = l.start(T1, "google", null, null, true, a.handle(), "r");
+        assertThat(l.callback(st.state(), st.state(), "google", CODE, null))
+                .isEqualTo(new UpstreamLinker.Completed(UpstreamOutcome.TENANT_DISABLED, true));
+
+        assertThat(auditResults()).containsExactly("link:tenant_disabled", "relink:tenant_disabled");
+        assertThat(fake.calls).isEmpty();
+    }
+
+    @Test
     void anAuditFailureOnARefusalNeverChangesTheAnswer() {
         UpstreamLinker l = linker();
         audit.failEvent = true;

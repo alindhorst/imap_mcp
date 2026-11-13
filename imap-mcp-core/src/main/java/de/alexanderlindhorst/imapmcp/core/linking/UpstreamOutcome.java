@@ -30,6 +30,8 @@ public enum UpstreamOutcome {
     DUPLICATE,
     /** The account limit, rechecked in the transaction. */
     LIMIT,
+    /** The tenant was disabled after the flow started: nothing was stored. */
+    TENANT_DISABLED,
     /** The database or the key service could not do it; nothing was stored. */
     UNAVAILABLE
 }

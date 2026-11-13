@@ -20,6 +20,14 @@ public interface UpstreamAccountStore {
         }
     }
 
+    /** The tenant is disabled (SPEC 5.3, D13): nothing is stored, whatever flow it started earlier. */
+    class TenantDisabledException extends RuntimeException {
+
+        public TenantDisabledException() {
+            super("tenant disabled", null, false, false);
+        }
+    }
+
     /** The values of a new upstream account; {@code address} is also the IMAP user name. */
     record NewUpstreamAccount(String label, String address, String providerId, String host, int port,
             MailAccount.Security security, MailAccount.Flavor flavor, boolean readOnly, String scope) {
@@ -34,14 +42,15 @@ public interface UpstreamAccountStore {
      * Creates the account, its {@code oauth_grant} and the {@code oauth_refresh} credential version 1 and the audit
      * row {@code ok} in one transaction. Throws {@link DuplicateException}, {@link LinkedAccountStore.LimitReachedException}
      * (the tenant has {@code maxAccounts} already, counted in the transaction) or
-     * {@link LinkedAccountStore.UnavailableException}; nothing is stored then.
+     * {@link TenantDisabledException} or {@link LinkedAccountStore.UnavailableException}; nothing is stored then.
      */
     ResolvedAccount create(TenantId tenant, NewUpstreamAccount account, char[] refreshToken, int maxAccounts,
             String requestId);
 
     /**
      * New refresh-token version, current from now on; clears {@code needs_relink} and the failed-login counter and
-     * raises the revision; older versions are removed. False when the tenant has no such upstream account.
+     * raises the revision; older versions are removed. False when the tenant has no such upstream account. Throws
+     * {@link TenantDisabledException} for a disabled tenant.
      */
     boolean relink(TenantId tenant, AccountId id, char[] refreshToken, String scope, String requestId);
 }
