@@ -56,6 +56,11 @@ public final class ProbeRateLimiter {
         return true;
     }
 
+    /** Whether {@link #tryAcquire} would succeed now; takes nothing. */
+    public synchronized boolean hasRoom(TenantId tenant) {
+        throw new UnsupportedOperationException("not yet");
+    }
+
     synchronized int trackedTenants() {
         return byTenant.size();
     }

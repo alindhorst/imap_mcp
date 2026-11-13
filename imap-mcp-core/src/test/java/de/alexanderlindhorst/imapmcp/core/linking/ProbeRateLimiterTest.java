@@ -86,4 +86,21 @@ class ProbeRateLimiterTest {
 
         assertThat(limiter.trackedTenants()).isEqualTo(1);
     }
+
+    @Test
+    void hasRoomLooksWithoutTakingAnyBudget() {
+        TestClock clock = new TestClock();
+        ProbeRateLimiter limiter = new ProbeRateLimiter(clock, 2, Duration.ofHours(1), 1);
+        TenantId t = new TenantId("t");
+
+        assertThat(limiter.hasRoom(t)).isTrue();
+        assertThat(limiter.hasRoom(t)).isTrue();
+        assertThat(limiter.tryAcquire(t)).isTrue();
+        assertThat(limiter.tryAcquire(t)).isTrue();
+        assertThat(limiter.hasRoom(t)).isFalse();
+        assertThat(limiter.hasRoom(new TenantId("other"))).isFalse(); // table full of live entries: fail-closed
+        clock.now = clock.now.plus(Duration.ofMinutes(61));
+        assertThat(limiter.hasRoom(t)).isTrue();
+        assertThat(limiter.trackedTenants()).isZero(); // looking never creates an entry
+    }
 }
