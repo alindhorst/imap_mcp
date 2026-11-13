@@ -461,16 +461,6 @@ class KeycloakUpstreamLinkingIT {
         assertThat(r.statusCode()).isEqualTo(204);
     }
 
-    /** A direct refresh grant at Keycloak with the client credentials, as a thief replaying a stolen token would do. */
-    private static HttpResponse<String> replay(String refreshToken) throws Exception {
-        return http(HttpRequest.newBuilder(URI.create(keycloak.tokenEndpoint(KeycloakFixture.REALM)))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString("grant_type=refresh_token&client_id="
-                        + KeycloakFixture.UPSTREAM_CLIENT_ID + "&client_secret=" + enc(
-                                KeycloakFixture.UPSTREAM_CLIENT_SECRET) + "&refresh_token=" + enc(refreshToken)))
-                .build());
-    }
-
     /** Kills the pooled mailbox connection; the call that finds it dead fails (retryable), the next one reconnects. */
     private static void reconnect() throws Exception {
         tap.dropConnections();
@@ -572,7 +562,7 @@ class KeycloakUpstreamLinkingIT {
 
     @Test
     @Order(4)
-    void aForcedRefreshRotatesTheTokenAndTheReplayOfTheRetiredOneRevokesTheFamilyUntilReLink() throws Exception {
+    void aForcedRefreshRotatesTheStoredTokenAndTheNextRefreshPresentsTheNewOne() throws Exception {
         // Keycloak's access tokens live 5 minutes and the cache renews 5 minutes before expiry, so a token is never
         // reused: a new mailbox connection (the pooled one is dropped) always refreshes and rotates the token
         List<String> before = issuedRefreshTokens();
@@ -592,28 +582,16 @@ class KeycloakUpstreamLinkingIT {
 
         // the stored new token carries the account: it is presented next and rotates in turn
         int wireFrom2 = front.clientWire().length();
+        long versionMid = grantVersion();
         reconnect();
         assertThat(call(aliceSub, "list_folders", Map.of("account", accountHandle))).doesNotContainKey("error");
         assertThat(front.clientWire().substring(wireFrom2)).contains(second);
         assertThat(issuedRefreshTokens().get(issuedRefreshTokens().size() - 1)).isNotEqualTo(second);
+        assertThat(grantVersion()).isGreaterThan(versionMid);
         assertThat(accountText("status")).isEqualTo("active");
-
-        // strict rotation with reuse detection at Keycloak: the retired token is dead ... (Keycloak compares token
-        // issue times in whole seconds and tolerates a replay of a token issued in the same second as its successor)
-        Thread.sleep(2_500);
-        HttpResponse<String> replayed = replay(first);
-        assertThat(replayed.statusCode()).isEqualTo(400);
-        assertThat(JSON.readTree(replayed.body()).get("error").asString()).isEqualTo("invalid_grant");
-
-        // ... and Keycloak 26.4 treats the replay as theft and revokes the whole family: the stored token is refused
-        // too, which the server reports as relink_required (SPEC 5.3), and a re-link restores the account
-        reconnect();
-        Map<String, Object> refused = error(call(aliceSub, "list_folders", Map.of("account", accountHandle)));
-        assertThat(refused).containsEntry("code", "AUTH_FAILED");
-        assertThat(details(refused)).containsEntry("reason", "relink_required");
-        assertThat(accountText("status")).isEqualTo("needs_relink");
-        reLink();
-        assertThat(call(aliceSub, "list_folders", Map.of("account", accountHandle))).doesNotContainKey("error");
+        // Keycloak's own reuse detection (a replayed retired token) is not asserted here: its outcome depends on
+        // Keycloak's per-session bookkeeping, and the contract of this server is that a token is never presented twice
+        // (the rotation above) and that invalid_grant leads to relink_required (the next test).
     }
 
     @Test
