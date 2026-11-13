@@ -55,7 +55,7 @@ final class KeycloakAdmin {
     private TestUser create(boolean withRole) throws Exception {
         login();
         String name = "connector-" + random(6).toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "x");
-        String password = random(24);
+        String password = newPassword();
         run("create users -r " + REALM + " -s username=" + name + " -s enabled=true -s emailVerified=true"
                 + " -s email=" + name + "@example.test -s firstName=Test -s lastName=Connector", List.of());
         run("set-password -r " + REALM + " --username " + name + " --new-password \"$IT_USER_PASSWORD\"",
@@ -96,6 +96,14 @@ final class KeycloakAdmin {
             throw new IllegalStateException("kcadm " + kcadmArgs.split(" ")[0] + " failed: " + r);
         }
         return r.stdout();
+    }
+
+    static String newPassword() {
+        return random(24);
+    }
+
+    static String classify(String stderr) {
+        return "other";
     }
 
     private static String random(int bytes) {
