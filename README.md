@@ -460,7 +460,7 @@ Payloads carry no stack traces, host names or exception text. Codes:
 | Code | Retryable | Meaning |
 |---|---|---|
 | `INVALID_ARGUMENT` | no | an argument is missing, malformed or out of bounds; see `details` (`download_attachment`: `part_not_found`, `not_a_leaf`) |
-| `ACCOUNT_NOT_FOUND` | no | unknown account handle |
+| `ACCOUNT_NOT_FOUND` | no | unknown, malformed or foreign account handle (one identical payload for all of them) |
 | `INVALID_HANDLE` | no | unknown, malformed, tampered or foreign message handle (one identical payload for all of them) |
 | `INVALID_CURSOR` | no | invalid cursor, or one used with other search criteria (`criteria_mismatch`) |
 | `STALE_REFERENCE` | no | the folder changed since the handle was issued (`details.reason` `uidvalidity_changed` or `folder_missing`); re-run the search |

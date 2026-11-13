@@ -176,7 +176,7 @@ This is the mode for several users. Each user logs in through an identity provid
 
 - **Tenant = one user.** The tenant is identified by the issuer and subject claim of the user's token. A tenant is created at the user's first login at `https://<host>/accounts`, and only if the user has the IdP role named by `oauth.requiredRole`. A request to `/mcp` never creates one; a user without a tenant sees an empty `list_accounts` plus a `link_url`.
 - **Mailbox = an account owned by exactly one tenant.** The user links accounts (label, IMAP host, port, user name, password) at `/accounts`, by default up to 10. Each account has its own credentials and pooled connections. The IMAP host must be on the operator's `ssrf.allowedHosts` list.
-- **No sharing.** A tenant can only address its own accounts. Account handles and message handles of another tenant are refused (`ACCOUNT_NOT_FOUND`, `INVALID_HANDLE`).
+- **No sharing.** A tenant can only address its own accounts. Account handles and message handles of another tenant are refused (`ACCOUNT_NOT_FOUND` and `INVALID_HANDLE` respectively).
 - **Per account switches** are set by the user while linking: `read_only` (default on) and `allow_purge` (default off, and only possible when the operator enabled `purge.enabled`).
 
 ### What you need
