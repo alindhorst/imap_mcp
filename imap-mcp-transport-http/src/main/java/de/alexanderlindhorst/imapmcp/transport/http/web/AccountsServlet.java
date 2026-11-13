@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.transport.http.web;
 
 import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamLinker;
 import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
 import de.alexanderlindhorst.imapmcp.core.web.WebSession;
@@ -52,6 +53,12 @@ public final class AccountsServlet extends HttpServlet {
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
             WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
             KeysUnavailableReporter keysUnavailable) {
+        this(config, provider, pending, sessions, tenants, linker, clock, keysUnavailable, null);
+    }
+
+    public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
+            KeysUnavailableReporter keysUnavailable, UpstreamLinker upstream) {
         this.keysUnavailable = java.util.Objects.requireNonNull(keysUnavailable, "keysUnavailable");
         this.config = config;
         this.provider = provider;
