@@ -36,12 +36,29 @@ class AppArchitectureTest {
             .or().areDeclaredInClassesThat().haveSimpleName("Main")
             .should().haveRawType("org.slf4j.Logger");
 
+    /** #497: stdio and http-local never construct the XOAUTH2 refresh chain (SPEC 5.5, http-public only). */
+    @ArchTest
+    static final ArchRule onlyPublicWiringBuildsTheRefreshChain = noClasses().that().resideInAPackage("..app..")
+            .and().doNotHaveSimpleName("PublicComponents").and().doNotHaveSimpleName("PublicOAuthUpstream")
+            .should().dependOnClassesThat().haveSimpleName("PublicOAuthUpstream")
+            .orShould().dependOnClassesThat().resideInAPackage("..store.oauth..")
+            .orShould().dependOnClassesThat().haveSimpleName("CachingOAuthAccessTokens");
+
+    /** #497: the http-public wiring does build it (the rule above is not vacuous). */
+    @Test
+    void publicComponentsBuildsTheRefreshChain() {
+        JavaClasses app = new ClassFileImporter().withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("de.alexanderlindhorst.imapmcp.app");
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes().that().haveSimpleName("PublicComponents")
+                .should().dependOnClassesThat().haveSimpleName("PublicOAuthUpstream").check(app);
+    }
+
     /** #143: a renamed package or class must fail the rules instead of letting them pass on an empty selection. */
     @Test
     void rulesFailOnAnEmptyClassSet() {
         JavaClasses none = new ClassFileImporter().importPackages("de.alexanderlindhorst.imapmcp.app.doesnotexist");
         for (ArchRule rule : new ArchRule[] {wiringIsFreeOfHttpAndJetty, mainDoesNotReferenceLaunchersStatically,
-            launchersHaveNoLoggerFields}) {
+            launchersHaveNoLoggerFields, onlyPublicWiringBuildsTheRefreshChain}) {
             assertThatThrownBy(() -> rule.check(none)).isInstanceOf(AssertionError.class);
         }
     }
