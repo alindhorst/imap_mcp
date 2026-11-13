@@ -27,7 +27,7 @@ import org.junit.jupiter.api.TestMethodOrder;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-abstract class AbstractOAuthLiveSmoke {
+abstract class AbstractOAuthSmoke {
 
     abstract SmokeEnv.Provider provider();
 
@@ -124,7 +124,7 @@ abstract class AbstractOAuthLiveSmoke {
             Map<String, Object> set = ok("set_flags", "handles", List.of(handle), "flagged", true);
             assertThat(itemStatuses(set)).containsExactly("ok");
             assertThat(messages("INBOX").stream().filter(m -> handle.equals(m.get("handle"))).allMatch(
-                    AbstractOAuthLiveSmoke::flagged)).as("flag set").isTrue();
+                    AbstractOAuthSmoke::flagged)).as("flag set").isTrue();
         } finally {
             Map<String, Object> clear = stack.call(box, "set_flags", "handles", List.of(handle), "flagged", false);
             assertThat(OAuthSmokeStack.errorOf(clear)).as("restoring the flag").isEqualTo("none");
