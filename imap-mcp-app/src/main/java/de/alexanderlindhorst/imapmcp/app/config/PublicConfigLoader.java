@@ -254,6 +254,7 @@ public final class PublicConfigLoader {
         if (kind == UpstreamProvider.Kind.GOOGLE) {
             forbidTenant(p, kindName);
             p.finish();
+            requireAllowedHost(p.path("kind"), "imap.gmail.com", hostPolicy);
             return new UpstreamProvider(id, kind, clientId, label, clientSecret, null, GOOGLE_AUTH, GOOGLE_TOKEN,
                     List.of("https://mail.google.com/"), "imap.gmail.com", 993, Security.IMPLICIT_TLS, redirect);
         }
@@ -264,6 +265,7 @@ public final class PublicConfigLoader {
                         + "or a GUID");
             }
             p.finish();
+            requireAllowedHost(p.path("kind"), "outlook.office365.com", hostPolicy);
             return new UpstreamProvider(id, kind, clientId, label, clientSecret, tenant,
                     MS_BASE + tenant + "/oauth2/v2.0/authorize", MS_BASE + tenant + "/oauth2/v2.0/token",
                     List.of("https://outlook.office.com/IMAP.AccessAsUser.All", "offline_access"),
@@ -289,16 +291,25 @@ public final class PublicConfigLoader {
         if (port != (security == Security.STARTTLS ? 143 : 993)) {
             throw new ConfigException(imap.path("port") + PORT_RULE);
         }
-        if (hostPolicy != null) {
-            try {
-                host = hostPolicy.normalizeHost(host);
-            } catch (IllegalArgumentException e) { // HostRejectedException; its text may carry the host
-                throw new ConfigException(imap.path("host") + ": not matched by ssrf.allowedHosts");
-            }
-        }
+        host = requireAllowedHost(imap.path("host"), host, hostPolicy);
         p.finish();
         return new UpstreamProvider(id, kind, clientId, label, clientSecret, null, authEndpoint, tokenEndpoint, scopes,
                 host, port, security, redirect);
+    }
+
+    /**
+     * The IMAP host of every kind must match {@code ssrf.allowedHosts} (SPEC 5.7; skipped with
+     * {@code allowAnyPublicHost}); returns the normalised host. {@code path} is the config path named on failure.
+     */
+    private static String requireAllowedHost(String path, String host, SsrfPolicy hostPolicy) {
+        if (hostPolicy == null) {
+            return host;
+        }
+        try {
+            return hostPolicy.normalizeHost(host);
+        } catch (IllegalArgumentException e) { // HostRejectedException; its text may carry the host
+            throw new ConfigException(path + ": IMAP host not matched by ssrf.allowedHosts");
+        }
     }
 
     private static void forbidTenant(Section p, String kindName) {

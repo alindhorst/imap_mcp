@@ -66,7 +66,9 @@ class DistDockerTest {
             out.append(in ? "  " + line.substring(4) : line).append('\n');
         }
         Path file = tmp.resolve("config.yaml");
-        Files.writeString(file, out.toString());
+        // the owner adds the provider IMAP hosts to ssrf.allowedHosts, as the example's comment says
+        Files.writeString(file, out.toString().replace("allowedHosts: [\"imap.example.com\"]",
+                "allowedHosts: [\"imap.example.com\", \"imap.gmail.com\", \"outlook.office365.com\"]"));
         var providers = PublicConfigLoader.load(file, Map.of()).oauth().upstreamProviders();
         assertThat(providers).extracting(UpstreamProvider::id).containsExactly("gmail", "work-microsoft", "corp");
         assertThat(providers).allSatisfy(p -> assertThat(p.clientSecret().value()).matches("(env|file):.+"));

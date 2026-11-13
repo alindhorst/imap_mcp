@@ -309,9 +309,9 @@ class UpstreamProviderConfigTest {
     @Test
     void aGenericImapHostOutsideTheSsrfAllowlistIsRefused() {
         fails(GENERIC.replace("host: imap.example.com", "host: imap.other.example.org"),
-                "oauth.upstream.providers.corp.imap.host: not matched by ssrf.allowedHosts");
+                "oauth.upstream.providers.corp.imap.host: IMAP host not matched by ssrf.allowedHosts");
         fails(GENERIC.replace("host: imap.example.com", "host: 10.1.2.3"),
-                "oauth.upstream.providers.corp.imap.host: not matched by ssrf.allowedHosts");
+                "oauth.upstream.providers.corp.imap.host: IMAP host not matched by ssrf.allowedHosts");
         // a suffix pattern matches
         assertThat(bind(GENERIC.replace("host: imap.example.com", "host: imap.mail.example.net"))
                 .oauth().upstreamProviders()).hasSize(1);

@@ -406,7 +406,9 @@ class PublicComponentsStartupTest {
         }
     }
 
-    private static final String UPSTREAM = BASE.replace("  webClientSecret: env:WEB_SECRET\n",
+    private static final String UPSTREAM = BASE.replace("allowedHosts: [\"imap.example.com\"]",
+            "allowedHosts: [\"imap.example.com\", \"imap.gmail.com\", \"outlook.office365.com\"]")
+            .replace("  webClientSecret: env:WEB_SECRET\n",
             "  webClientSecret: env:WEB_SECRET\n  upstream:\n    providers:\n"
                     + "      gmail:\n        kind: google\n        clientId: CLIENT-ID-CANARY\n"
                     + "        clientSecret: env:G_SECRET\n"

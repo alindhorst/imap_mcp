@@ -14,7 +14,8 @@ oauth:
   #   providers:
   #     # Experimental XOAUTH2 (SPEC 5.7, v0.29), not verified against the real providers. Uncomment to enable.
   #     # Secrets are env: or file: references only. The redirect URI to register is
-  #     # <public.baseUrl>/accounts/oauth/<id>/callback. The IMAP hosts must be in ssrf.allowedHosts.
+  #     # <public.baseUrl>/accounts/oauth/<id>/callback. The IMAP host of every provider (imap.gmail.com,
+  #     # outlook.office365.com, or imap.host) must be in ssrf.allowedHosts, or startup fails.
   #     gmail:
   #       kind: google
   #       clientId: your-google-client-id
