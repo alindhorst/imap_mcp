@@ -8,6 +8,7 @@ import de.alexanderlindhorst.imapmcp.core.oauth.CachingOAuthAccessTokens;
 import de.alexanderlindhorst.imapmcp.core.oauth.OAuthAccessTokens;
 import de.alexanderlindhorst.imapmcp.store.crypto.CredentialCipher;
 import de.alexanderlindhorst.imapmcp.store.oauth.JdbcOAuthGrantStore;
+import de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpoint;
 import de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpointClient;
 import de.alexanderlindhorst.imapmcp.store.oauth.TokenProvider;
 import de.alexanderlindhorst.imapmcp.store.oauth.TokenProviders;
@@ -22,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
@@ -45,19 +47,36 @@ final class PublicOAuthUpstream implements AutoCloseable {
     static final int REFRESH_QUEUE_CAPACITY = 64;
 
     private final CachingOAuthAccessTokens tokens;
+    private final TokenEndpoint client;
     private boolean closed;
 
-    private PublicOAuthUpstream(CachingOAuthAccessTokens tokens) {
+    private PublicOAuthUpstream(CachingOAuthAccessTokens tokens, TokenEndpoint client) {
         this.tokens = tokens;
+        this.client = client;
     }
 
     static PublicOAuthUpstream create(List<UpstreamProvider> providers, RefCredentialStore refs, DataSource ds,
             SsrfPolicy ssrf, CredentialCipher cipher, LogIds logIds, MetricsRecorder metrics, Clock clock) {
-        TokenEndpointClient client = new TokenEndpointClient(ssrf);
+        return create(providers, refs, ds, ssrf, cipher, logIds, metrics, clock, null);
+    }
+
+    /**
+     * Test seam (reached only through {@link PublicComponents#createForTest}): {@code tokenClient} replaces the
+     * production client; {@code null} builds {@code new TokenEndpointClient(ssrf)} as every production path does.
+     */
+    static PublicOAuthUpstream create(List<UpstreamProvider> providers, RefCredentialStore refs, DataSource ds,
+            SsrfPolicy ssrf, CredentialCipher cipher, LogIds logIds, MetricsRecorder metrics, Clock clock,
+            Function<SsrfPolicy, TokenEndpoint> tokenClient) {
+        TokenEndpoint client = tokenClient == null ? new TokenEndpointClient(ssrf) : tokenClient.apply(ssrf);
         JdbcOAuthGrantStore grants = new JdbcOAuthGrantStore(ds, cipher, client, providers(providers, refs), logIds,
                 metrics);
         return new PublicOAuthUpstream(new CachingOAuthAccessTokens(grants, clock, MAX_CACHED_TOKENS,
-                MAX_CONCURRENT_REFRESHES, REFRESH_QUEUE_CAPACITY));
+                MAX_CONCURRENT_REFRESHES, REFRESH_QUEUE_CAPACITY), client);
+    }
+
+    /** The token-endpoint client in use (tests). */
+    TokenEndpoint client() {
+        return client;
     }
 
     /** The token source handed to the pool. */
