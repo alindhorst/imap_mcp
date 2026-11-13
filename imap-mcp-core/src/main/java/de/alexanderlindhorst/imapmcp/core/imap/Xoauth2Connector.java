@@ -46,11 +46,10 @@ public final class Xoauth2Connector {
         Objects.requireNonNull(tokens, "tokens");
         AccessToken first = tokens.current(tenant, account.id(), deadline);
         try {
-            return attempt(session, account, first);
+            return connectOnce(session, account, first);
+        } catch (Xoauth2RejectedException e) {
+            throw e; // the guard: nothing was sent, so no point in a renewal
         } catch (MessagingException e) {
-            if (isGuard(e)) {
-                throw new Xoauth2RejectedException(); // nothing was sent: no point in a renewal
-            }
             if (!LoginRefusal.isCredentialRefusal(e)) {
                 throw e; // [UNAVAILABLE] (D14) and every non-refusal failure
             }
@@ -58,18 +57,23 @@ public final class Xoauth2Connector {
         }
         AccessToken renewed = tokens.renewAfterRejection(tenant, account.id(), first, deadline);
         try {
-            return attempt(session, account, renewed);
+            return connectOnce(session, account, renewed);
         } catch (MessagingException e) {
-            if (isGuard(e) || LoginRefusal.isCredentialRefusal(e)) {
+            if (e instanceof Xoauth2RejectedException || LoginRefusal.isCredentialRefusal(e)) {
                 throw new Xoauth2RejectedException();
             }
             throw e;
         }
     }
 
-    private static Connected attempt(Session session, MailAccount account, AccessToken token)
+    /**
+     * One attempt with {@code token}, no renewal (also the link probe's single try). A server without
+     * {@code AUTH=XOAUTH2} is {@link Xoauth2RejectedException}; a refusal is an
+     * {@link jakarta.mail.AuthenticationFailedException}.
+     */
+    public static Connected connectOnce(Session session, MailAccount account, AccessToken token)
             throws MessagingException {
-        IMAPStore store = ImapSessionFactory.newStore(session, account);
+        IMAPStore store = ImapSessionFactory.newXoauth2Store(session, account); // always the guarded Store
         try {
             // Angus needs a String; unlike the char[] it cannot be wiped and lives until garbage collected.
             store.connect(account.host(), account.port(), account.username(), new String(token.value().chars()));
@@ -79,6 +83,9 @@ public final class Xoauth2Connector {
                 store.close();
             } catch (MessagingException | RuntimeException ignored) {
                 // the refusal is the result
+            }
+            if (isGuard(e)) {
+                throw new Xoauth2RejectedException();
             }
             throw e;
         }

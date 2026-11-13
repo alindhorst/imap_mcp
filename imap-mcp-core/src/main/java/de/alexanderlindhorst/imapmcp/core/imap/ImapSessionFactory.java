@@ -119,11 +119,15 @@ public final class ImapSessionFactory implements AutoCloseable {
      * guarded one for XOAUTH2 (SPEC 5.5).
      */
     public static IMAPStore newStore(Session session, MailAccount account) throws NoSuchProviderException {
-        String protocol = protocolFor(account);
         if (account.auth() == Auth.XOAUTH2) {
-            return new Xoauth2ImapStore(session, protocol);
+            return newXoauth2Store(session, account);
         }
-        return (IMAPStore) session.getStore(protocol);
+        return (IMAPStore) session.getStore(protocolFor(account));
+    }
+
+    /** The guarded Store, whatever the account's recorded kind (the link probe of an upstream OAuth account). */
+    public static IMAPStore newXoauth2Store(Session session, MailAccount account) {
+        return new Xoauth2ImapStore(session, protocolFor(account));
     }
 
     /** Whether the SSRF-pinning socket factory is installed ({@code http-public}). */
