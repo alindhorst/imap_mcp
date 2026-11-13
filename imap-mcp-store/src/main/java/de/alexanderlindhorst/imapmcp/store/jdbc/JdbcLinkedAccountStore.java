@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.account.ResolvedAccount;
 import de.alexanderlindhorst.imapmcp.core.audit.EventInfo;
 import de.alexanderlindhorst.imapmcp.core.linking.LinkRequest;
 import de.alexanderlindhorst.imapmcp.core.linking.LinkedAccountStore;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamAccountStore;
 import de.alexanderlindhorst.imapmcp.core.tenancy.AccountId;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
 import de.alexanderlindhorst.imapmcp.store.crypto.KeyServiceUnavailableException;
@@ -24,7 +25,7 @@ import org.slf4j.LoggerFactory;
  * on the tenant; re-link locks the account row, so concurrent re-links get distinct credential versions. Every
  * statement filters on {@code tenant_id}; the tenant comes from the web session, never from a form.
  */
-public final class JdbcLinkedAccountStore implements LinkedAccountStore {
+public final class JdbcLinkedAccountStore implements LinkedAccountStore, UpstreamAccountStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(JdbcLinkedAccountStore.class);
 
@@ -182,5 +183,16 @@ public final class JdbcLinkedAccountStore implements LinkedAccountStore {
             JdbcAuditLog.insertEvent(c, new EventInfo("unlink", tenant, id, requestId, "ok"));
             return true;
         });
+    }
+
+    @Override
+    public ResolvedAccount create(TenantId tenant, NewUpstreamAccount a, char[] refreshToken, int maxAccounts,
+            String requestId) {
+        throw new UnsupportedOperationException("not yet");
+    }
+
+    @Override
+    public boolean relink(TenantId tenant, AccountId id, char[] refreshToken, String scope, String requestId) {
+        throw new UnsupportedOperationException("not yet");
     }
 }
