@@ -457,4 +457,56 @@ class ReadmeTest {
     void buildDocsNameThePartialBuildProperty() {
         assertThat(readme).contains("-Dimapmcp.partialBuild=true");
     }
+
+    private static String upstreamSection() {
+        int from = readme.indexOf("#### Upstream OAuth (experimental, unverified)");
+        assertThat(from).as("README has the upstream OAuth section").isGreaterThanOrEqualTo(0);
+        Matcher end = Pattern.compile("\\n##+ ").matcher(readme);
+        int to = end.find(from + 10) ? end.start() : readme.length();
+        return readme.substring(from, to);
+    }
+
+    /** #501 (X1-4): the upstream OAuth section of the README, inside the http-public part. */
+    @Test
+    void theReadmeDocumentsUpstreamOAuthAsExperimental() {
+        String s = upstreamSection();
+        assertThat(readme.indexOf("#### Upstream OAuth (experimental, unverified)"))
+                .isGreaterThan(readme.indexOf("### http-public"))
+                .isLessThan(readme.indexOf("## Scope by phase"));
+        assertThat(s).contains("`http-public` only").contains("`oauth.upstream.providers`")
+                .contains("`env:`").contains("`file:`")
+                .contains("<public.baseUrl>/accounts/oauth/<id>/callback")
+                .contains("not verified against the real provider").contains("WARN")
+                .contains("`relink_required`").contains("re-link")
+                .contains("`kind`").contains("`google`").contains("`microsoft`").contains("`generic`")
+                .contains("`tenant`").contains("`oauth_grant_lost`");
+        // stdio and http-local: no XOAUTH2, with the workarounds
+        assertThat(s).contains("`stdio` and `http-local`").contains("app password").contains("single-tenant");
+    }
+
+    /** #501: the upstream provider example loads with the real http-public loader. */
+    @Test
+    void theUpstreamProviderExampleLoadsWithThePublicConfigLoader(@TempDir Path dir) throws IOException {
+        Matcher m = Pattern.compile("(?s)```yaml http-public-upstream\\R(.*?)```").matcher(upstreamSection());
+        assertThat(m.find()).as("upstream section has a YAML example").isTrue();
+        Matcher base = Pattern.compile("(?s)```yaml http-public\\R(.*?)```").matcher(readme);
+        assertThat(base.find()).isTrue();
+        Path f = dir.resolve("public.yaml");
+        // the example is the oauth.upstream block, merged under the oauth: key of the base example
+        // the provider hosts must also be in ssrf.allowedHosts (the README says so)
+        String merged = base.group(1).replace("oauth:\n", "oauth:\n" + m.group(1))
+                .replace("allowedHosts: [", "allowedHosts: [\"imap.gmail.com\", \"outlook.office365.com\", ");
+        Files.writeString(f, merged);
+        var c = de.alexanderlindhorst.imapmcp.app.config.PublicConfigLoader.load(f, Map.of());
+        assertThat(c.oauth().upstreamProviders()).isNotEmpty();
+    }
+
+    /** #501: the four new error reasons are in the error table. */
+    @Test
+    void errorReferenceListsTheUpstreamOAuthReasons() {
+        Matcher sec = Pattern.compile("(?s)\\n### Errors\\R(.*?)(?=\\n##+ |\\z)").matcher(readme);
+        assertThat(sec.find()).isTrue();
+        assertThat(sec.group(1)).contains("`oauth_client_rejected`").contains("`token_refresh_unavailable`")
+                .contains("`provider_unconfigured`").contains("`xoauth2_rejected`");
+    }
 }

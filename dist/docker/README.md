@@ -4,6 +4,8 @@ A container stack to bring up the multi-tenant `http-public` mode on a public ho
 
 The operator's view (what to provide, checks in order, unverified assumptions) is in [`doc/DEPLOYMENT.md`](../../doc/DEPLOYMENT.md).
 
+Upstream OAuth for Gmail and Microsoft 365 is not part of this environment; see [Upstream OAuth (experimental, unverified)](../../README.md#upstream-oauth-experimental-unverified) in the repository README.
+
 It works with `docker compose`, `podman compose` (docker-compose provider) and `podman-compose`. Below, `compose` stands for the one you use.
 
 ## Layout
