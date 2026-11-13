@@ -23,7 +23,7 @@ public final class ExpiredRowCleanup {
     private static final Logger LOG = LoggerFactory.getLogger(ExpiredRowCleanup.class);
 
     /** Number of rows removed per table. */
-    public record Result(int webSessions, int oidcPending) {
+    public record Result(int webSessions, int oidcPending, int upstreamPending) {
     }
 
     private final DataSource dataSource;
@@ -35,7 +35,8 @@ public final class ExpiredRowCleanup {
     public Result deleteExpired(Instant now) {
         Timestamp cutoff = Timestamp.from(now);
         try (Connection c = dataSource.getConnection()) {
-            return new Result(deleteFrom(c, "web_session", cutoff), deleteFrom(c, "oidc_pending", cutoff));
+            return new Result(deleteFrom(c, "web_session", cutoff), deleteFrom(c, "oidc_pending", cutoff),
+                    0); // stub: upstream_pending is not cleaned yet
         } catch (SQLException e) {
             throw new IllegalStateException("cleanup of expired rows failed", e);
         }
