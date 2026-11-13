@@ -62,4 +62,10 @@ class ConfiguredAccountRepositoryTest {
         assertThat(repo.findByTenant(A)).hasSize(2);
         assertThatThrownBy(() -> repo.findByTenant(A).clear()).isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    void configuredAccountsHaveNoProviderId() {
+        var repo = new ConfiguredAccountRepository(A, ACCOUNTS, SALT);
+        assertThat(repo.findByTenant(A)).allSatisfy(r -> assertThat(r.account().providerId()).isNull());
+    }
 }

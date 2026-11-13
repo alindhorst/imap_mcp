@@ -12,10 +12,12 @@ import java.util.Objects;
  * {@code auth}, {@code status} and {@code revision} (SPEC 5.5, v3b) default to {@code PASSWORD}, {@code ACTIVE}
  * and 0 for configured accounts; a repository raises {@code revision} whenever a change must make pooled
  * connections obsolete (credentials, host, status).
+ * {@code providerId} (v0.29, SPEC 5.7) names the configured upstream OAuth provider of an {@code XOAUTH2} account;
+ * null for password accounts.
  */
 public record MailAccount(AccountId id, String label, String address, String host, int port, Security security,
         Flavor flavor, String username, SecretRef secretRef, boolean readOnly,
-        boolean allowPurge, Auth auth, Status status, long revision) {
+        boolean allowPurge, Auth auth, Status status, long revision, String providerId) {
 
     public enum Security { IMPLICIT_TLS, STARTTLS }
 
@@ -27,7 +29,15 @@ public record MailAccount(AccountId id, String label, String address, String hos
     public MailAccount(AccountId id, String label, String address, String host, int port, Security security,
             Flavor flavor, String username, SecretRef secretRef, boolean readOnly, boolean allowPurge) {
         this(id, label, address, host, port, security, flavor, username, secretRef, readOnly, allowPurge,
-                Auth.PASSWORD, Status.ACTIVE, 0L);
+                Auth.PASSWORD, Status.ACTIVE, 0L, null);
+    }
+
+    /** Account without provider id (password accounts). */
+    public MailAccount(AccountId id, String label, String address, String host, int port, Security security,
+            Flavor flavor, String username, SecretRef secretRef, boolean readOnly, boolean allowPurge, Auth auth,
+            Status status, long revision) {
+        this(id, label, address, host, port, security, flavor, username, secretRef, readOnly, allowPurge, auth,
+                status, revision, null);
     }
 
     public enum Flavor { GENERIC, GMAIL }
@@ -64,6 +74,6 @@ public record MailAccount(AccountId id, String label, String address, String hos
         return "MailAccount[id=" + id.value() + ", host=" + host + ", port=" + port + ", security=" + security
                 + ", flavor=" + flavor + ", readOnly=" + readOnly + ", allowPurge=" + allowPurge + ", auth=" + auth
                 + ", status=" + status
-                + ", revision=" + revision + "]";
+                + ", revision=" + revision + ", providerId=" + providerId + "]";
     }
 }
