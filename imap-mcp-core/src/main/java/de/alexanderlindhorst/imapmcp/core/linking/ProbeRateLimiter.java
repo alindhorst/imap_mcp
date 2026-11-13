@@ -58,7 +58,14 @@ public final class ProbeRateLimiter {
 
     /** Whether {@link #tryAcquire} would succeed now; takes nothing. */
     public synchronized boolean hasRoom(TenantId tenant) {
-        throw new UnsupportedOperationException("not yet");
+        Instant cutoff = clock.instant().minus(window);
+        Deque<Instant> q = byTenant.get(tenant);
+        if (q == null || q.isEmpty() || !q.peekLast().isAfter(cutoff)) {
+            // no live entry: room unless the table is full of other tenants' live entries (as tryAcquire)
+            return byTenant.values().stream().filter(d -> !d.isEmpty() && d.peekLast().isAfter(cutoff)).count()
+                    < maxTenants;
+        }
+        return q.stream().filter(t -> t.isAfter(cutoff)).count() < limit;
     }
 
     synchronized int trackedTenants() {

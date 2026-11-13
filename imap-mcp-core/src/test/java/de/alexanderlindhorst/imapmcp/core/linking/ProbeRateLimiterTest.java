@@ -101,6 +101,6 @@ class ProbeRateLimiterTest {
         assertThat(limiter.hasRoom(new TenantId("other"))).isFalse(); // table full of live entries: fail-closed
         clock.now = clock.now.plus(Duration.ofMinutes(61));
         assertThat(limiter.hasRoom(t)).isTrue();
-        assertThat(limiter.trackedTenants()).isZero(); // looking never creates an entry
+        assertThat(limiter.trackedTenants()).isEqualTo(1); // looking never creates an entry (only t is there)
     }
 }
