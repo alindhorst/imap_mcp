@@ -5,6 +5,7 @@ import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Auth;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import jakarta.mail.NoSuchProviderException;
 import jakarta.mail.Session;
 import java.util.List;
 import de.alexanderlindhorst.imapmcp.core.util.ExpiringLruMap;
@@ -16,6 +17,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
 import javax.net.SocketFactory;
+import org.eclipse.angus.mail.imap.IMAPStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,6 +112,18 @@ public final class ImapSessionFactory implements AutoCloseable {
         String protocol = protocolFor(account);
         Auth auth = account.auth();
         return sessions.computeIfAbsent(new SessionKey(key, key.revision(), auth), k -> newSession(protocol, auth));
+    }
+
+    /**
+     * A new, unconnected Store for the account's authentication kind: the plain provider Store for passwords, the
+     * guarded one for XOAUTH2 (SPEC 5.5).
+     */
+    public static IMAPStore newStore(Session session, MailAccount account) throws NoSuchProviderException {
+        String protocol = protocolFor(account);
+        if (account.auth() == Auth.XOAUTH2) {
+            return new Xoauth2ImapStore(session, protocol);
+        }
+        return (IMAPStore) session.getStore(protocol);
     }
 
     /** Whether the SSRF-pinning socket factory is installed ({@code http-public}). */

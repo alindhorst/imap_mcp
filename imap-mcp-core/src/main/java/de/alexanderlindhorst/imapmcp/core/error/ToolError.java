@@ -187,6 +187,16 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 null, requestId);
     }
 
+    /**
+     * The IMAP server refused the XOAUTH2 login for good, or does not offer it (SPEC 5.5). Not a credential refusal:
+     * it does not count towards a re-link.
+     */
+    public static ToolError xoauth2Rejected(String requestId) {
+        String hint = "The mail server refused the OAuth access token. Do not retry; if it persists, re-link the account.";
+        return of(ErrorCode.AUTH_FAILED, "The mail server refused the OAuth login. " + hint, hint,
+                detail("reason", "xoauth2_rejected"), requestId);
+    }
+
     public static ToolError serverBusy(String requestId) {
         return serverBusy(DEFAULT_RETRY_AFTER_MS, requestId);
     }

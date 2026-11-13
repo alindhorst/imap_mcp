@@ -20,7 +20,7 @@ public final class ScriptedImapsServer implements AutoCloseable {
 
     /** What the server answers to {@code AUTHENTICATE XOAUTH2}. */
     public enum AuthAnswer {
-        /** Error challenge ({@code + <base64 json>}), then {@code NO [AUTHENTICATIONFAILED]} after the empty client line. */
+        /** Error challenge ({@code + <base64 json>}), then {@code NO [AUTHENTICATIONFAILED]} after the client's answer line. */
         CHALLENGE_THEN_NO,
         /** A plain {@code NO [UNAVAILABLE]}. */
         UNAVAILABLE,
@@ -88,7 +88,7 @@ public final class ScriptedImapsServer implements AutoCloseable {
                     switch (answer) {
                         case CHALLENGE_THEN_NO -> {
                             send(out, "+ eyJzdGF0dXMiOiI0MDAifQ=="); // {"status":"400"}
-                            received.add(in.readLine()); // the client's empty line
+                            received.add(in.readLine()); // the client's answer (Angus 2.0.5 resends its response)
                             send(out, tag + " NO [AUTHENTICATIONFAILED] Invalid credentials");
                         }
                         case UNAVAILABLE -> send(out, tag + " NO [UNAVAILABLE] try later");

@@ -3,6 +3,8 @@ package de.alexanderlindhorst.imapmcp.core.error;
 import de.alexanderlindhorst.imapmcp.core.net.AddressBlockedException;
 import de.alexanderlindhorst.imapmcp.core.net.RefusalMarker;
 import de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal;
+import de.alexanderlindhorst.imapmcp.core.imap.Xoauth2RejectedException;
+import de.alexanderlindhorst.imapmcp.core.oauth.TokenAcquisitionException;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.FolderClosedException;
 import jakarta.mail.MessagingException;
@@ -111,6 +113,12 @@ public final class ImapErrorMapper {
         if (t instanceof de.alexanderlindhorst.imapmcp.core.imap.pool.AccountNeedsRelinkException) {
             // the link URL is added by the executor from the call's context; no connection exists to discard
             return new MappedError(ToolError.relinkRequired(null, rid), false);
+        }
+        if (t instanceof Xoauth2RejectedException) { // before the AuthenticationFailedException branch
+            return new MappedError(ToolError.xoauth2Rejected(rid), true);
+        }
+        if (t instanceof TokenAcquisitionException tae) { // the link URL is added by the executor, as for re-link
+            return new MappedError(tae.toolError(null, rid), false);
         }
         if (t instanceof ServerBusyException) {
             return new MappedError(ToolError.serverBusy(rid), false);

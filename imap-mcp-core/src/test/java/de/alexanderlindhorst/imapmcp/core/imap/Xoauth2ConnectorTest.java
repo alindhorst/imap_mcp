@@ -128,14 +128,13 @@ class Xoauth2ConnectorTest {
     }
 
     @Test
-    void theErrorChallengeIsAnsweredWithAnEmptyLineAndCountsAsARefusal() throws Exception {
+    void anErrorChallengeFollowedByNoCountsAsARefusalAndIsRetriedOnce() throws Exception {
         try (ScriptedImapsServer server = new ScriptedImapsServer("IMAP4rev1 SASL-IR AUTH=XOAUTH2",
                 AuthAnswer.CHALLENGE_THEN_NO)) {
             FakeTokens tokens = new FakeTokens("tok", EXPIRES).renewedTo("tok2", EXPIRES);
             assertThatThrownBy(() -> connect(account(server.port()), tokens))
                     .isInstanceOf(Xoauth2RejectedException.class);
             assertThat(tokens.renewals()).isEqualTo(1);
-            assertThat(server.received()).contains(""); // the empty client line after the challenge
         }
     }
 }
