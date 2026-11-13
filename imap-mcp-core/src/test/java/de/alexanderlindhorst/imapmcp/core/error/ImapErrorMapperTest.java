@@ -39,6 +39,18 @@ class ImapErrorMapperTest {
                 Arguments.of(new AuthenticationFailedException(MARKER), ErrorCode.AUTH_FAILED, true),
                 Arguments.of(new de.alexanderlindhorst.imapmcp.core.imap.pool.AccountNeedsRelinkException(),
                         ErrorCode.AUTH_FAILED, false),
+                Arguments.of(new de.alexanderlindhorst.imapmcp.core.imap.Xoauth2RejectedException(),
+                        ErrorCode.AUTH_FAILED, true),
+                // a token acquisition failure carries no connection: nothing to discard (SPEC 5.5 "Mapping")
+                Arguments.of(de.alexanderlindhorst.imapmcp.core.oauth.TokenAcquisitionException.of(
+                        new de.alexanderlindhorst.imapmcp.core.oauth.RefreshResult.InvalidGrant()),
+                        ErrorCode.AUTH_FAILED, false),
+                Arguments.of(de.alexanderlindhorst.imapmcp.core.oauth.TokenAcquisitionException.of(
+                        new de.alexanderlindhorst.imapmcp.core.oauth.RefreshResult.Unavailable(null)),
+                        ErrorCode.UPSTREAM_UNAVAILABLE, false),
+                Arguments.of(new MessagingException(MARKER,
+                        de.alexanderlindhorst.imapmcp.core.oauth.TokenAcquisitionException.busy()),
+                        ErrorCode.SERVER_BUSY, false),
                 Arguments.of(new FolderClosedException(null, MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),
                 Arguments.of(new StoreClosedException(null, MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),
                 Arguments.of(new ConnectException(MARKER), ErrorCode.UPSTREAM_UNAVAILABLE, true),

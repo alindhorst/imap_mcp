@@ -1,9 +1,11 @@
 package de.alexanderlindhorst.imapmcp.core.imap;
 
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount;
+import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Auth;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Flavor;
 import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.PoolKey;
+import jakarta.mail.NoSuchProviderException;
 import jakarta.mail.Session;
 import java.util.List;
 import de.alexanderlindhorst.imapmcp.core.util.ExpiringLruMap;
@@ -15,6 +17,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
 import javax.net.SocketFactory;
+import org.eclipse.angus.mail.imap.IMAPStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,14 +100,34 @@ public final class ImapSessionFactory implements AutoCloseable {
         return account.security() == Security.IMPLICIT_TLS ? "imaps" : "imap";
     }
 
-    /** Sessions are keyed by pool key and revision: a revision may change protocol and so the property prefix. */
-    private record SessionKey(PoolKey key, long revision) {
+    /**
+     * Sessions are keyed by pool key and revision: a revision may change protocol and so the property prefix; the
+     * authentication kind is part of the key because it decides the mechanism property.
+     */
+    private record SessionKey(PoolKey key, long revision, Auth auth) {
     }
 
     public Session sessionFor(PoolKey key, MailAccount account) {
         Objects.requireNonNull(key, "key");
         String protocol = protocolFor(account);
-        return sessions.computeIfAbsent(new SessionKey(key, key.revision()), k -> newSession(protocol));
+        Auth auth = account.auth();
+        return sessions.computeIfAbsent(new SessionKey(key, key.revision(), auth), k -> newSession(protocol, auth));
+    }
+
+    /**
+     * A new, unconnected Store for the account's authentication kind: the plain provider Store for passwords, the
+     * guarded one for XOAUTH2 (SPEC 5.5).
+     */
+    public static IMAPStore newStore(Session session, MailAccount account) throws NoSuchProviderException {
+        if (account.auth() == Auth.XOAUTH2) {
+            return newXoauth2Store(session, account);
+        }
+        return (IMAPStore) session.getStore(protocolFor(account));
+    }
+
+    /** The guarded Store, whatever the account's recorded kind (the link probe of an upstream OAuth account). */
+    public static IMAPStore newXoauth2Store(Session session, MailAccount account) {
+        return new Xoauth2ImapStore(session, protocolFor(account));
     }
 
     /** Whether the SSRF-pinning socket factory is installed ({@code http-public}). */
@@ -114,11 +137,16 @@ public final class ImapSessionFactory implements AutoCloseable {
 
     /** A session for one probe: same properties (and pinned socket factory) as the pool's, but not cached. */
     public Session probeSession(MailAccount account) {
-        return newSession(protocolFor(account));
+        return newSession(protocolFor(account), account.auth());
     }
 
-    private Session newSession(String protocol) {
-        Session session = Session.getInstance(properties(protocol), null);
+    /** A probe session for XOAUTH2 whatever the account's kind (the link probe of an upstream OAuth account). */
+    public Session xoauth2ProbeSession(MailAccount account) {
+        return newSession(protocolFor(account), Auth.XOAUTH2);
+    }
+
+    private Session newSession(String protocol, Auth auth) {
+        Session session = Session.getInstance(properties(protocol, auth), null);
         // Always replace the debug sink so debug output can never reach System.out (stdio protocol channel).
         session.setDebugOut(new RedactingDebugStream());
         session.setDebug(trace);
@@ -129,7 +157,7 @@ public final class ImapSessionFactory implements AutoCloseable {
         return session;
     }
 
-    private Properties properties(String protocol) {
+    private Properties properties(String protocol, Auth auth) {
         String p = "mail." + protocol + ".";
         Properties props = new Properties();
         props.setProperty(p + "connectiontimeout", Long.toString(timeouts.connect().toMillis()));
@@ -142,7 +170,8 @@ public final class ImapSessionFactory implements AutoCloseable {
         props.setProperty(p + "peek", "true");
         props.setProperty(p + "throwsearchexception", "true");
         props.setProperty(p + "sasl.enable", "false");
-        props.setProperty(p + "auth.mechanisms", "LOGIN PLAIN");
+        // XOAUTH2 only: the token is the password and must never go out in a LOGIN or PLAIN (SPEC 5.5)
+        props.setProperty(p + "auth.mechanisms", auth == Auth.XOAUTH2 ? "XOAUTH2" : "LOGIN PLAIN");
         if (protocol.equals("imap")) {
             props.setProperty(p + "starttls.enable", "true");
             props.setProperty(p + "starttls.required", "true");

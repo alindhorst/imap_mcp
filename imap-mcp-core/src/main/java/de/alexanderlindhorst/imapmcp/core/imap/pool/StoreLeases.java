@@ -111,7 +111,7 @@ public final class StoreLeases {
         CompletableFuture<IMAPStore> result = new CompletableFuture<>();
         Thread borrower = Thread.ofVirtual().name("imap-borrow").unstarted(() -> {
             try {
-                IMAPStore store = pool.borrow(key);
+                IMAPStore store = pool.borrow(key, ctx.deadline().orElse(null));
                 if (!result.complete(store)) {
                     discard(key, store); // caller gave up while we were connecting
                 }

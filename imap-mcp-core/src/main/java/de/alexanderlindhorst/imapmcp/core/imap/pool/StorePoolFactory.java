@@ -9,9 +9,12 @@ import de.alexanderlindhorst.imapmcp.core.imap.CapabilityCache;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapCapabilities;
 import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.imap.LoginRefusal;
+import de.alexanderlindhorst.imapmcp.core.imap.Xoauth2Connector;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
+import de.alexanderlindhorst.imapmcp.core.oauth.OAuthAccessTokens;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -41,8 +44,20 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     private final PoolSettings settings;
     private final MetricsRecorder metrics;
     private final LoginOutcomes outcomes;
+    private final OAuthAccessTokens tokens; // nullable
+    private final Clock clock;
     /** Account revision each live Store was made for; entries leave in {@link #destroyObject}. */
     private final Map<IMAPStore, Long> revisions = new ConcurrentHashMap<>();
+    /** Expiry of the access token each live XOAUTH2 Store authenticated with; entries leave in {@link #destroyObject}. */
+    private final Map<IMAPStore, Instant> tokenExpiries = new ConcurrentHashMap<>();
+    /** Margin before a token's expiry from which a Store is no longer lent out (SPEC 5.5 "Pool"). */
+    static final Duration TOKEN_MARGIN = Duration.ofSeconds(60);
+    /**
+     * Deadline of the tool call that is borrowing, bound by {@link StorePool#borrow(PoolKey, Instant)}. The pool
+     * runs {@code makeObject} and {@code validateObject} on the borrowing thread; when none is bound (a connect run
+     * for another waiter, the evictor) the acquire timeout from now stands in.
+     */
+    static final ScopedValue<Instant> CALL_DEADLINE = ScopedValue.newInstance();
 
     public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings settings) {
@@ -59,6 +74,15 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     public StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings settings, MetricsRecorder metrics,
             LoginOutcomes outcomes) {
+        this(sessions, credentials, capabilities, accounts, settings, metrics, outcomes, null, Clock.systemUTC());
+    }
+
+    /** {@code tokens} (nullable) feeds XOAUTH2 accounts; {@code clock} measures token expiry (SPEC 5.5). */
+    StorePoolFactory(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings settings, MetricsRecorder metrics,
+            LoginOutcomes outcomes, OAuthAccessTokens tokens, Clock clock) {
+        this.tokens = tokens;
+        this.clock = Objects.requireNonNull(clock, "clock");
         this.outcomes = Objects.requireNonNull(outcomes, "outcomes");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
@@ -88,6 +112,9 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
             throw new AccountNeedsRelinkException();
         }
         Session session = sessions.sessionFor(key, account);
+        if (account.auth() == MailAccount.Auth.XOAUTH2) {
+            return connectXoauth2(key, account, session);
+        }
         IMAPStore store = (IMAPStore) session.getStore(ImapSessionFactory.protocolFor(account));
         try (Secret secret = credentials.resolve(key.tenantId(), key.accountId())
                 .orElseThrow(() -> new MessagingException("no credential for account"))) {
@@ -105,6 +132,53 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
         report(() -> outcomes.succeeded(key.tenantId(), key.accountId(), account.revision()));
         revisions.put(store, account.revision());
         return new DefaultPooledObject<>(store);
+    }
+
+    /**
+     * XOAUTH2 (SPEC 5.5): the token is the password and the {@link CredentialStore} is not used. A refusal never
+     * reaches {@link LoginOutcomes#refused}: it must not count towards {@code failed_logins} or {@code needs_relink}.
+     */
+    private PooledObject<IMAPStore> connectXoauth2(PoolKey key, MailAccount account, Session session)
+            throws MessagingException {
+        if (tokens == null) {
+            throw new MessagingException("no oauth token source configured");
+        }
+        Xoauth2Connector.Connected c = Xoauth2Connector.connect(session, account, key.tenantId(), tokens,
+                callDeadline());
+        try {
+            capabilities.put(key, ImapCapabilities.from(c.store()));
+        } catch (RuntimeException e) {
+            closeQuietly(c.store());
+            throw e;
+        }
+        report(() -> outcomes.succeeded(key.tenantId(), key.accountId(), account.revision()));
+        revisions.put(c.store(), account.revision());
+        tokenExpiries.put(c.store(), c.tokenExpiresAt());
+        return new DefaultPooledObject<>(c.store());
+    }
+
+    private Instant callDeadline() {
+        return CALL_DEADLINE.isBound() ? CALL_DEADLINE.get() : clock.instant().plus(settings.acquireTimeout());
+    }
+
+    /** Whether the Store's token has expired (the idle eviction of XOAUTH2 Stores; SPEC 5.5 "Pool"). */
+    boolean tokenExpired(IMAPStore store) {
+        Instant expiresAt = tokenExpiries.get(store);
+        return expiresAt != null && !clock.instant().isBefore(expiresAt);
+    }
+
+    /** Whether the token leaves less than the call's remaining time plus the margin (never lend such a Store). */
+    private boolean tokenTooShort(IMAPStore store) {
+        Instant expiresAt = tokenExpiries.get(store);
+        if (expiresAt == null) {
+            return false;
+        }
+        Instant now = clock.instant();
+        Duration untilDeadline = Duration.between(now, callDeadline());
+        if (untilDeadline.isNegative()) {
+            untilDeadline = Duration.ZERO;
+        }
+        return Duration.between(now, expiresAt).compareTo(untilDeadline.plus(TOKEN_MARGIN)) < 0;
     }
 
     /**
@@ -134,6 +208,7 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     public void destroyObject(PoolKey key, PooledObject<IMAPStore> p) {
         IMAPStore store = p.getObject();
         revisions.remove(store);
+        tokenExpiries.remove(store);
         // LOGOUT may block up to the read timeout; neither the evictor nor the caller may wait for it.
         Thread.startVirtualThread(() -> closeQuietly(store));
     }
@@ -141,6 +216,11 @@ public final class StorePoolFactory implements KeyedPooledObjectFactory<PoolKey,
     @Override
     public boolean validateObject(PoolKey key, PooledObject<IMAPStore> p) {
         if (age(p).compareTo(settings.maxLifetime()) > 0) {
+            return false;
+        }
+        // The Store's lifetime is bounded by its token's (SPEC 5.5 "Pool"). A Store that has just been made (first
+        // borrow) was authenticated with the best token available; refusing it would only end in "unable to validate".
+        if (p.getBorrowedCount() > 1 && tokenTooShort(p.getObject())) {
             return false;
         }
         if (p.getIdleDuration().compareTo(settings.validateAfterIdle()) <= 0) {
