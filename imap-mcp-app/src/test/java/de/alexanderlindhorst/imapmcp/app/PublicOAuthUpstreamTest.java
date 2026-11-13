@@ -143,6 +143,74 @@ class PublicOAuthUpstreamTest {
         assertThat(upstream.isClosed()).isTrue();
     }
 
+    private PublicOAuthUpstream build(PublicConfig config, java.util.function.Function<SsrfPolicy,
+            de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpoint> tokenClient, boolean seam) throws Exception {
+        byte[] kek = new byte[32];
+        Arrays.fill(kek, (byte) 3);
+        byte[] master = new byte[32];
+        Arrays.fill(master, (byte) 1);
+        SsrfPolicy ssrf = SsrfPolicy.of(config.ssrf().allowedHosts(), false, List.of());
+        CredentialCipher cipher = new CredentialCipher(new LocalKeyWrapper("a", Map.of("a", kek)),
+                new SecureRandom());
+        LogIds ids = new LogIds(new KeyRing(1, Map.of(1, master)));
+        return seam
+                ? PublicOAuthUpstream.create(config.oauth().upstreamProviders(), refs(config), NO_DB, ssrf, cipher,
+                        ids, MetricsRecorder.NOOP, Clock.systemUTC(), tokenClient)
+                : PublicOAuthUpstream.create(config.oauth().upstreamProviders(), refs(config), NO_DB, ssrf, cipher,
+                        ids, MetricsRecorder.NOOP, Clock.systemUTC());
+    }
+
+    @Test
+    void theProductionCreateBuildsTheRealTokenEndpointClient() throws Exception {
+        PublicOAuthUpstream upstream = build(config(), null, false);
+        try {
+            assertThat(upstream.client())
+                    .isInstanceOf(de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpointClient.class);
+        } finally {
+            upstream.close();
+        }
+    }
+
+    @Test
+    void aNullTestFactoryAlsoBuildsTheRealClient() throws Exception {
+        PublicOAuthUpstream upstream = build(config(), null, true);
+        try {
+            assertThat(upstream.client())
+                    .isInstanceOf(de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpointClient.class);
+        } finally {
+            upstream.close();
+        }
+    }
+
+    @Test
+    void aTestFactoryIsGivenThePolicyAndItsClientIsUsed() throws Exception {
+        java.util.List<SsrfPolicy> seen = new java.util.ArrayList<>();
+        de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpoint stub =
+                new de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpoint() {
+                    @Override
+                    public de.alexanderlindhorst.imapmcp.store.oauth.TokenResponse refresh(TokenProvider p,
+                            char[] t) {
+                        return new de.alexanderlindhorst.imapmcp.store.oauth.TokenResponse.Refused();
+                    }
+
+                    @Override
+                    public de.alexanderlindhorst.imapmcp.store.oauth.TokenResponse exchangeCode(TokenProvider p,
+                            char[] c, char[] v, java.net.URI r) {
+                        return new de.alexanderlindhorst.imapmcp.store.oauth.TokenResponse.Refused();
+                    }
+                };
+        PublicOAuthUpstream upstream = build(config(), policy -> {
+            seen.add(policy);
+            return stub;
+        }, true);
+        try {
+            assertThat(upstream.client()).isSameAs(stub);
+            assertThat(seen).hasSize(1);
+        } finally {
+            upstream.close();
+        }
+    }
+
     private static List<ILoggingEvent> warn(Map<String, Long> stored, Set<String> configured) {
         Logger log = (Logger) LoggerFactory.getLogger("imapmcp.app");
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
