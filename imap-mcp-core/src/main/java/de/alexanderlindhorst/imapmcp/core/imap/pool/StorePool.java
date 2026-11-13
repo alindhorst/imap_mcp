@@ -11,7 +11,10 @@ import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
 import jakarta.mail.MessagingException;
+import de.alexanderlindhorst.imapmcp.core.oauth.OAuthAccessTokens;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.Function;
 import org.apache.commons.pool2.PooledObject;
@@ -78,6 +81,16 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
             LoginOutcomes outcomes) {
+        this(sessions, credentials, capabilities, accounts, s, metrics, outcomes, null, Clock.systemUTC());
+    }
+
+    /**
+     * {@code tokens} (nullable: an XOAUTH2 account then cannot connect) supplies the access tokens of XOAUTH2
+     * accounts (SPEC 5.5); {@code clock} is a test seam for their expiry.
+     */
+    StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
+            LoginOutcomes outcomes, OAuthAccessTokens tokens, Clock clock) {
         GenericKeyedObjectPoolConfig<IMAPStore> config = new GenericKeyedObjectPoolConfig<>();
         config.setJmxEnabled(false); // must be set before construction
         config.setMaxTotalPerKey(s.maxPerMailbox());
@@ -120,6 +133,11 @@ public final class StorePool implements AutoCloseable, PoolGauges {
      * is invalidated and the borrow repeated, never used (SPEC 5.5).
      */
     public IMAPStore borrow(PoolKey key) throws Exception {
+        return borrow(key, null);
+    }
+
+    /** As {@link #borrow(PoolKey)}; {@code deadline} (nullable) is the tool call's deadline. */
+    public IMAPStore borrow(PoolKey key, Instant deadline) throws Exception {
         if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
             pool.clear(key);
             throw new AccountNeedsRelinkException();
