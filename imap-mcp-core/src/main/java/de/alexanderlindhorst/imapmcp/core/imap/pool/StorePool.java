@@ -78,6 +78,13 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         this(sessions, credentials, capabilities, lookup(repository), s, metrics, outcomes);
     }
 
+    /** As the repository variant with outcomes, plus the XOAUTH2 token source and clock (SPEC 5.5); the app wiring. */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            AccountRepository repository, PoolSettings s, MetricsRecorder metrics, LoginOutcomes outcomes,
+            OAuthAccessTokens tokens, Clock clock) {
+        this(sessions, credentials, capabilities, lookup(repository), s, metrics, outcomes, tokens, clock);
+    }
+
     /** {@code outcomes} receives every real LOGIN result (refused without [UNAVAILABLE], or success). */
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
@@ -87,9 +94,9 @@ public final class StorePool implements AutoCloseable, PoolGauges {
 
     /**
      * {@code tokens} (nullable: an XOAUTH2 account then cannot connect) supplies the access tokens of XOAUTH2
-     * accounts (SPEC 5.5); {@code clock} is a test seam for their expiry.
+     * accounts (SPEC 5.5); {@code clock} measures their expiry.
      */
-    StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
             LoginOutcomes outcomes, OAuthAccessTokens tokens, Clock clock) {
         GenericKeyedObjectPoolConfig<IMAPStore> config = new GenericKeyedObjectPoolConfig<>();
