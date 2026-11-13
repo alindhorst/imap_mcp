@@ -213,6 +213,37 @@ class DatabaseMigrationIT {
         }
     }
 
+    private static void insertOauthAccount(Connection c, UUID tenant, String id, String security, String flavor,
+            String provider, String address) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security, flavor,"
+                        + " username, auth, provider_id) VALUES (?, ?, ?, 'l', ?, 'imap.example.org', 993,"
+                        + " ?, ?, 'u', 'xoauth2', ?)")) {
+            ps.setObject(1, tenant);
+            ps.setString(2, id);
+            ps.setString(3, "acc_OAUTH" + UUID.randomUUID().toString().replace("-", ""));
+            ps.setString(4, address);
+            ps.setString(5, security);
+            ps.setString(6, flavor);
+            ps.setString(7, provider);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertPasswordAccountWithProvider(Connection c, UUID tenant, String id, String provider)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security, flavor,"
+                        + " username, auth, provider_id) VALUES (?, ?, ?, 'l', 'a@example.org', 'imap.example.org',"
+                        + " 993, 'IMPLICIT_TLS', 'GENERIC', 'u', 'password', ?)")) {
+            ps.setObject(1, tenant);
+            ps.setString(2, id);
+            ps.setString(3, "acc_PWPROV" + UUID.randomUUID().toString().replace("-", ""));
+            ps.setString(4, provider);
+            ps.executeUpdate();
+        }
+    }
+
     private static void insertAccountWith(Connection c, UUID tenant, String id, String security, String flavor,
             String auth) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
@@ -245,7 +276,7 @@ class DatabaseMigrationIT {
         try (Connection c = db.dataSource().getConnection()) {
             UUID t = insertTenant(c, "checks");
             insertAccountWith(c, t, "ok1", "IMPLICIT_TLS", "GENERIC", "password");
-            insertAccountWith(c, t, "ok2", "STARTTLS", "GMAIL", "xoauth2");
+            insertOauthAccount(c, t, "ok2", "STARTTLS", "GMAIL", "google", "ok2@example.org");
             assertThatThrownBy(() -> insertAccountWith(c, t, "bad1", "tls", "GENERIC", "password"))
                     .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_security_valid");
             assertThatThrownBy(() -> insertAccountWith(c, t, "bad2", "IMPLICIT_TLS", "generic", "password"))
@@ -254,6 +285,176 @@ class DatabaseMigrationIT {
                     .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_auth_valid");
             assertThatThrownBy(() -> insertAccountWith(c, t, "bad4", "NONE", "GENERIC", "oauth"))
                     .isInstanceOf(SQLException.class);
+        }
+    }
+
+    // ---- V4 (SPEC 5.7 v0.29): XOAUTH2 ----
+
+    @Test
+    void v4AddsProviderIdOauthGrantAndUpstreamPending() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            assertThat(columns(c, "mailbox_account")).contains("provider_id");
+            assertThat(columns(c, "oauth_grant")).containsExactly("tenant_id", "account_id", "provider_id", "scope",
+                    "refresh_version", "refreshed_at");
+            assertThat(columns(c, "upstream_pending")).containsExactly("state_hash", "tenant_id", "provider_id",
+                    "pkce_verifier", "label", "address", "read_only", "relink_account_id", "created_at",
+                    "expires_at");
+        }
+    }
+
+    @Test
+    void authAndProviderIdMustAgreeOnNewRows() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t = insertTenant(c, "v4-agree");
+            assertThatThrownBy(() -> insertAccountWith(c, t, "bad1", "IMPLICIT_TLS", "GENERIC", "xoauth2"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_auth_provider");
+            assertThatThrownBy(() -> insertPasswordAccountWithProvider(c, t, "bad2", "google"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_auth_provider");
+            insertOauthAccount(c, t, "good", "IMPLICIT_TLS", "GMAIL", "google", "g@example.org");
+        }
+    }
+
+    @Test
+    void oauthAddressIsUniquePerTenantAndProviderIgnoringCase() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t1 = insertTenant(c, "v4-uniq-1");
+            UUID t2 = insertTenant(c, "v4-uniq-2");
+            insertOauthAccount(c, t1, "o1", "IMPLICIT_TLS", "GMAIL", "google", "User@Example.org");
+            assertThatThrownBy(() -> insertOauthAccount(c, t1, "o2", "IMPLICIT_TLS", "GMAIL", "google",
+                    "user@example.ORG")).isInstanceOf(SQLException.class)
+                    .hasMessageContaining("mailbox_account_oauth_address_unique");
+            insertOauthAccount(c, t2, "o1", "IMPLICIT_TLS", "GMAIL", "google", "user@example.org"); // other tenant
+            insertOauthAccount(c, t1, "o3", "IMPLICIT_TLS", "GENERIC", "microsoft", "user@example.org"); // other provider
+        }
+    }
+
+    @Test
+    void passwordAccountsKeepNoAddressUniqueness() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t = insertTenant(c, "v4-pw");
+            insertAccount(c, t, "p1", "acc_V4PW0000000000000000000001");
+            insertAccount(c, t, "p2", "acc_V4PW0000000000000000000002"); // same address a@example.org
+            insertOauthAccount(c, t, "o1", "IMPLICIT_TLS", "GMAIL", "google", "a@example.org");
+        }
+    }
+
+    @Test
+    void oauthGrantIsKeyedByAccountAndDeletedWithIt() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t = insertTenant(c, "v4-grant");
+            insertOauthAccount(c, t, "g1", "IMPLICIT_TLS", "GMAIL", "google", "g@example.org");
+            String insert = "INSERT INTO oauth_grant (tenant_id, account_id, provider_id, scope, refresh_version)"
+                    + " VALUES (?, ?, 'google', 'https://mail.google.com/', 1)";
+            try (PreparedStatement ps = c.prepareStatement(insert)) {
+                ps.setObject(1, t);
+                ps.setString(2, "g1");
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // primary key
+                ps.setObject(1, t);
+                ps.setString(2, "g1");
+                assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+            }
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // no such account
+                ps.setObject(1, t);
+                ps.setString(2, "nope");
+                assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM mailbox_account WHERE tenant_id = ? AND id = 'g1'")) {
+                ps.setObject(1, t);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM oauth_grant WHERE tenant_id = ?")) {
+                ps.setObject(1, t);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    assertThat(rs.getInt(1)).isZero();
+                }
+            }
+        }
+    }
+
+    @Test
+    void upstreamPendingHoldsTheDraftAndFollowsTenantAndAccount() throws Exception {
+        try (Connection c = db.dataSource().getConnection()) {
+            UUID t = insertTenant(c, "v4-pending");
+            insertOauthAccount(c, t, "r1", "IMPLICIT_TLS", "GMAIL", "google", "r@example.org");
+            String insert = "INSERT INTO upstream_pending (state_hash, tenant_id, provider_id, pkce_verifier, label,"
+                    + " address, read_only, relink_account_id, expires_at) VALUES (?, ?, 'google', 'v', 'l',"
+                    + " 'r@example.org', true, ?, now() + interval '10 minutes')";
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // fresh link, no account
+                ps.setBytes(1, new byte[] {7, 1});
+                ps.setObject(2, t);
+                ps.setString(3, null);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // re-link of an existing account
+                ps.setBytes(1, new byte[] {7, 2});
+                ps.setObject(2, t);
+                ps.setString(3, "r1");
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // re-link of an unknown account
+                ps.setBytes(1, new byte[] {7, 3});
+                ps.setObject(2, t);
+                ps.setString(3, "nope");
+                assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+            }
+            try (PreparedStatement ps = c.prepareStatement(insert)) { // empty state hash
+                ps.setBytes(1, new byte[0]);
+                ps.setObject(2, t);
+                ps.setString(3, null);
+                assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM mailbox_account WHERE tenant_id = ? AND id = 'r1'")) {
+                ps.setObject(1, t);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT count(*) FROM upstream_pending WHERE tenant_id = ?")) {
+                ps.setObject(1, t);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    assertThat(rs.getInt(1)).isEqualTo(1); // the re-link row went with its account
+                }
+            }
+        }
+    }
+
+    @Test
+    void aV3DatabaseWithDataMigratesAndKeepsItsRows() throws Exception {
+        try (Connection admin = db.dataSource().getConnection(); var st = admin.createStatement()) {
+            st.execute("CREATE DATABASE v3data");
+        }
+        String url = postgres.getJdbcUrl().replaceFirst("/[^/?]+(\\?|$)", "/v3data$1");
+        var flyway = org.flywaydb.core.Flyway.configure()
+                .dataSource(url, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration");
+        flyway.target("3").load().migrate();
+        try (Connection c = java.sql.DriverManager.getConnection(url, postgres.getUsername(),
+                postgres.getPassword())) {
+            UUID t = insertTenant(c, "from-v3");
+            insertAccount(c, t, "pw", "acc_FROMV3000000000000000000PW");
+            // legacy: no code wrote it, but V3 allowed it; V4 must not fail on it
+            insertAccountWith(c, t, "legacy", "IMPLICIT_TLS", "GENERIC", "xoauth2");
+
+            flyway.target("latest").load().migrate();
+
+            assertThat(count(c, "mailbox_account")).isEqualTo(2);
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT count(*) FROM mailbox_account WHERE provider_id IS NULL AND tenant_id = ?")) {
+                ps.setObject(1, t);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    assertThat(rs.getInt(1)).isEqualTo(2);
+                }
+            }
+            // the check applies to new rows even though the old row survived
+            assertThatThrownBy(() -> insertAccountWith(c, t, "new-bad", "IMPLICIT_TLS", "GENERIC", "xoauth2"))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("mailbox_account_auth_provider");
+            assertThat(columns(c, "oauth_grant")).isNotEmpty();
         }
     }
 }

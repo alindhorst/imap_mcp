@@ -133,6 +133,22 @@ class InMemoryMetricsRecorderTest {
     }
 
     @Test
+    void oauthRefreshResultsAndLostGrantsAreCountedPerHashedTenant() {
+        rec.oauthRefresh(T1, "ok");
+        rec.oauthRefresh(T1, "ok");
+        rec.oauthRefresh(T1, "invalid_grant");
+        rec.oauthGrantLost(T1);
+        var byOp = new java.util.HashMap<String, OperationMetrics>();
+        rec.snapshot().operations().forEach(o -> byOp.put(o.tool() + "/" + o.op(), o));
+        assertThat(byOp.get("oauth/refresh_ok").count()).isEqualTo(2);
+        assertThat(byOp.get("oauth/refresh_ok").tenant()).isEqualTo(logIds.tenant(T1.value()));
+        assertThat(byOp.get("oauth/refresh_invalid_grant").count()).isEqualTo(1);
+        assertThat(byOp.get("oauth/grant_lost").count()).isEqualTo(1);
+        MetricsRecorder.NOOP.oauthRefresh(T1, "ok"); // default methods: discard
+        MetricsRecorder.NOOP.oauthGrantLost(T1);
+    }
+
+    @Test
     void initializeRateLimitingIsCountedPerHashedTenant() {
         rec.initializeRateLimited(T1);
         rec.initializeRateLimited(T1);

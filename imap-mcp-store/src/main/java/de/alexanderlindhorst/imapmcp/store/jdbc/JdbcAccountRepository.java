@@ -56,7 +56,7 @@ public final class JdbcAccountRepository implements AccountRepository {
     }
 
     private static final String COLUMNS = "id, handle, label, address, host, port, security, flavor, username, auth,"
-            + " read_only, allow_purge, status, revision";
+            + " read_only, allow_purge, status, revision, provider_id";
     private static final String BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
     private static final int RANDOM_LENGTH = 26;
     private static final int CREATE_ATTEMPTS = 3;
@@ -252,7 +252,7 @@ public final class JdbcAccountRepository implements AccountRepository {
         MailAccount account = new MailAccount(new AccountId(rs.getString(1)), rs.getString(3), rs.getString(4),
                 rs.getString(5), rs.getInt(6), MailAccount.Security.valueOf(rs.getString(7)),
                 MailAccount.Flavor.valueOf(rs.getString(8)), rs.getString(9), DB_SECRET_REF, rs.getBoolean(11),
-                rs.getBoolean(12), auth(rs.getString(10)), status(rs.getString(13)), rs.getLong(14));
+                rs.getBoolean(12), auth(rs.getString(10)), status(rs.getString(13)), rs.getLong(14), rs.getString(15));
         return new ResolvedAccount(tenant, account, rs.getString(2));
     }
 
