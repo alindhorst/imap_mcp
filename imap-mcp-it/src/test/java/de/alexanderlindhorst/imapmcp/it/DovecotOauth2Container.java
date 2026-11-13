@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.it;
 
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
@@ -37,6 +38,10 @@ public final class DovecotOauth2Container extends GenericContainer<DovecotOauth2
         withCopyFileToContainer(MountableFile.forClasspathResource("dovecot/tls.key", 0644), "/etc/dovecot/ssl/tls.key");
         withCopyFileToContainer(MountableFile.forClasspathResource(mode.fixture, 0644),
                 "/etc/dovecot/conf.d/98-oauth2-fixture.conf");
+        if (mode == Mode.XOAUTH2) {
+            // Looked up as <azp|default>/RS256/<kid|default> below the dict prefix of the fixture config.
+            withCopyToContainer(Transferable.of(jwt.publicKeyPem(), 0644), "/etc/dovecot/keys/default/RS256/default");
+        }
         waitingFor(Wait.forLogMessage(".*starting up for imap.*", 1));
     }
 
