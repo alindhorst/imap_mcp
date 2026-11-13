@@ -493,7 +493,9 @@ class ReadmeTest {
         assertThat(base.find()).isTrue();
         Path f = dir.resolve("public.yaml");
         // the example is the oauth.upstream block, merged under the oauth: key of the base example
-        String merged = base.group(1).replace("oauth:\n", "oauth:\n" + m.group(1));
+        // the provider hosts must also be in ssrf.allowedHosts (the README says so)
+        String merged = base.group(1).replace("oauth:\n", "oauth:\n" + m.group(1))
+                .replace("allowedHosts: [", "allowedHosts: [\"imap.gmail.com\", \"outlook.office365.com\", ");
         Files.writeString(f, merged);
         var c = de.alexanderlindhorst.imapmcp.app.config.PublicConfigLoader.load(f, Map.of());
         assertThat(c.oauth().upstreamProviders()).isNotEmpty();
