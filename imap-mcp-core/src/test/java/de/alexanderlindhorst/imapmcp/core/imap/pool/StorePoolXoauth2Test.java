@@ -167,6 +167,7 @@ class StorePoolXoauth2Test {
         p.release(key, again);
 
         clock.now = T0.plus(Duration.ofMinutes(10)).minusSeconds(80); // 80 s left < deadline 30 s + 60 s
+        tokens.setCurrent(CANARY, clock.now.plus(Duration.ofHours(1))); // what the cache would have refreshed
         IMAPStore fresh = p.borrow(key, clock.now.plusSeconds(30));
         assertThat(fresh).isNotSameAs(first);
         assertThat(p.createdCount()).isEqualTo(2);
@@ -216,7 +217,7 @@ class StorePoolXoauth2Test {
         PoolKey key = key(a, TENANT);
         p.release(key, p.borrow(key));
         assertNoCanary();
-        assertThat(WireTrace.lines(trace)).anyMatch(l -> l.contains("AUTHENTICATE"));
+        assertThat(WireTrace.lines(trace)).anyMatch(l -> l.equals("<redacted>")); // the AUTHENTICATE line
     }
 
     @Test

@@ -26,6 +26,12 @@ public final class FakeTokens implements OAuthAccessTokens {
         return new AccessToken(new Secret(value.toCharArray()), expiresAt);
     }
 
+    /** What {@link #current} hands out from now on. */
+    public FakeTokens setCurrent(String value, Instant expiresAt) {
+        this.current = token(value, expiresAt);
+        return this;
+    }
+
     /** What {@link #renewAfterRejection} hands out next. */
     public FakeTokens renewedTo(String value, Instant expiresAt) {
         this.renewed = token(value, expiresAt);

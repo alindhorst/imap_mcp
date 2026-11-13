@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import org.apache.commons.pool2.PooledObject;
 import org.apache.commons.pool2.impl.AbandonedConfig;
 import org.apache.commons.pool2.impl.EvictionConfig;
@@ -102,8 +103,9 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setTestWhileIdle(false);
         config.setTimeBetweenEvictionRuns(s.evictionInterval());
         config.setNumTestsPerEvictionRun(-1);
-        config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
-        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes);
+        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes, tokens,
+                clock);
+        config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime(), factory::tokenExpired));
         this.pool = new GenericKeyedObjectPool<>(factory, config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
@@ -115,16 +117,19 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     static final class LifetimeEvictionPolicy implements EvictionPolicy<IMAPStore> {
         private final Duration idleEviction;
         private final Duration maxLifetime;
+        private final Predicate<IMAPStore> tokenExpired;
 
-        LifetimeEvictionPolicy(Duration idleEviction, Duration maxLifetime) {
+        LifetimeEvictionPolicy(Duration idleEviction, Duration maxLifetime, Predicate<IMAPStore> tokenExpired) {
             this.idleEviction = idleEviction;
             this.maxLifetime = maxLifetime;
+            this.tokenExpired = tokenExpired;
         }
 
         @Override
         public boolean evict(EvictionConfig config, PooledObject<IMAPStore> p, int idleCount) {
             return p.getIdleDuration().compareTo(idleEviction) > 0
-                    || StorePoolFactory.age(p).compareTo(maxLifetime) > 0;
+                    || StorePoolFactory.age(p).compareTo(maxLifetime) > 0
+                    || tokenExpired.test(p.getObject());
         }
     }
 
@@ -138,6 +143,13 @@ public final class StorePool implements AutoCloseable, PoolGauges {
 
     /** As {@link #borrow(PoolKey)}; {@code deadline} (nullable) is the tool call's deadline. */
     public IMAPStore borrow(PoolKey key, Instant deadline) throws Exception {
+        if (deadline == null) {
+            return borrowBound(key);
+        }
+        return ScopedValue.where(StorePoolFactory.CALL_DEADLINE, deadline).call(() -> borrowBound(key));
+    }
+
+    private IMAPStore borrowBound(PoolKey key) throws Exception {
         if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
             pool.clear(key);
             throw new AccountNeedsRelinkException();
