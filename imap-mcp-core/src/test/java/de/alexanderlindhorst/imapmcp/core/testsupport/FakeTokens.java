@@ -15,6 +15,7 @@ public final class FakeTokens implements OAuthAccessTokens {
     private volatile AccessToken current;
     private volatile AccessToken renewed;
     private final List<TenantId> tenants = new ArrayList<>();
+    private final List<Instant> deadlines = new ArrayList<>();
     private int currentCalls;
     private int renewals;
 
@@ -42,6 +43,7 @@ public final class FakeTokens implements OAuthAccessTokens {
     public synchronized AccessToken current(TenantId tenantId, AccountId accountId, Instant deadline) {
         currentCalls++;
         tenants.add(tenantId);
+        deadlines.add(deadline);
         return current;
     }
 
@@ -55,6 +57,11 @@ public final class FakeTokens implements OAuthAccessTokens {
         }
         current = renewed;
         return renewed;
+    }
+
+    /** The deadlines passed to {@link #current}, in order. */
+    public synchronized List<Instant> deadlinesSeen() {
+        return List.copyOf(deadlines);
     }
 
     public synchronized int currentCalls() {

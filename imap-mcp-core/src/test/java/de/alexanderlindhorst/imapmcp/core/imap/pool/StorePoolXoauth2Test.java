@@ -31,6 +31,7 @@ import de.alexanderlindhorst.imapmcp.core.testsupport.FakeTokens;
 import de.alexanderlindhorst.imapmcp.core.testsupport.ScriptedImapsServer;
 import de.alexanderlindhorst.imapmcp.core.testsupport.ScriptedImapsServer.AuthAnswer;
 import de.alexanderlindhorst.imapmcp.core.testsupport.WireTrace;
+import de.alexanderlindhorst.imapmcp.core.tool.ToolCallContext;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -197,6 +198,18 @@ class StorePoolXoauth2Test {
         assertThat(tokens.renewals()).isEqualTo(1);
         assertThat(refused).hasValue(0);
         assertThat(succeeded).hasValue(0);
+    }
+
+    @Test
+    void aLeaseHandsTheToolCallDeadlineToTheTokenSource() throws Exception {
+        MailAccount a = account(greenMail.getImaps().getPort());
+        FakeTokens tokens = new FakeTokens(CANARY, Instant.now().plus(Duration.ofHours(1)));
+        StoreLeases leases = new StoreLeases(pool(a, tokens), Duration.ofSeconds(10));
+        Instant deadline = Instant.now().plusSeconds(45);
+        ToolCallContext ctx = new ToolCallContext(new AccountContext(TENANT), "rid", deadline);
+        Boolean connected = leases.withLease(key(a, TENANT), ctx, lease -> lease.store().isConnected());
+        assertThat(connected).isTrue();
+        assertThat(tokens.deadlinesSeen()).containsExactly(deadline);
     }
 
     @Test
