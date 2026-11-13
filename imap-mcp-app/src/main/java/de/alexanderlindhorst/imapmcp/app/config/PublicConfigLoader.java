@@ -1,7 +1,9 @@
 package de.alexanderlindhorst.imapmcp.app.config;
 
 import de.alexanderlindhorst.imapmcp.app.config.ConfigLoader.Section;
+import de.alexanderlindhorst.imapmcp.core.account.MailAccount.Security;
 import de.alexanderlindhorst.imapmcp.core.account.SecretRef;
+import de.alexanderlindhorst.imapmcp.core.net.SsrfPolicy;
 import de.alexanderlindhorst.imapmcp.store.crypto.VaultAuth;
 import de.alexanderlindhorst.imapmcp.store.crypto.VaultConfig;
 import java.io.IOException;
@@ -19,6 +21,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.exc.StreamReadException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -31,7 +35,8 @@ import tools.jackson.dataformat.yaml.YAMLMapper;
  */
 public final class PublicConfigLoader {
 
-    private static final YAMLMapper YAML = YAMLMapper.builder().build();
+    private static final YAMLMapper YAML = YAMLMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .build();
     private static final Pattern KEK_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private static final Duration MIN_DEADLINE = Duration.ofSeconds(30);
     private static final Duration PURGE_MIN_DEADLINE = Duration.ofSeconds(60);
@@ -57,7 +62,11 @@ public final class PublicConfigLoader {
         JsonNode root;
         try {
             root = YAML.readTree(yaml);
-        } catch (JacksonException e) {
+        } catch (StreamReadException e) {
+            String duplicate = duplicateKeyPath(e);
+            if (duplicate != null) {
+                throw new ConfigException(duplicate + ": duplicate key");
+            }
             var loc = e.getLocation();
             throw new ConfigException("config: invalid YAML syntax" + (loc == null ? "" : " near line " + loc.getLineNr()));
         }
@@ -75,10 +84,13 @@ public final class PublicConfigLoader {
         AppConfig.Secrets secrets = new AppConfig.Secrets(
                 top.section("secrets").duration("keyringTimeout", Duration.ofSeconds(5)));
         PublicConfig.Db db = db(top.section("db"));
-        PublicConfig.Oauth oauth = oauth(top.section("oauth"));
+        Section oauthSection = top.section("oauth");
+        JsonNode upstream = oauthSection.take("upstream");
+        PublicConfig.Oauth oauth = oauth(oauthSection);
         PublicConfig.Public pub = pub(top.section("public"));
         AppConfig.Security security = security(top.section("security"));
         PublicConfig.Ssrf ssrf = ssrf(top.section("ssrf"));
+        oauth = oauth.withUpstreamProviders(upstreamProviders(new Section(upstream, "oauth.upstream"), pub, ssrf));
         PublicConfig.Kms kms = kms(top.section("kms"));
         Section purge = top.section("purge");
         boolean purgeEnabled = purge.bool("enabled", false);
@@ -99,6 +111,28 @@ public final class PublicConfigLoader {
         http = envHttp(http, env);
         return new PublicConfig(imap, pool, secrets, tools, http, db, oauth, pub, ssrf, kms, purgeEnabled, security,
                 ConfigLoader.envLogLevel(env));
+    }
+
+    private static final Pattern DUPLICATE = Pattern.compile("Duplicate Object property \"([A-Za-z0-9._-]{1,64})\"");
+
+    /** {@code a.b.key} of a duplicated YAML key (a key, never a value), or null if the failure is another one. */
+    private static String duplicateKeyPath(StreamReadException e) {
+        var m = DUPLICATE.matcher(String.valueOf(e.getMessage()));
+        if (!m.find()) {
+            return null;
+        }
+        StringBuilder path = new StringBuilder();
+        if (e.processor() != null && e.processor().streamReadContext() != null) {
+            for (String segment : e.processor().streamReadContext().pathAsPointer().toString().split("/")) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                path.append(segment.chars().allMatch(Character::isDigit) ? "[" + segment + "]"
+                        : (path.isEmpty() ? "" : ".") + segment);
+            }
+        }
+        // the context already carries the duplicated key as its last segment
+        return path.isEmpty() ? "config." + m.group(1) : path.toString();
     }
 
     // ---- sections ----
@@ -161,6 +195,147 @@ public final class PublicConfigLoader {
         }
         return new PublicConfig.Oauth(issuer, resource, subjectClaim, requiredRole, roleClaim, allowWithoutRole,
                 webClientId, webClientSecret);
+    }
+
+    // ---- oauth.upstream (SPEC 5.7, v0.29) ----
+
+    private static final Pattern PROVIDER_ID = Pattern.compile("[a-z0-9-]{1,32}");
+    private static final Pattern GUID = Pattern.compile("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}");
+    private static final Pattern IPV4_LIKE = Pattern.compile("[0-9.]+");
+    private static final String PORT_RULE = ": must be 993 with implicit-tls or 143 with starttls";
+    private static final String GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
+    private static final String GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
+    private static final String MS_BASE = "https://login.microsoftonline.com/";
+
+    private static List<UpstreamProvider> upstreamProviders(Section s, PublicConfig.Public pub,
+            PublicConfig.Ssrf ssrf) {
+        Section providers = s.section("providers");
+        s.finish();
+        // an allowlist entry that is itself malformed fails later, in the wiring, naming ssrf.allowedHosts
+        SsrfPolicy hostPolicy = null;
+        if (!ssrf.allowedHosts().isEmpty()) {
+            try {
+                hostPolicy = SsrfPolicy.of(ssrf.allowedHosts(), false, List.of());
+            } catch (IllegalArgumentException ignored) {
+                // reported by the wiring
+            }
+        }
+        List<UpstreamProvider> out = new ArrayList<>();
+        for (String id : providers.keys()) {
+            if (!PROVIDER_ID.matcher(id).matches()) {
+                throw new ConfigException("oauth.upstream.providers: malformed provider id (must match [a-z0-9-]{1,32})");
+            }
+            out.add(upstreamProvider(providers.section(id), id, pub, hostPolicy));
+        }
+        providers.finish();
+        return List.copyOf(out);
+    }
+
+    private static UpstreamProvider upstreamProvider(Section p, String id, PublicConfig.Public pub,
+            SsrfPolicy hostPolicy) {
+        String kindName = p.string("kind", null);
+        UpstreamProvider.Kind kind = switch (kindName) {
+            case "google" -> UpstreamProvider.Kind.GOOGLE;
+            case "microsoft" -> UpstreamProvider.Kind.MICROSOFT;
+            case "generic" -> UpstreamProvider.Kind.GENERIC;
+            default -> throw new ConfigException(p.path("kind") + ": must be one of generic, google, microsoft");
+        };
+        String clientId = p.string("clientId", null);
+        SecretRef clientSecret = p.requiredRef("clientSecret", "env:", "file:");
+        String label = p.string("label", id);
+        String redirect = pub.baseUrl() + "/accounts/oauth/" + id + "/callback";
+        if (kind != UpstreamProvider.Kind.GENERIC) {
+            for (String key : new String[] {"authorizationEndpoint", "tokenEndpoint", "scopes", "imap"}) {
+                if (p.take(key) != null) {
+                    throw new ConfigException(p.path(key) + ": not allowed with kind " + kindName);
+                }
+            }
+        }
+        if (kind == UpstreamProvider.Kind.GOOGLE) {
+            forbidTenant(p, kindName);
+            p.finish();
+            return new UpstreamProvider(id, kind, clientId, label, clientSecret, null, GOOGLE_AUTH, GOOGLE_TOKEN,
+                    List.of("https://mail.google.com/"), "imap.gmail.com", 993, Security.IMPLICIT_TLS, redirect);
+        }
+        if (kind == UpstreamProvider.Kind.MICROSOFT) {
+            String tenant = p.string("tenant", "organizations");
+            if (!Set.of("common", "organizations", "consumers").contains(tenant) && !GUID.matcher(tenant).matches()) {
+                throw new ConfigException(p.path("tenant") + ": must be one of common, consumers, organizations "
+                        + "or a GUID");
+            }
+            p.finish();
+            return new UpstreamProvider(id, kind, clientId, label, clientSecret, tenant,
+                    MS_BASE + tenant + "/oauth2/v2.0/authorize", MS_BASE + tenant + "/oauth2/v2.0/token",
+                    List.of("https://outlook.office.com/IMAP.AccessAsUser.All", "offline_access"),
+                    "outlook.office365.com", 993, Security.IMPLICIT_TLS, redirect);
+        }
+        forbidTenant(p, kindName);
+        String authEndpoint = httpsEndpoint(p, "authorizationEndpoint");
+        String tokenEndpoint = httpsEndpoint(p, "tokenEndpoint");
+        String tokenHost = URI.create(tokenEndpoint).getHost();
+        if (tokenHost.startsWith("[") || tokenHost.indexOf(':') >= 0 || IPV4_LIKE.matcher(tokenHost).matches()) {
+            throw new ConfigException(p.path("tokenEndpoint") + ": host must be a DNS name, not an IP literal");
+        }
+        List<String> scopes = scopes(p);
+        Section imap = p.section("imap");
+        if (!p.keys().contains("imap")) {
+            throw new ConfigException(p.path("imap") + ": required");
+        }
+        String host = imap.string("host", null);
+        Security security = imap.enumValue("security", Security.IMPLICIT_TLS,
+                Map.of("implicit-tls", Security.IMPLICIT_TLS, "starttls", Security.STARTTLS));
+        int port = imap.integer("port", security == Security.STARTTLS ? 143 : 993, 1, 65535);
+        imap.finish();
+        if (port != (security == Security.STARTTLS ? 143 : 993)) {
+            throw new ConfigException(imap.path("port") + PORT_RULE);
+        }
+        if (hostPolicy != null) {
+            try {
+                host = hostPolicy.normalizeHost(host);
+            } catch (IllegalArgumentException e) { // HostRejectedException; its text may carry the host
+                throw new ConfigException(imap.path("host") + ": not matched by ssrf.allowedHosts");
+            }
+        }
+        p.finish();
+        return new UpstreamProvider(id, kind, clientId, label, clientSecret, null, authEndpoint, tokenEndpoint, scopes,
+                host, port, security, redirect);
+    }
+
+    private static void forbidTenant(Section p, String kindName) {
+        if (p.take("tenant") != null) {
+            throw new ConfigException(p.path("tenant") + ": not allowed with kind " + kindName);
+        }
+    }
+
+    /** A required {@code https} endpoint with a host, without user info or fragment (a query is allowed). */
+    private static String httpsEndpoint(Section s, String key) {
+        String v = s.string(key, null);
+        try {
+            URI u = new URI(v);
+            if ("https".equals(u.getScheme()) && u.getHost() != null && u.getRawUserInfo() == null
+                    && u.getRawFragment() == null) {
+                return v;
+            }
+        } catch (URISyntaxException ignored) {
+            // reported below without the value
+        }
+        throw new ConfigException(s.path(key) + ": must be an https URI without user info or fragment");
+    }
+
+    private static List<String> scopes(Section s) {
+        List<String> scopes = s.stringList("scopes", null);
+        if (scopes == null) {
+            throw new ConfigException(s.path("scopes") + ": required");
+        }
+        if (scopes.isEmpty()) {
+            throw new ConfigException(s.path("scopes") + ": must not be empty");
+        }
+        for (int i = 0; i < scopes.size(); i++) {
+            if (scopes.get(i).isBlank()) {
+                throw new ConfigException(s.path("scopes") + "[" + i + "]: must not be blank");
+            }
+        }
+        return scopes;
     }
 
     private static PublicConfig.Public pub(Section s) {

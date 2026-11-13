@@ -39,9 +39,29 @@ public record PublicConfig(AppConfig.Imap imap, AppConfig.Pool pool, AppConfig.S
     public record Db(String url, String username, SecretRef password, int maxPoolSize) {
     }
 
-    /** {@code oauth.*}; {@code requiredRole} null only together with {@code allowWithoutRole}. */
+    /**
+     * {@code oauth.*}; {@code requiredRole} null only together with {@code allowWithoutRole}.
+     * {@code upstreamProviders} is {@code oauth.upstream.providers} (SPEC 5.7, v0.29), in file order, possibly empty.
+     */
     public record Oauth(String issuer, String resource, String subjectClaim, String requiredRole, String roleClaim,
-            boolean allowWithoutRole, String webClientId, SecretRef webClientSecret) {
+            boolean allowWithoutRole, String webClientId, SecretRef webClientSecret,
+            List<UpstreamProvider> upstreamProviders) {
+
+        public Oauth {
+            upstreamProviders = List.copyOf(upstreamProviders);
+        }
+
+        /** Without upstream providers. */
+        public Oauth(String issuer, String resource, String subjectClaim, String requiredRole, String roleClaim,
+                boolean allowWithoutRole, String webClientId, SecretRef webClientSecret) {
+            this(issuer, resource, subjectClaim, requiredRole, roleClaim, allowWithoutRole, webClientId,
+                    webClientSecret, List.of());
+        }
+
+        public Oauth withUpstreamProviders(List<UpstreamProvider> providers) {
+            return new Oauth(issuer, resource, subjectClaim, requiredRole, roleClaim, allowWithoutRole, webClientId,
+                    webClientSecret, providers);
+        }
     }
 
     /** {@code public.*}: {@code baseUrl} is the https origin (and path prefix) the service is reached at. */

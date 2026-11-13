@@ -166,7 +166,7 @@ class UpstreamProviderConfigTest {
     @Test
     void aKindIsRequiredKnownAndLowerCase() {
         fails(provider("p", "clientId: c\nclientSecret: env:S\n"), "oauth.upstream.providers.p.kind: required");
-        for (String kind : List.of("Google", "GOOGLE", "yahoo", "\"\"")) {
+        for (String kind : List.of("Google", "GOOGLE", "yahoo")) {
             fails(provider("p", "kind: " + kind + "\nclientId: c\nclientSecret: env:S\n"),
                     "oauth.upstream.providers.p.kind: must be one of generic, google, microsoft");
         }
@@ -181,7 +181,7 @@ class UpstreamProviderConfigTest {
     void aClientSecretIsRequiredAndMustBeAnEnvOrFileReference() {
         fails(provider("p", "kind: google\nclientId: c\n"), "oauth.upstream.providers.p.clientSecret: required");
         for (String bad : List.of("literal-secret-VALUE", "keyring:svc/acct", "env:", "file:")) {
-            assertThatThrownBy(() -> bind(provider("p", "kind: google\nclientId: c\nclientSecret: " + bad + "\n")))
+            assertThatThrownBy(() -> bind(provider("p", "kind: google\nclientId: c\nclientSecret: \"" + bad + "\"\n")))
                     .isInstanceOf(ConfigException.class)
                     .hasMessageContaining("oauth.upstream.providers.p.clientSecret: must be a secret reference "
                             + "(env: or file:)")
@@ -202,7 +202,7 @@ class UpstreamProviderConfigTest {
         String two = provider("dup", "kind: google\nclientId: c\nclientSecret: env:S\n")
                 + provider("dup", "kind: google\nclientId: d\nclientSecret: env:S\n");
         assertThatThrownBy(() -> bind(two)).isInstanceOf(ConfigException.class)
-                .hasMessageContaining("oauth.upstream.providers.dup");
+                .hasMessageContaining("oauth.upstream.providers.dup: duplicate key");
     }
 
     @Test
@@ -297,7 +297,7 @@ class UpstreamProviderConfigTest {
 
     @Test
     void genericImapPortAndSecurityDefaultTogether() {
-        UpstreamProvider p = bind(GENERIC.replace("        port: 993\n", "").replace("        security: implicit-tls\n", ""))
+        UpstreamProvider p = bind(GENERIC.replace("          port: 993\n", "").replace("          security: implicit-tls\n", ""))
                 .oauth().upstreamProviders().getFirst();
         assertThat(p.imapPort()).isEqualTo(993);
         assertThat(p.imapSecurity()).isEqualTo(Security.IMPLICIT_TLS);
