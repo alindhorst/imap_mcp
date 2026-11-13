@@ -138,6 +138,7 @@ public final class PublicComponents implements AutoCloseable {
     private final ElicitingPurgeConfirmation purgeConfirmation; // null unless purge_messages is registered
     private final Linking linking;
     private final Clock clock;
+    private final PublicOAuthUpstream upstream;
     private boolean closed;
 
     /** The stores and services of the linking surface (C1, C2), built once per replica from the same database. */
@@ -149,7 +150,8 @@ public final class PublicComponents implements AutoCloseable {
             InMemoryMetricsRecorder metrics, ToolExecutor executor, JdbcTenantDirectory tenants,
             Map<ToolDefinition, ToolHandler> tools, ScheduledExecutorService scheduler, String linkUrl,
             KeyRing keys, JdbcCredentialStore credentials, ElicitingPurgeConfirmation purgeConfirmation,
-            Linking linking, Clock clock) {
+            Linking linking, Clock clock, PublicOAuthUpstream upstream) {
+        this.upstream = upstream;
         this.linking = linking;
         this.clock = clock;
         this.credentials = credentials;
@@ -228,6 +230,7 @@ public final class PublicComponents implements AutoCloseable {
         StorePool pool = null;
         InMemoryMetricsRecorder metrics = null;
         ScheduledExecutorService scheduler = null;
+        PublicOAuthUpstream upstream = null;
         try {
             AppConfig.Imap imap = config.imap();
             AppConfig.Pool p = config.pool();
@@ -240,11 +243,12 @@ public final class PublicComponents implements AutoCloseable {
             var ds = database.dataSource();
             JdbcAccountRepository repository = new JdbcAccountRepository(ds);
             metrics = new InMemoryMetricsRecorder(logIds, clock);
-            JdbcCredentialStore credentials = new JdbcCredentialStore(ds,
-                    new CredentialCipher(wrapper, new SecureRandom()), logIds, metrics);
+            CredentialCipher cipher = new CredentialCipher(wrapper, new SecureRandom());
+            JdbcCredentialStore credentials = new JdbcCredentialStore(ds, cipher, logIds, metrics);
             CapabilityCache capabilities = new CapabilityCache(p.capabilityTtl(), clock);
+            upstream = buildUpstream(config, refs, ds, ssrf, cipher, logIds, metrics, clock);
             pool = new StorePool(sessions, credentials, capabilities, repository, settings, metrics,
-                    new JdbcLoginOutcomes(repository));
+                    new JdbcLoginOutcomes(repository), upstream.tokens(), clock);
             metrics.attachPool(pool);
             Admission admission = new Admission(settings, Admission.recording(metrics));
             StoreLeases leases = new StoreLeases(pool, settings.acquireTimeout(), admission, metrics);
@@ -306,8 +310,11 @@ public final class PublicComponents implements AutoCloseable {
             metrics.start();
             return new PublicComponents(database, sessions, pool, metrics, executor, tenantDirectory,
                     Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation,
-                    linking, clock);
+                    linking, clock, upstream);
         } catch (RuntimeException e) {
+            if (upstream != null) {
+                upstream.close();
+            }
             if (scheduler != null) {
                 scheduler.shutdownNow();
             }
@@ -323,6 +330,19 @@ public final class PublicComponents implements AutoCloseable {
             database.close();
             throw e;
         }
+    }
+
+    /**
+     * The XOAUTH2 refresh chain (SPEC 5.5, 5.7): providers, token client under the SSRF policy, grant store and the
+     * token cache; built here and nowhere else, so stdio and http-local never construct it. Startup also counts the
+     * stored accounts whose provider is no longer configured.
+     */
+    private static PublicOAuthUpstream buildUpstream(PublicConfig config, RefCredentialStore refs,
+            javax.sql.DataSource ds, SsrfPolicy ssrf, CredentialCipher cipher, LogIds logIds,
+            MetricsRecorder metrics, Clock clock) {
+        List<UpstreamProvider> providers = config.oauth().upstreamProviders();
+        PublicOAuthUpstream.checkStoredProviders(ds, providers);
+        return PublicOAuthUpstream.create(providers, refs, ds, ssrf, cipher, logIds, metrics, clock);
     }
 
     /**
@@ -557,6 +577,7 @@ public final class PublicComponents implements AutoCloseable {
         scheduler.shutdownNow();
         metrics.close();
         pool.close();
+        upstream.close(); // stops the refresh executor; refreshes in flight finish
         sessions.close();
         database.close();
     }
