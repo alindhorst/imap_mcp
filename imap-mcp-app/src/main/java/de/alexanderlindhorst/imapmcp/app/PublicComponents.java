@@ -23,6 +23,8 @@ import de.alexanderlindhorst.imapmcp.core.imap.pool.StorePool;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinking;
 import de.alexanderlindhorst.imapmcp.core.linking.ProbeRateLimiter;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamLinker;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamLinking;
 import de.alexanderlindhorst.imapmcp.core.mcp.McpToolAdapter;
 import de.alexanderlindhorst.imapmcp.core.metrics.InMemoryMetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
@@ -71,6 +73,8 @@ import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcCredentialStore;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcLinkedAccountStore;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcLoginOutcomes;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcOidcPendingStore;
+import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcUpstreamPendingStore;
+import de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpointCodeExchange;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantDirectory;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcTenantProvisioner;
 import de.alexanderlindhorst.imapmcp.store.jdbc.JdbcWebSessionStore;
@@ -124,6 +128,8 @@ public final class PublicComponents implements AutoCloseable {
     /** SPEC 5.3: at most 10 link probes per tenant per hour and replica; the limiter tracks at most this many tenants. */
     private static final int PROBES_PER_HOUR = 10;
     private static final int PROBE_TRACKED_TENANTS = 10_000;
+    /** SPEC 5.3 (v0.29): at most 20 upstream OAuth starts per tenant per hour and replica. */
+    private static final int STARTS_PER_HOUR = 20;
 
     private final Database database;
     private final ImapSessionFactory sessions;
@@ -144,7 +150,7 @@ public final class PublicComponents implements AutoCloseable {
 
     /** The stores and services of the linking surface (C1, C2), built once per replica from the same database. */
     record Linking(AccountLinker linker, OidcPendingStore pending, WebSessionStore sessions,
-            TenantProvisioner provisioner, Supplier<Secret> webClientSecret) {
+            TenantProvisioner provisioner, Supplier<Secret> webClientSecret, UpstreamLinker upstreamLinker) {
     }
 
     private PublicComponents(Database database, ImapSessionFactory sessions, StorePool pool,
@@ -320,7 +326,7 @@ public final class PublicComponents implements AutoCloseable {
             new AuditRetention(ds).schedule(scheduler); // 180 days, daily (D5)
             new ExpiredRowCleanup(ds).schedule(scheduler, CLEANUP_PERIOD);
             Linking linking = buildLinking(config, refs, ds, repository, credentials, auditLog, tenantDirectory, sessions,
-                    ssrf, clock);
+                    ssrf, clock, upstream);
             metrics.start();
             return new PublicComponents(database, sessions, pool, metrics, executor, tenantDirectory,
                     Collections.unmodifiableMap(tools), scheduler, linkUrl, keys, credentials, purgeConfirmation,
@@ -369,14 +375,41 @@ public final class PublicComponents implements AutoCloseable {
     static Linking buildLinking(PublicConfig config, RefCredentialStore refs, javax.sql.DataSource ds,
             JdbcAccountRepository repository, JdbcCredentialStore credentials, JdbcAuditLog auditLog,
             JdbcTenantDirectory tenantDirectory, ImapSessionFactory sessions, SsrfPolicy ssrf, Clock clock) {
-        AccountLinking linker = new AccountLinking(repository, new JdbcLinkedAccountStore(ds, repository, credentials),
-                new ImapLoginProbe(sessions), ssrf, auditLog,
-                new ProbeRateLimiter(clock, PROBES_PER_HOUR, Duration.ofHours(1), PROBE_TRACKED_TENANTS), clock,
+        return buildLinking(config, refs, ds, repository, credentials, auditLog, tenantDirectory, sessions, ssrf,
+                clock, null);
+    }
+
+    /**
+     * As above, plus the upstream OAuth linking flow (SPEC 5.3, v0.29) when {@code oauth.upstream.providers} is not
+     * empty: it reuses the token client and {@code TokenProviders} of the refresh chain, the same SSRF policy, probe
+     * session factory, audit log and account store as the password linking, with its own start limiter (20 per hour
+     * and replica) and the same probe budget class (10 per hour and replica, counted in its own limiter).
+     */
+    static Linking buildLinking(PublicConfig config, RefCredentialStore refs, javax.sql.DataSource ds,
+            JdbcAccountRepository repository, JdbcCredentialStore credentials, JdbcAuditLog auditLog,
+            JdbcTenantDirectory tenantDirectory, ImapSessionFactory sessions, SsrfPolicy ssrf, Clock clock,
+            PublicOAuthUpstream oauth) {
+        JdbcLinkedAccountStore linkedStore = new JdbcLinkedAccountStore(ds, repository, credentials);
+        ImapLoginProbe probe = new ImapLoginProbe(sessions);
+        // one probe budget per tenant for both flows: the XOAUTH2 probe counts in the same limiter (SPEC 5.3)
+        ProbeRateLimiter probeBudget = new ProbeRateLimiter(clock, PROBES_PER_HOUR, Duration.ofHours(1),
+                PROBE_TRACKED_TENANTS);
+        AccountLinking linker = new AccountLinking(repository, linkedStore, probe, ssrf, auditLog, probeBudget, clock,
                 config.pub().maxAccountsPerTenant(), config.purgeEnabled());
+        UpstreamLinker upstreamLinker = null;
+        List<UpstreamProvider> providers = config.oauth().upstreamProviders();
+        if (oauth != null && !providers.isEmpty()) {
+            upstreamLinker = new UpstreamLinking(repository, new UpstreamProviderCatalog(providers),
+                    new JdbcUpstreamPendingStore(ds, clock), linkedStore,
+                    new TokenEndpointCodeExchange(oauth.client(), PublicOAuthUpstream.providers(providers, refs)),
+                    probe, ssrf, auditLog, probeBudget,
+                    new ProbeRateLimiter(clock, STARTS_PER_HOUR, Duration.ofHours(1), PROBE_TRACKED_TENANTS),
+                    config.pub().maxAccountsPerTenant());
+        }
         SecretRef secret = config.oauth().webClientSecret();
         // read per use, so a rotated secret (reference) is picked up without a restart; the caller closes it
         return new Linking(linker, new JdbcOidcPendingStore(ds, clock), new JdbcWebSessionStore(ds, clock),
-                new JdbcTenantProvisioner(tenantDirectory), () -> refs.resolve(secret));
+                new JdbcTenantProvisioner(tenantDirectory), () -> refs.resolve(secret), upstreamLinker);
     }
 
     static DbConfig dbConfig(PublicConfig.Db db, char[] password) {
@@ -502,6 +535,11 @@ public final class PublicComponents implements AutoCloseable {
     /** The link, re-link, settings and unlink actions of the linking surface. */
     public AccountLinker accountLinker() {
         return linking.linker();
+    }
+
+    /** The upstream OAuth linking flow; null when no upstream provider is configured. */
+    public UpstreamLinker upstreamLinker() {
+        return linking.upstreamLinker();
     }
 
     public OidcPendingStore oidcPendingStore() {

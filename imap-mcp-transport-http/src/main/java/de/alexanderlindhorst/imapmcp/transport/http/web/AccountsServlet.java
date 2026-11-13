@@ -2,6 +2,7 @@ package de.alexanderlindhorst.imapmcp.transport.http.web;
 
 import de.alexanderlindhorst.imapmcp.core.audit.AuditWriteException;
 import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamLinker;
 import de.alexanderlindhorst.imapmcp.core.web.OidcPendingStore;
 import de.alexanderlindhorst.imapmcp.core.web.TenantProvisioner;
 import de.alexanderlindhorst.imapmcp.core.web.WebSession;
@@ -45,6 +46,8 @@ public final class AccountsServlet extends HttpServlet {
     private final WebSessionStore sessions;
     private final TenantProvisioner tenants;
     private final LinkingPages pages;
+    private final UpstreamLinker upstream;
+    private final UpstreamPages upstreamPages;
     private final Clock clock;
     private final KeysUnavailableReporter keysUnavailable;
     private final SecureRandom random = new SecureRandom();
@@ -52,13 +55,21 @@ public final class AccountsServlet extends HttpServlet {
     public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
             WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
             KeysUnavailableReporter keysUnavailable) {
+        this(config, provider, pending, sessions, tenants, linker, clock, keysUnavailable, null);
+    }
+
+    public AccountsServlet(WebConfig config, OidcProvider provider, OidcPendingStore pending,
+            WebSessionStore sessions, TenantProvisioner tenants, AccountLinker linker, Clock clock,
+            KeysUnavailableReporter keysUnavailable, UpstreamLinker upstream) {
         this.keysUnavailable = java.util.Objects.requireNonNull(keysUnavailable, "keysUnavailable");
         this.config = config;
         this.provider = provider;
         this.pending = pending;
         this.sessions = sessions;
         this.tenants = tenants;
-        this.pages = new LinkingPages(linker);
+        this.pages = new LinkingPages(linker, upstream);
+        this.upstream = upstream;
+        this.upstreamPages = upstream == null ? null : new UpstreamPages(upstream, linker);
         this.clock = clock;
     }
 
@@ -104,7 +115,28 @@ public final class AccountsServlet extends HttpServlet {
                     (s) -> pages.settingsSubmit(s, req, res));
             case WebConfig.BASE_PATH + "/unlink" -> accountPage(req, res, (s) -> pages.unlinkForm(s, req, res),
                     (s) -> pages.unlinkSubmit(s, req, res));
-            default -> writePage(res, HttpServletResponse.SC_NOT_FOUND, "Not found", "<p>Not found.</p>");
+            default -> {
+                if (upstreamPages != null && UpstreamPages.providerId(path) != null) {
+                    upstreamRoute(req, res, path);
+                } else {
+                    writePage(res, HttpServletResponse.SC_NOT_FOUND, "Not found", "<p>Not found.</p>");
+                }
+            }
+        }
+    }
+
+    /** {@code /accounts/oauth/<id>/start} (form and start, with a session) and {@code .../callback} (no session). */
+    private void upstreamRoute(HttpServletRequest req, HttpServletResponse res, String path) throws IOException {
+        String id = UpstreamPages.providerId(path);
+        if (UpstreamPages.isCallbackPath(path)) {
+            if ("GET".equals(req.getMethod())) {
+                upstreamPages.callback(req, res, id);
+            } else {
+                methodNotAllowed(res, "GET");
+            }
+        } else {
+            accountPage(req, res, (s) -> upstreamPages.startForm(s, req, res, id),
+                    (s) -> upstreamPages.startSubmit(s, req, res, id));
         }
     }
 

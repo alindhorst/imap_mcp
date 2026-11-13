@@ -130,6 +130,6 @@ public final class HttpPublicServer {
                 o.allowWithoutRole(), allowInsecureHttpIssuer);
         return WebSurface.of(web, HttpOidcProvider.create(web, keys), components.oidcPendingStore(),
                 components.webSessionStore(), components.tenantProvisioner(), components.accountLinker(),
-                components.clock(), keysUnavailable);
+                components.clock(), keysUnavailable, components.upstreamLinker());
     }
 }

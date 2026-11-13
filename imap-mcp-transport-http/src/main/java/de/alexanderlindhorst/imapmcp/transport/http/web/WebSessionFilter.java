@@ -19,7 +19,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Second filter of {@code /accounts}: everything except the login and callback endpoints needs a valid server-side
+ * Second filter of {@code /accounts}: everything except the login and callback endpoints (and the upstream OAuth
+ * callback {@code /accounts/oauth/<id>/callback}, which is bound by its own cookie) needs a valid server-side
  * session (cookie {@value #COOKIE}). Without one a {@code GET} is sent to the login, anything else is a 403. A
  * {@code POST} also needs the session's CSRF token in the form field {@code csrf} (constant-time comparison). The
  * session is handed to the servlet as a request attribute; a cookie that appears twice counts as absent.
@@ -60,7 +61,7 @@ public final class WebSessionFilter implements Filter {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
         String path = req.getRequestURI();
-        if (LOGIN_PATH.equals(path) || CALLBACK_PATH.equals(path)) {
+        if (LOGIN_PATH.equals(path) || CALLBACK_PATH.equals(path) || UpstreamPages.isCallbackPath(path)) {
             chain.doFilter(request, response);
             return;
         }

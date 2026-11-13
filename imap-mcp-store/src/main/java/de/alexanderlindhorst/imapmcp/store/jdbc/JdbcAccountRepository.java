@@ -144,14 +144,27 @@ public final class JdbcAccountRepository implements AccountRepository {
      * collision of a random id or handle is retried under a savepoint, so the transaction stays usable.
      */
     String[] insertAccount(Connection c, UUID tenant, NewAccount a) throws SQLException {
+        return insertAccountRow(c, tenant, a, "password", null);
+    }
+
+    /**
+     * As {@link #insertAccount} for an upstream OAuth account (SPEC 5.7): {@code auth = 'xoauth2'} with its provider
+     * id; the unique index on (tenant, provider, lower(address)) applies.
+     */
+    String[] insertUpstreamAccount(Connection c, UUID tenant, NewAccount a, String providerId) throws SQLException {
+        return insertAccountRow(c, tenant, a, "xoauth2", Objects.requireNonNull(providerId, "providerId"));
+    }
+
+    private String[] insertAccountRow(Connection c, UUID tenant, NewAccount a, String auth, String providerId)
+            throws SQLException {
         for (int attempt = 1;; attempt++) {
             String id = randomBase32();
             String handle = "acc_" + randomBase32();
             java.sql.Savepoint sp = c.setSavepoint();
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security,"
-                            + " flavor, username, auth, read_only, allow_purge)"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?)")) {
+                            + " flavor, username, auth, read_only, allow_purge, provider_id)"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                 ps.setObject(1, tenant);
                 ps.setString(2, id);
                 ps.setString(3, handle);
@@ -162,8 +175,10 @@ public final class JdbcAccountRepository implements AccountRepository {
                 ps.setString(8, a.security().name());
                 ps.setString(9, a.flavor().name());
                 ps.setString(10, a.username());
-                ps.setBoolean(11, a.readOnly());
-                ps.setBoolean(12, a.allowPurge());
+                ps.setString(11, auth);
+                ps.setBoolean(12, a.readOnly());
+                ps.setBoolean(13, a.allowPurge());
+                ps.setString(14, providerId);
                 ps.executeUpdate();
                 c.releaseSavepoint(sp);
                 return new String[] {id, handle};

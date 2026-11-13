@@ -7,6 +7,8 @@ import de.alexanderlindhorst.imapmcp.core.linking.AccountLinker;
 import de.alexanderlindhorst.imapmcp.core.linking.LinkOutcome;
 import de.alexanderlindhorst.imapmcp.core.linking.LinkRequest;
 import de.alexanderlindhorst.imapmcp.core.linking.SettingsRequest;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamLinker;
+import de.alexanderlindhorst.imapmcp.core.linking.UpstreamProviderInfo;
 import de.alexanderlindhorst.imapmcp.core.web.WebSession;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -29,9 +31,11 @@ final class LinkingPages {
     private static final String READ_WRITE = "read_write";
 
     private final AccountLinker linker;
+    private final UpstreamLinker upstream;
 
-    LinkingPages(AccountLinker linker) {
+    LinkingPages(AccountLinker linker, UpstreamLinker upstream) {
         this.linker = linker;
+        this.upstream = upstream;
     }
 
     // ---- list ----
@@ -45,15 +49,23 @@ final class LinkingPages {
         for (ResolvedAccount r : accounts) {
             MailAccount a = r.account();
             String h = Html.escape(r.handle());
+            boolean oauth = a.auth() == MailAccount.Auth.XOAUTH2;
             body.append("<section><h2>").append(Html.escape(a.label())).append("</h2><p>")
                     .append(Html.escape(a.username())).append(" at ").append(Html.escape(a.host())).append(':')
                     .append(a.port()).append("<br>")
                     .append(a.status() == MailAccount.Status.NEEDS_RELINK
-                            ? "This account needs a new password." : "Active.")
+                            ? (oauth ? "This account needs to be authorized again." : "This account needs a new password.")
+                            : "Active.")
                     .append(' ').append(a.readOnly() ? "Read-only." : "Read and write.")
                     .append(a.allowPurge() ? " Permanent deletion allowed." : "").append("</p>")
-                    .append("<p><a href=\"").append(ACCOUNTS).append("/relink?account=").append(h)
-                    .append("\">New password</a> <a href=\"").append(ACCOUNTS).append("/settings?account=")
+                    .append("<p><a href=\"");
+            if (oauth) { // the provider and host are fixed: the same sign-in again, never a password
+                body.append(ACCOUNTS).append("/oauth/").append(Html.escape(String.valueOf(a.providerId())))
+                        .append("/start?account=").append(h).append("\">Authorize again</a>");
+            } else {
+                body.append(ACCOUNTS).append("/relink?account=").append(h).append("\">New password</a>");
+            }
+            body.append(" <a href=\"").append(ACCOUNTS).append("/settings?account=")
                     .append(h).append("\">Settings</a> <a href=\"").append(ACCOUNTS).append("/unlink?account=")
                     .append(h).append("\">Unlink</a></p></section>");
         }
@@ -62,6 +74,12 @@ final class LinkingPages {
                     .append(" accounts is reached. Unlink one to add another.</p>");
         } else {
             body.append("<p><a href=\"").append(ACCOUNTS).append("/link\">Add a mail account</a></p>");
+            if (upstream != null) {
+                for (UpstreamProviderInfo p : upstream.providers()) {
+                    body.append("<p><a href=\"").append(ACCOUNTS).append("/oauth/").append(Html.escape(p.id()))
+                            .append("/start\">Add a ").append(Html.escape(p.label())).append(" account</a></p>");
+                }
+            }
         }
         body.append(AccountsServlet.logoutForm(session));
         AccountsServlet.writePage(res, HttpServletResponse.SC_OK, "Mail accounts", body.toString());
@@ -120,7 +138,8 @@ final class LinkingPages {
     // ---- re-link ----
 
     void relinkForm(WebSession session, HttpServletRequest req, HttpServletResponse res) throws IOException {
-        Optional<ResolvedAccount> account = account(session, req);
+        Optional<ResolvedAccount> account = account(session, req)
+                .filter(a -> a.account().auth() == MailAccount.Auth.PASSWORD); // upstream accounts: sign in again
         if (account.isEmpty()) {
             notFound(res);
             return;

@@ -129,7 +129,8 @@ public final class AccountLinking implements AccountLinker {
 
     @Override
     public LinkOutcome relink(TenantId tenant, String handle, char[] password, String requestId) {
-        Optional<ResolvedAccount> account = find(tenant, handle);
+        Optional<ResolvedAccount> account = find(tenant, handle)
+                .filter(a -> a.account().auth() == MailAccount.Auth.PASSWORD); // upstream OAuth accounts re-link there
         if (account.isEmpty()) {
             return LinkOutcome.NOT_FOUND;
         }
