@@ -41,8 +41,8 @@ final class AccountSql {
         try (Connection c = ds.getConnection();
                 PreparedStatement ps = c.prepareStatement(
                         "INSERT INTO mailbox_account (tenant_id, id, handle, label, address, host, port, security,"
-                                + " flavor, username, auth, read_only, allow_purge) VALUES"
-                                + " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?)")) {
+                                + " flavor, username, auth, read_only, allow_purge, provider_id) VALUES"
+                                + " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             ps.setObject(1, UUID.fromString(tenant.value()));
             ps.setString(2, a.id().value());
             ps.setString(3, handle);
@@ -53,8 +53,10 @@ final class AccountSql {
             ps.setString(8, a.security().name());
             ps.setString(9, a.flavor().name());
             ps.setString(10, a.username());
-            ps.setBoolean(11, a.readOnly());
-            ps.setBoolean(12, a.allowPurge());
+            ps.setString(11, a.auth().name().toLowerCase(java.util.Locale.ROOT));
+            ps.setBoolean(12, a.readOnly());
+            ps.setBoolean(13, a.allowPurge());
+            ps.setString(14, a.providerId());
             ps.executeUpdate();
         }
     }

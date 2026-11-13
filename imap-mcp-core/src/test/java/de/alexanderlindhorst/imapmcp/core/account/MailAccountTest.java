@@ -83,4 +83,21 @@ class MailAccountTest {
                 143, MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), false,
                 false, MailAccount.Auth.PASSWORD, null, 0L)).isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    void providerIdIsNullForOldConstructorsAndCarriedByTheFullOne() {
+        MailAccount password = new MailAccount(new AccountId("w"), "W", null, "h", 143,
+                MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("env:X"), true, true);
+        MailAccount oauth = new MailAccount(new AccountId("w"), "W", null, "h", 143,
+                MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("db:"), false, false,
+                MailAccount.Auth.XOAUTH2, MailAccount.Status.ACTIVE, 3L, "google");
+        MailAccount noProvider = new MailAccount(new AccountId("w"), "W", null, "h", 143,
+                MailAccount.Security.STARTTLS, MailAccount.Flavor.GMAIL, "u", new SecretRef("db:"), false, false,
+                MailAccount.Auth.PASSWORD, MailAccount.Status.ACTIVE, 3L);
+        assertThat(password.providerId()).isNull();
+        assertThat(noProvider.providerId()).isNull();
+        assertThat(noProvider.revision()).isEqualTo(3L);
+        assertThat(oauth.providerId()).isEqualTo("google");
+        assertThat(oauth.toString()).contains("providerId=google");
+    }
 }

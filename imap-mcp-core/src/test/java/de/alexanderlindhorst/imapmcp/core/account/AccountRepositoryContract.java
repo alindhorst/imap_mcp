@@ -30,11 +30,19 @@ public abstract class AccountRepositoryContract {
                 MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, "user-" + id, new SecretRef("env:" + id));
     }
 
+    /** XOAUTH2 account (SPEC 5.7 v0.29): carries the provider id and an address, which the database requires. */
+    protected static MailAccount oauthAccount(String id, String providerId) {
+        return new MailAccount(new AccountId(id), "Label " + id, id + "@example.org", "imap.example.org", 993,
+                MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GENERIC, id + "@example.org",
+                new SecretRef("db:"), true, false, MailAccount.Auth.XOAUTH2, MailAccount.Status.ACTIVE, 0L,
+                providerId);
+    }
+
     @BeforeEach
     void setUpRepository() {
         // "shared" exists in both tenants on purpose: the same config id must not leak across tenants.
         repository = createRepository(Map.of(
-                TENANT_A, List.of(account("shared"), account("only-a")),
+                TENANT_A, List.of(account("shared"), account("only-a"), oauthAccount("oauth-a", "google")),
                 TENANT_B, List.of(account("shared"), account("only-b"))));
     }
 
@@ -59,7 +67,7 @@ public abstract class AccountRepositoryContract {
         assertThat(repository.findByTenant(TENANT_B)).extracting(r -> r.account().id().value())
                 .containsExactlyInAnyOrder("shared", "only-b");
         assertThat(repository.findByTenant(TENANT_A)).extracting(r -> r.account().id().value())
-                .containsExactlyInAnyOrder("shared", "only-a");
+                .containsExactlyInAnyOrder("shared", "only-a", "oauth-a");
     }
 
     @Test
@@ -116,5 +124,24 @@ public abstract class AccountRepositoryContract {
     void findByTenantAndIdOfUnknownTenantOrIdIsEmpty() {
         assertThat(repository.findByTenantAndId(new TenantId("nobody"), new AccountId("shared"))).isEmpty();
         assertThat(repository.findByTenantAndId(TENANT_A, new AccountId("missing"))).isEmpty();
+    }
+
+    @Test
+    void providerIdRoundTripsThroughEveryFinder() {
+        ResolvedAccount byId = repository.findByTenantAndId(TENANT_A, new AccountId("oauth-a")).orElseThrow();
+        assertThat(byId.account().providerId()).isEqualTo("google");
+        assertThat(byId.account().auth()).isEqualTo(MailAccount.Auth.XOAUTH2);
+        assertThat(repository.findByTenantAndHandle(TENANT_A, byId.handle()).orElseThrow().account().providerId())
+                .isEqualTo("google");
+        assertThat(repository.findByTenant(TENANT_A)).filteredOn(r -> r.account().id().value().equals("oauth-a"))
+                .singleElement().satisfies(r -> assertThat(r.account().providerId()).isEqualTo("google"));
+    }
+
+    @Test
+    void passwordAccountsHaveNoProviderId() {
+        assertThat(repository.findByTenantAndId(TENANT_A, new AccountId("only-a")).orElseThrow().account()
+                .providerId()).isNull();
+        assertThat(repository.findByTenantAndId(TENANT_B, new AccountId("shared")).orElseThrow().account()
+                .providerId()).isNull();
     }
 }
