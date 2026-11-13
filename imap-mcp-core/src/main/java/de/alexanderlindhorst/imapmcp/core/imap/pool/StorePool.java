@@ -11,9 +11,13 @@ import de.alexanderlindhorst.imapmcp.core.imap.ImapSessionFactory;
 import de.alexanderlindhorst.imapmcp.core.metrics.MetricsRecorder;
 import de.alexanderlindhorst.imapmcp.core.metrics.PoolGauges;
 import jakarta.mail.MessagingException;
+import de.alexanderlindhorst.imapmcp.core.oauth.OAuthAccessTokens;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import org.apache.commons.pool2.PooledObject;
 import org.apache.commons.pool2.impl.AbandonedConfig;
 import org.apache.commons.pool2.impl.EvictionConfig;
@@ -74,10 +78,27 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         this(sessions, credentials, capabilities, lookup(repository), s, metrics, outcomes);
     }
 
+    /** As the repository variant with outcomes, plus the XOAUTH2 token source and clock (SPEC 5.5); the app wiring. */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            AccountRepository repository, PoolSettings s, MetricsRecorder metrics, LoginOutcomes outcomes,
+            OAuthAccessTokens tokens, Clock clock) {
+        this(sessions, credentials, capabilities, lookup(repository), s, metrics, outcomes, tokens, clock);
+    }
+
     /** {@code outcomes} receives every real LOGIN result (refused without [UNAVAILABLE], or success). */
     public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
             Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
             LoginOutcomes outcomes) {
+        this(sessions, credentials, capabilities, accounts, s, metrics, outcomes, null, Clock.systemUTC());
+    }
+
+    /**
+     * {@code tokens} (nullable: an XOAUTH2 account then cannot connect) supplies the access tokens of XOAUTH2
+     * accounts (SPEC 5.5); {@code clock} measures their expiry.
+     */
+    public StorePool(ImapSessionFactory sessions, CredentialStore credentials, CapabilityCache capabilities,
+            Function<PoolKey, MailAccount> accounts, PoolSettings s, MetricsRecorder metrics,
+            LoginOutcomes outcomes, OAuthAccessTokens tokens, Clock clock) {
         GenericKeyedObjectPoolConfig<IMAPStore> config = new GenericKeyedObjectPoolConfig<>();
         config.setJmxEnabled(false); // must be set before construction
         config.setMaxTotalPerKey(s.maxPerMailbox());
@@ -89,8 +110,9 @@ public final class StorePool implements AutoCloseable, PoolGauges {
         config.setTestWhileIdle(false);
         config.setTimeBetweenEvictionRuns(s.evictionInterval());
         config.setNumTestsPerEvictionRun(-1);
-        config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime()));
-        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes);
+        this.factory = new StorePoolFactory(sessions, credentials, capabilities, accounts, s, metrics, outcomes, tokens,
+                clock);
+        config.setEvictionPolicy(new LifetimeEvictionPolicy(s.idleEviction(), s.maxLifetime(), factory::tokenExpired));
         this.pool = new GenericKeyedObjectPool<>(factory, config);
         AbandonedConfig abandoned = new AbandonedConfig();
         abandoned.setRemoveAbandonedOnMaintenance(true);
@@ -102,16 +124,19 @@ public final class StorePool implements AutoCloseable, PoolGauges {
     static final class LifetimeEvictionPolicy implements EvictionPolicy<IMAPStore> {
         private final Duration idleEviction;
         private final Duration maxLifetime;
+        private final Predicate<IMAPStore> tokenExpired;
 
-        LifetimeEvictionPolicy(Duration idleEviction, Duration maxLifetime) {
+        LifetimeEvictionPolicy(Duration idleEviction, Duration maxLifetime, Predicate<IMAPStore> tokenExpired) {
             this.idleEviction = idleEviction;
             this.maxLifetime = maxLifetime;
+            this.tokenExpired = tokenExpired;
         }
 
         @Override
         public boolean evict(EvictionConfig config, PooledObject<IMAPStore> p, int idleCount) {
             return p.getIdleDuration().compareTo(idleEviction) > 0
-                    || StorePoolFactory.age(p).compareTo(maxLifetime) > 0;
+                    || StorePoolFactory.age(p).compareTo(maxLifetime) > 0
+                    || tokenExpired.test(p.getObject());
         }
     }
 
@@ -120,6 +145,18 @@ public final class StorePool implements AutoCloseable, PoolGauges {
      * is invalidated and the borrow repeated, never used (SPEC 5.5).
      */
     public IMAPStore borrow(PoolKey key) throws Exception {
+        return borrow(key, null);
+    }
+
+    /** As {@link #borrow(PoolKey)}; {@code deadline} (nullable) is the tool call's deadline. */
+    public IMAPStore borrow(PoolKey key, Instant deadline) throws Exception {
+        if (deadline == null) {
+            return borrowBound(key);
+        }
+        return ScopedValue.where(StorePoolFactory.CALL_DEADLINE, deadline).call(() -> borrowBound(key));
+    }
+
+    private IMAPStore borrowBound(PoolKey key) throws Exception {
         if (!key.active()) { // the call resolved an account that needs a re-link: no connection, no idle Store
             pool.clear(key);
             throw new AccountNeedsRelinkException();
