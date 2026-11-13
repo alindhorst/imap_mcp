@@ -26,7 +26,8 @@ class SmokeSkipSelfTest {
         assumeTrue(System.getenv().keySet().stream().noneMatch(k -> k.startsWith("IMAP_MCP_SMOKE_")),
                 "IMAP_MCP_SMOKE_* is set in this environment; the self-test must not start live tests");
 
-        for (Class<?> live : List.of(GmailReadLiveSmoke.class, M365ReadLiveSmoke.class, GmailWriteLiveSmoke.class)) {
+        for (Class<?> live : List.of(GmailReadLiveSmoke.class, M365ReadLiveSmoke.class, GmailWriteLiveSmoke.class,
+                GmailOAuthLiveSmoke.class, M365OAuthLiveSmoke.class)) {
             SummaryGeneratingListener summary = new SummaryGeneratingListener();
             List<String> abortReasons = new ArrayList<>();
             TestExecutionListener reasons = new TestExecutionListener() {
