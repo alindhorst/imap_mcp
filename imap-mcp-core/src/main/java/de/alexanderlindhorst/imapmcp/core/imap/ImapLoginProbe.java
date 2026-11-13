@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
  * {@code http-public}. The session is not cached; the Store is closed in every case. Nothing about the account or
  * the server's answer is logged.
  */
-public final class ImapLoginProbe implements LoginProbe {
+public final class ImapLoginProbe implements LoginProbe, Xoauth2LoginProbe {
 
     private static final Logger LOG = LoggerFactory.getLogger(ImapLoginProbe.class);
 
@@ -26,6 +26,11 @@ public final class ImapLoginProbe implements LoginProbe {
         if (!sessions.pinsSockets()) { // fail closed: a probe is an outgoing connection to a user-chosen host
             throw new IllegalArgumentException("the link probe needs a session factory with the pinned socket factory");
         }
+    }
+
+    @Override
+    public Result probeXoauth2(MailAccount account, char[] accessToken) {
+        return Result.UNREACHABLE; // skeleton
     }
 
     @Override
