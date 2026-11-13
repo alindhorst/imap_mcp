@@ -194,8 +194,8 @@ final class DeployedCompose {
         return null;
     }
 
-    /** Exit code and stdout of a command run inside a service container; output is never logged by the fixture. */
-    record ExecResult(long exitCode, String stdout) {
+    /** Exit code, stdout and stderr (for classification only) of a command run inside a service container; output is never logged by the fixture. */
+    record ExecResult(long exitCode, String stdout, String stderr) {
         @Override
         public String toString() {
             return "exit " + exitCode;
@@ -212,16 +212,20 @@ final class DeployedCompose {
                 String id = client().execCreateCmd(c.getId()).withAttachStdout(true).withAttachStderr(true)
                         .withEnv(env).withCmd(command).exec().getId();
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ByteArrayOutputStream err = new ByteArrayOutputStream();
                 client().execStartCmd(id).exec(new ResultCallback.Adapter<Frame>() {
                     @Override
                     public void onNext(Frame frame) {
                         if (frame.getStreamType() == com.github.dockerjava.api.model.StreamType.STDOUT) {
                             out.writeBytes(frame.getPayload());
+                        } else if (frame.getStreamType() == com.github.dockerjava.api.model.StreamType.STDERR) {
+                            err.writeBytes(frame.getPayload());
                         }
                     }
                 }).awaitCompletion(120, TimeUnit.SECONDS);
                 Long code = client().inspectExecCmd(id).exec().getExitCodeLong();
-                return new ExecResult(code == null ? -1 : code, out.toString(java.nio.charset.StandardCharsets.UTF_8));
+                return new ExecResult(code == null ? -1 : code, out.toString(java.nio.charset.StandardCharsets.UTF_8),
+                        err.toString(java.nio.charset.StandardCharsets.UTF_8));
             }
         }
         throw new IllegalStateException("no running container for service " + service);
