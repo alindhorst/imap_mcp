@@ -169,6 +169,16 @@ public final class InMemoryMetricsRecorder implements MetricsRecorder, AutoClose
     }
 
     @Override
+    public void oauthRefresh(TenantId tenant, String result) {
+        operation(tenant, "oauth", "refresh_" + result, Duration.ZERO);
+    }
+
+    @Override
+    public void oauthGrantLost(TenantId tenant) {
+        operation(tenant, "oauth", "grant_lost", Duration.ZERO);
+    }
+
+    @Override
     public void initializeRateLimited(TenantId tenant) {
         operation(tenant, "initialize", "rate_limited", Duration.ZERO);
     }

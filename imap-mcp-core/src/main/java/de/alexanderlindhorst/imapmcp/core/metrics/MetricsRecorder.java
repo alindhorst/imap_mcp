@@ -52,6 +52,12 @@ public interface MetricsRecorder {
     /** A key decision was made with the stale key set of an outage (D16, counts key decisions, not validated tokens); replica-wide. */
     default void oauthKeysStale() { }
 
+    /** One upstream token refresh ended; {@code result} is ok, invalid_grant, unavailable, client_rejected or lock_timeout (SPEC 5.5, 5.6). */
+    default void oauthRefresh(TenantId tenant, String result) { }
+
+    /** A commit failed after the provider rotated the refresh token: the grant is lost and a re-link is needed (SPEC 5.5, 5.6). */
+    default void oauthGrantLost(TenantId tenant) { }
+
     /** An {@code initialize} was refused by the per-principal rate limit (SPEC 4, D12). */
     default void initializeRateLimited(TenantId tenant) { }
 }
