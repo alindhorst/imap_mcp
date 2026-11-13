@@ -15,7 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Periodic removal of expired {@code web_session} and {@code oidc_pending} rows (SPEC 5.7). This is the one
+ * Periodic removal of expired {@code web_session}, {@code oidc_pending} and {@code upstream_pending} rows (SPEC 5.7). This is the one
  * deliberately tenant-independent statement of the store: it deletes by expiry time only and reads no tenant data.
  */
 public final class ExpiredRowCleanup {
@@ -36,7 +36,7 @@ public final class ExpiredRowCleanup {
         Timestamp cutoff = Timestamp.from(now);
         try (Connection c = dataSource.getConnection()) {
             return new Result(deleteFrom(c, "web_session", cutoff), deleteFrom(c, "oidc_pending", cutoff),
-                    0); // stub: upstream_pending is not cleaned yet
+                    deleteFrom(c, "upstream_pending", cutoff));
         } catch (SQLException e) {
             throw new IllegalStateException("cleanup of expired rows failed", e);
         }
@@ -47,9 +47,10 @@ public final class ExpiredRowCleanup {
         return executor.scheduleWithFixedDelay(() -> {
             try {
                 Result r = deleteExpired(Instant.now());
-                LOG.debug("expired rows removed: web_session={}, oidc_pending={}", r.webSessions(), r.oidcPending());
+                LOG.debug("expired rows removed: web_session={}, oidc_pending={}, upstream_pending={}", r.webSessions(),
+                        r.oidcPending(), r.upstreamPending());
             } catch (RuntimeException e) {
-                LOG.warn("cleanup of expired web_session/oidc_pending rows failed", e);
+                LOG.warn("cleanup of expired web_session/oidc_pending/upstream_pending rows failed", e);
             }
         }, period.toMillis(), period.toMillis(), TimeUnit.MILLISECONDS);
     }

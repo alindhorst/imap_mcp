@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** {@code upstream_pending} on Postgres: single use, expiry, the caps, the tenant binding and the stored form (X1-2). */
@@ -71,6 +72,13 @@ class JdbcUpstreamPendingStoreIT {
             db.close();
         }
         postgres.stop();
+    }
+
+    @BeforeEach
+    void emptyTable() throws Exception {
+        try (Connection c = db.dataSource().getConnection(); var st = c.createStatement()) {
+            st.execute("TRUNCATE upstream_pending"); // the table cap counts every tenant's rows
+        }
     }
 
     private static UpstreamPendingStore.Pending draft(TenantId t, AccountId relink) {
