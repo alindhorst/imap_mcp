@@ -418,4 +418,39 @@ class DistDockerTest {
         assertThat(notVerified).doesNotContain("native Docker").doesNotContain("CI runner")
                 .contains("Claude connector").contains("Let's Encrypt").contains("TOTP");
     }
+
+    private static String deploymentSection(String from, String to) throws IOException {
+        String text = read(Path.of("..", "doc", "DEPLOYMENT.md"));
+        int a = text.indexOf(from);
+        int b = text.indexOf(to);
+        assertThat(a).isGreaterThanOrEqualTo(0);
+        assertThat(b).isGreaterThan(a);
+        return text.substring(a, b);
+    }
+
+    /** #501: section 4 has one bullet per SPEC provider assumption, each with its symptom. */
+    @Test
+    void deploymentGuideSectionFourListsTheUpstreamOAuthAssumptions() throws IOException {
+        String s = deploymentSection("## 4.", "## 5.");
+        assertThat(s).contains("**Upstream OAuth endpoints and scopes").contains("**Refresh token on re-consent")
+                .contains("**Microsoft refresh tokens").contains("**Google apps in \"Testing\" status")
+                .contains("**Gmail restricted-scope verification").contains("**Microsoft and IMAP sessions")
+                .contains("**Gmail XOAUTH2 user").contains("**Error JSON of a failed `AUTHENTICATE`")
+                .contains("weekly `relink_required`").contains("`prompt=consent`").contains("CASA")
+                .contains("`xoauth2_rejected`").contains("`oauth_client_rejected`");
+    }
+
+    /** #501: the real Google/Microsoft upstream OAuth is under "Not verified" until a #328 run is recorded. */
+    @Test
+    void deploymentGuideNotVerifiedNamesRealUpstreamOAuth() throws IOException {
+        String section = deploymentSectionSix();
+        String notVerified = section.substring(section.indexOf("Not verified"));
+        assertThat(notVerified).contains("real Google/Microsoft upstream OAuth").contains("#328");
+    }
+
+    /** #501: the docker README points to the upstream OAuth docs and does not claim it works. */
+    @Test
+    void dockerReadmePointsToUpstreamOAuth() throws IOException {
+        assertThat(read(DOCKER.resolve("README.md"))).contains("](../../README.md#upstream-oauth-experimental-unverified)");
+    }
 }
