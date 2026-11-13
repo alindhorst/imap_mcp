@@ -140,7 +140,7 @@ class CreateFolderToolStubbedTest {
     void setUp() throws Exception {
         pool = mock(StorePool.class);
         store = mock(IMAPStore.class);
-        when(pool.borrow(any())).thenReturn(store);
+        when(pool.borrow(any(), any())).thenReturn(store);
         repo = new InMemoryAccountRepository(Map.of(A, List.of(account("rw", false), account("ro", true)),
                 B, List.of(account("other", false))));
         leases = new StoreLeases(pool, Duration.ofSeconds(5));
