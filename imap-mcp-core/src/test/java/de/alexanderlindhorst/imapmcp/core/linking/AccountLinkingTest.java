@@ -349,6 +349,21 @@ class AccountLinkingTest {
     }
 
     @Test
+    void aPasswordRelinkOfAnUpstreamOauthAccountIsNotFoundAndNeverProbesOrStores() {
+        MailAccount oauth = new MailAccount(new AccountId("acct-o"), "Mine", "me@example.org", "imap.gmail.example",
+                993, MailAccount.Security.IMPLICIT_TLS, MailAccount.Flavor.GMAIL, "me@example.org",
+                new SecretRef("db:"), true, false, MailAccount.Auth.XOAUTH2, MailAccount.Status.NEEDS_RELINK, 2L,
+                "google");
+        fake.accounts.add(new ResolvedAccount(T1, oauth, "acc_oauth"));
+
+        // switching between password and xoauth2 means unlink and link (SPEC 5.3)
+        assertThat(linking(false, 10).relink(T1, "acc_oauth", "pw".toCharArray(), "r")).isEqualTo(LinkOutcome.NOT_FOUND);
+
+        assertThat(probes).isEmpty();
+        assertThat(fake.calls).isEmpty();
+    }
+
+    @Test
     void aFailedRelinkProbeChangesNothing() {
         AccountLinking l = linking(false, 10);
         l.link(T1, good(), PASSWORD, FRESH, "r");
