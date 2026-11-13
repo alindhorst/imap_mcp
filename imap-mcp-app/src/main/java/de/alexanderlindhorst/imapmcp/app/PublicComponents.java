@@ -78,6 +78,7 @@ import de.alexanderlindhorst.imapmcp.store.secret.BinaryProbe;
 import de.alexanderlindhorst.imapmcp.store.secret.CommandRunner;
 import de.alexanderlindhorst.imapmcp.store.secret.Platform;
 import de.alexanderlindhorst.imapmcp.store.secret.ProcessCommandRunner;
+import de.alexanderlindhorst.imapmcp.store.oauth.TokenEndpoint;
 import de.alexanderlindhorst.imapmcp.store.secret.RefCredentialStore;
 import de.alexanderlindhorst.imapmcp.store.secret.SecretResolutionException;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -181,18 +182,31 @@ public final class PublicComponents implements AutoCloseable {
     public static PublicComponents createForTest(PublicConfig config, AppPaths paths, Clock clock,
             Map<String, String> env, UnaryOperator<Properties> sessionHook,
             Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
+        return createForTest(config, paths, clock, env, sessionHook, socketFactory, null);
+    }
+
+    /**
+     * As above, plus the token-endpoint client of the XOAUTH2 refresh chain (so that an IT can point it at a stub
+     * on a dynamic port with its own trust); {@code null} is the production client. Never reachable from
+     * configuration; production code never calls this.
+     */
+    public static PublicComponents createForTest(PublicConfig config, AppPaths paths, Clock clock,
+            Map<String, String> env, UnaryOperator<Properties> sessionHook,
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory,
+            Function<SsrfPolicy, TokenEndpoint> tokenClient) {
         return create(config, paths, clock, env, sessionHook, Platform.current(), new ProcessCommandRunner(),
-                BinaryProbe.system(env), socketFactory);
+                BinaryProbe.system(env), socketFactory, tokenClient);
     }
 
     static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe) {
-        return create(config, paths, clock, env, sessionHook, platform, runner, probe, PinnedSocketFactory::new);
+        return create(config, paths, clock, env, sessionHook, platform, runner, probe, PinnedSocketFactory::new, null);
     }
 
     private static PublicComponents create(PublicConfig config, AppPaths paths, Clock clock, Map<String, String> env,
             UnaryOperator<Properties> sessionHook, Platform platform, CommandRunner runner, BinaryProbe probe,
-            Function<SsrfPolicy, PinnedSocketFactory> socketFactory) {
+            Function<SsrfPolicy, PinnedSocketFactory> socketFactory,
+            Function<SsrfPolicy, TokenEndpoint> tokenClient) {
         if (config.oauth().allowWithoutRole()) {
             LOG.warn("oauth.allowWithoutRole is true: any user the identity provider admits gets a tenant at the first "
                     + "login of the linking surface. Development only.");
@@ -246,7 +260,7 @@ public final class PublicComponents implements AutoCloseable {
             CredentialCipher cipher = new CredentialCipher(wrapper, new SecureRandom());
             JdbcCredentialStore credentials = new JdbcCredentialStore(ds, cipher, logIds, metrics);
             CapabilityCache capabilities = new CapabilityCache(p.capabilityTtl(), clock);
-            upstream = buildUpstream(config, refs, ds, ssrf, cipher, logIds, metrics, clock);
+            upstream = buildUpstream(config, refs, ds, ssrf, cipher, logIds, metrics, clock, tokenClient);
             pool = new StorePool(sessions, credentials, capabilities, repository, settings, metrics,
                     new JdbcLoginOutcomes(repository), upstream.tokens(), clock);
             metrics.attachPool(pool);
@@ -339,10 +353,10 @@ public final class PublicComponents implements AutoCloseable {
      */
     private static PublicOAuthUpstream buildUpstream(PublicConfig config, RefCredentialStore refs,
             javax.sql.DataSource ds, SsrfPolicy ssrf, CredentialCipher cipher, LogIds logIds,
-            MetricsRecorder metrics, Clock clock) {
+            MetricsRecorder metrics, Clock clock, Function<SsrfPolicy, TokenEndpoint> tokenClient) {
         List<UpstreamProvider> providers = config.oauth().upstreamProviders();
         PublicOAuthUpstream.checkStoredProviders(ds, providers);
-        return PublicOAuthUpstream.create(providers, refs, ds, ssrf, cipher, logIds, metrics, clock);
+        return PublicOAuthUpstream.create(providers, refs, ds, ssrf, cipher, logIds, metrics, clock, tokenClient);
     }
 
     /**
