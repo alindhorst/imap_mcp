@@ -129,7 +129,9 @@ class KeycloakUpstreamLinkingIT {
         root.addAppender(LOGS);
         keycloak = new KeycloakFixture();
         postgres = new PostgresFixture();
-        Startables.deepStart(keycloak, postgres).join();
+        dovecot = new DovecotOauth2Container();
+        // all create requests before the long Keycloak wait (a late create hit a closed Docker socket in the gate)
+        Startables.deepStart(keycloak, postgres, dovecot).join();
         pki = new Xoauth2Pki(dir, TOKEN_HOST);
         front = new Xoauth2TapProxy(pki.serverContext(), keycloak.getHost(), URI.create(keycloak.baseUrl()).getPort(),
                 true).rewriteHost(URI.create(keycloak.baseUrl()).getAuthority());
@@ -137,8 +139,7 @@ class KeycloakUpstreamLinkingIT {
         // Keycloak puts the host of the authorization request (the browser reaches the container's own address) into
         // the tokens as issuer and wants it again at every refresh: the relay presents the token client's requests
         // under that same host
-        dovecot = new DovecotOauth2Container(keycloak.issuer());
-        dovecot.start();
+        dovecot.useIssuer(keycloak.issuer());
         trustRealmKey();
         // the provider's IMAP port is the configured 993: the test socket factory maps the connect to this relay
         tap = new Xoauth2TapProxy(pki.serverContext(), dovecot.getHost(), dovecot.imapsPort());
@@ -597,7 +598,9 @@ class KeycloakUpstreamLinkingIT {
         assertThat(issuedRefreshTokens().get(issuedRefreshTokens().size() - 1)).isNotEqualTo(second);
         assertThat(accountText("status")).isEqualTo("active");
 
-        // strict rotation with reuse detection at Keycloak: the retired token is dead ...
+        // strict rotation with reuse detection at Keycloak: the retired token is dead ... (Keycloak compares token
+        // issue times in whole seconds and tolerates a replay of a token issued in the same second as its successor)
+        Thread.sleep(2_500);
         HttpResponse<String> replayed = replay(first);
         assertThat(replayed.statusCode()).isEqualTo(400);
         assertThat(JSON.readTree(replayed.body()).get("error").asString()).isEqualTo("invalid_grant");
