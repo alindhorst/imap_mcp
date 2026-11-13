@@ -343,4 +343,23 @@ class JdbcUpstreamAccountStoreIT {
         assertThat(count("SELECT count(*) FROM mailbox_account WHERE tenant_id = ? AND status = 'needs_relink'", tu))
                 .isEqualTo(1);
     }
+
+    @Test
+    void aDisabledTenantGainsNoAccountAndNoNewCredentialVersion() throws Exception {
+        TenantId t = AccountSql.newTenant(db.dataSource());
+        ResolvedAccount r = store.create(t, account("me@example.org", "google"), "refresh-old".toCharArray(), 10,
+                "req-1");
+        UUID tu = UUID.fromString(t.value());
+        exec("UPDATE tenant SET status = 'disabled' WHERE id = ?", tu);
+
+        assertThatThrownBy(() -> store.create(t, account("other@example.org", "google"), "x".toCharArray(), 10,
+                "dis-2")).isInstanceOf(UpstreamAccountStore.TenantDisabledException.class);
+        assertThatThrownBy(() -> store.relink(t, r.account().id(), "x".toCharArray(), "s", "dis-3"))
+                .isInstanceOf(UpstreamAccountStore.TenantDisabledException.class);
+
+        assertThat(count("SELECT count(*) FROM mailbox_account WHERE tenant_id = ?", tu)).isEqualTo(1);
+        assertThat(refreshToken(t, r.account().id(), 1)).isEqualTo("refresh-old");
+        assertThat(count("SELECT count(*) FROM credential WHERE tenant_id = ?", tu)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM audit_event WHERE request_id IN ('dis-2', 'dis-3')")).isZero();
+    }
 }
