@@ -521,5 +521,7 @@ class ReadmeTest {
             assertThat(section).as(v).contains(v);
         }
         assertThat(section).contains("Docker").contains("pending, not yet run");
+        // the stored refresh token is envelope-encrypted: the docs must not point at the database
+        assertThat(section).contains("never exposes the token").doesNotContain("test database");
     }
 }
