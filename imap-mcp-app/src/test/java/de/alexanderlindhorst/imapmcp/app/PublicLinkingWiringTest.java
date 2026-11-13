@@ -121,4 +121,60 @@ class PublicLinkingWiringTest {
         assertThat(link("purge:\n  enabled: true\nhttp:\n  stateful: true\n", true, "evil.example.org"))
                 .isEqualTo(LinkOutcome.HOST_REFUSED);
     }
+
+    /** The wired linking with the given upstream providers config (a yaml block under oauth.upstream). */
+    private PublicComponents.Linking wired(boolean withProviders) throws Exception {
+        String yaml = YAML.formatted("").replace("ssrf:\n  allowedHosts: [\"imap.example.com\"]",
+                "ssrf:\n  allowedHosts: [\"imap.example.com\", \"imap.gmail.com\"]");
+        if (withProviders) {
+            yaml = yaml.replace("  webClientSecret: env:WEB_SECRET\n", "  webClientSecret: env:WEB_SECRET\n"
+                    + "  upstream:\n    providers:\n      google:\n        kind: google\n        clientId: cid\n"
+                    + "        clientSecret: env:G_SECRET\n        label: Google\n");
+        }
+        Path file = dir.resolve("config.yaml");
+        Files.writeString(file, yaml);
+        PublicConfig config = PublicConfigLoader.load(file, Map.of());
+        byte[] kek = new byte[32];
+        Arrays.fill(kek, (byte) 3);
+        byte[] master = new byte[32];
+        Arrays.fill(master, (byte) 1);
+        KeyRing ring = new KeyRing(1, Map.of(1, master));
+        Clock clock = Clock.systemUTC();
+        SsrfPolicy ssrf = SsrfPolicy.of(config.ssrf().allowedHosts(), false, List.of());
+        CredentialCipher cipher = new CredentialCipher(new LocalKeyWrapper("a", Map.of("a", kek)),
+                new SecureRandom());
+        JdbcAccountRepository repository = new JdbcAccountRepository(NO_DB);
+        JdbcCredentialStore credentials = new JdbcCredentialStore(NO_DB, cipher, new LogIds(ring),
+                MetricsRecorder.NOOP);
+        RefCredentialStore refs = RefCredentialStore.withEnvAndKeyring(new TenantId("config"), List.of(),
+                Map.of("WEB_SECRET", "s", "G_SECRET", "g"), Platform.current(), new ProcessCommandRunner(),
+                BinaryProbe.system(Map.of()), config.secrets().keyringTimeout());
+        PublicOAuthUpstream oauth = PublicOAuthUpstream.create(config.oauth().upstreamProviders(), refs, NO_DB,
+                ssrf, cipher, new LogIds(ring), MetricsRecorder.NOOP, clock);
+        try (ImapSessionFactory sessions = new ImapSessionFactory(ImapTimeouts.DEFAULTS, p -> p, false,
+                new PinnedSocketFactory(ssrf))) {
+            return PublicComponents.buildLinking(config, refs, NO_DB, repository, credentials,
+                    new JdbcAuditLog(NO_DB, ring), new JdbcTenantDirectory(NO_DB), sessions, ssrf, clock, oauth);
+        } finally {
+            oauth.close();
+        }
+    }
+
+    @Test
+    void theUpstreamLinkerIsWiredOnlyWhenProvidersAreConfigured() throws Exception {
+        assertThat(wired(false).upstreamLinker()).isNull();
+
+        var upstream = wired(true).upstreamLinker();
+
+        assertThat(upstream).isNotNull();
+        assertThat(upstream.providers()).singleElement().satisfies(p -> {
+            assertThat(p.id()).isEqualTo("google");
+            assertThat(p.redirectUri()).isEqualTo("https://mail.example.com/accounts/oauth/google/callback");
+            assertThat(p.flavor()).isEqualTo(MailAccount.Flavor.GMAIL);
+        });
+        assertThat(upstream.provider("nope")).isEmpty();
+        // an unknown provider is refused before anything touches the (absent) database
+        assertThat(upstream.start(new TenantId("11111111-1111-1111-1111-111111111111"), "nope", "x", "a@b.org",
+                true, null, "r").outcome()).isEqualTo(de.alexanderlindhorst.imapmcp.core.linking.UpstreamOutcome.NOT_FOUND);
+    }
 }
