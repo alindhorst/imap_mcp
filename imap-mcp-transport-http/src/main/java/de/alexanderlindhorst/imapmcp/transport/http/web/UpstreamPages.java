@@ -204,6 +204,8 @@ final class UpstreamPages {
                     "Not linked: already linked; use re-link.");
             case LIMIT, ACCOUNT_LIMIT -> failure(res, HttpServletResponse.SC_CONFLICT, "Not linked",
                     "Not linked: the limit of accounts is reached.");
+            case TENANT_DISABLED -> failure(res, HttpServletResponse.SC_FORBIDDEN, "Not linked",
+                    "Not linked: account linking is not available.");
             default -> failure(res, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Not linked",
                     "This did not work right now. Nothing was changed; try again later.");
         }
