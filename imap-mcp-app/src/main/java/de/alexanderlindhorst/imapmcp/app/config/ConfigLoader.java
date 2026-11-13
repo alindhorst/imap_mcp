@@ -72,6 +72,14 @@ public final class ConfigLoader {
 
     static AppConfig bind(JsonNode root, Map<String, String> env) {
         Section top = new Section(root, "config");
+        JsonNode oauth = top.take("oauth");
+        if (oauth != null) {
+            if (oauth.isObject() && oauth.has("upstream")) {
+                throw new ConfigException("oauth.upstream: not available in stdio and http-local "
+                        + "(upstream OAuth is http-public only)");
+            }
+            throw new ConfigException("oauth: unknown key");
+        }
         List<AppConfig.Account> accounts = accounts(top);
         AppConfig.Imap imap = imap(top.section("imap"));
         AppConfig.Pool pool = pool(top.section("pool"));
@@ -101,6 +109,12 @@ public final class ConfigLoader {
         for (int i = 0; i < list.size(); i++) {
             String p = "accounts[" + i + "]";
             Section s = new Section(list.get(i), p);
+            JsonNode auth = s.take("auth");
+            if (auth != null) {
+                throw new ConfigException(p + ".auth: " + (auth.isString() && "xoauth2".equals(auth.stringValue())
+                        ? "xoauth2 is not available in stdio and http-local (upstream OAuth is http-public only)"
+                        : "unknown key"));
+            }
             String id = s.string("id", null);
             if (!ACCOUNT_ID.matcher(id).matches()) {
                 throw new ConfigException(p + ".id: must match [a-z0-9-]{1,32}");
@@ -303,6 +317,11 @@ public final class ConfigLoader {
             return new Section(take(key), path(key));
         }
 
+        /** The keys present, in file order (for maps keyed by an id). */
+        List<String> keys() {
+            return node == null ? List.of() : new ArrayList<>(node.propertyNames());
+        }
+
         void finish() {
             if (node == null) {
                 return;
@@ -485,21 +504,36 @@ public final class ConfigLoader {
             return r;
         }
 
+        /** Like {@link #requiredRef(String)}, but only the given prefixes (each with a colon) are references. */
+        SecretRef requiredRef(String key, String... prefixes) {
+            SecretRef r = optionalRef(key, prefixes);
+            if (r == null) {
+                throw new ConfigException(path(key) + ": required");
+            }
+            return r;
+        }
+
         /** Syntactic check only: the value is never echoed, and it is not resolved here. */
         SecretRef optionalRef(String key) {
+            return optionalRef(key, "env:", "file:", "keyring:");
+        }
+
+        private SecretRef optionalRef(String key, String... prefixes) {
             JsonNode n = take(key);
             if (n == null) {
                 return null;
             }
             String v = n.isString() ? n.stringValue() : "";
             boolean ok = false;
-            for (String prefix : new String[]{"env:", "file:", "keyring:"}) {
+            for (String prefix : prefixes) {
                 if (v.startsWith(prefix) && v.length() > prefix.length()) {
                     ok = true;
                 }
             }
             if (!ok) {
-                throw new ConfigException(path(key) + ": must be a secret reference (env:, file: or keyring:)");
+                throw new ConfigException(path(key) + ": must be a secret reference ("
+                        + String.join(", ", java.util.Arrays.stream(prefixes).toList()).replaceAll(", ([^,]*)$", " or $1")
+                        + ")");
             }
             return new SecretRef(v);
         }

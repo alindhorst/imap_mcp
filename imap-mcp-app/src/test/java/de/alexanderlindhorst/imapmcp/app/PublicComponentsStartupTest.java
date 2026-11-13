@@ -406,6 +406,79 @@ class PublicComponentsStartupTest {
         }
     }
 
+    private static final String UPSTREAM = BASE.replace("allowedHosts: [\"imap.example.com\"]",
+            "allowedHosts: [\"imap.example.com\", \"imap.gmail.com\", \"outlook.office365.com\"]")
+            .replace("  webClientSecret: env:WEB_SECRET\n",
+            "  webClientSecret: env:WEB_SECRET\n  upstream:\n    providers:\n"
+                    + "      gmail:\n        kind: google\n        clientId: CLIENT-ID-CANARY\n"
+                    + "        clientSecret: env:G_SECRET\n"
+                    + "      work-ms:\n        kind: microsoft\n        clientId: CLIENT-ID-CANARY-2\n"
+                    + "        clientSecret: env:M_SECRET\n"
+                    + "      corp:\n        kind: generic\n        clientId: CLIENT-ID-CANARY-3\n"
+                    + "        clientSecret: env:C_SECRET\n"
+                    + "        authorizationEndpoint: https://login.corp.example.net/authorize\n"
+                    + "        tokenEndpoint: https://login.corp.example.net/token\n"
+                    + "        scopes: [\"imap\"]\n        imap:\n          host: imap.example.com\n");
+
+    private Map<String, String> upstreamEnv() {
+        Map<String, String> env = env();
+        env.put("G_SECRET", "GSECRET-CANARY");
+        env.put("M_SECRET", "MSECRET-CANARY");
+        env.put("C_SECRET", "CSECRET-CANARY");
+        return env;
+    }
+
+    private List<ILoggingEvent> startupLog(String yaml, Map<String, String> env) {
+        Logger log = (Logger) LoggerFactory.getLogger("imapmcp");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Level old = log.getLevel();
+        log.setLevel(Level.TRACE);
+        appender.start();
+        log.addAppender(appender);
+        try {
+            assertThatThrownBy(() -> start(yaml, env)).isInstanceOf(AppStartupException.class); // no database here
+            return new java.util.ArrayList<>(appender.list);
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(old);
+        }
+    }
+
+    @Test
+    void anUnresolvableUpstreamClientSecretFailsStartupNamingThePathBeforeTheDatabaseIsOpened() {
+        Map<String, String> env = upstreamEnv();
+        env.remove("M_SECRET");
+        assertThatThrownBy(() -> start(UPSTREAM, env)).isInstanceOf(AppStartupException.class)
+                .hasMessageContaining("oauth.upstream.providers.work-ms.clientSecret")
+                .hasMessageContaining("config.yaml").hasMessageNotContaining("CANARY");
+    }
+
+    @Test
+    void eachGoogleAndMicrosoftProviderGivesAnUnverifiedWarningWithItsIdOnly() {
+        List<ILoggingEvent> log = startupLog(UPSTREAM, upstreamEnv());
+        for (String id : List.of("gmail", "work-ms")) {
+            assertThat(log).anySatisfy(e -> {
+                assertThat(e.getLevel()).isEqualTo(Level.WARN);
+                assertThat(e.getFormattedMessage()).contains("not verified against the real provider").contains(id);
+            });
+        }
+        assertThat(log).filteredOn(e -> e.getFormattedMessage().contains("not verified against the real provider"))
+                .hasSize(2).noneSatisfy(e -> assertThat(e.getFormattedMessage()).contains("corp"));
+    }
+
+    @Test
+    void theStartupLogHoldsNeitherAClientIdNorAClientSecret() {
+        List<ILoggingEvent> log = startupLog(UPSTREAM, upstreamEnv());
+        assertThat(log).isNotEmpty().allSatisfy(e -> assertThat(e.getFormattedMessage() + e.getThrowableProxy())
+                .doesNotContain("CANARY"));
+    }
+
+    @Test
+    void noUnverifiedWarningWithoutGoogleOrMicrosoftProviders() {
+        assertThat(startupLog(BASE)).noneSatisfy(
+                e -> assertThat(e.getFormattedMessage()).contains("not verified against the real provider"));
+    }
+
     @Test
     void initializeRateWithoutStatefulGivesAStartupWarning() {
         assertThat(startupLog(BASE + "http:\n  initializeRatePerMinute: 5\n")).anySatisfy(e -> {

@@ -3,6 +3,7 @@ package de.alexanderlindhorst.imapmcp.app;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.alexanderlindhorst.imapmcp.app.config.PublicConfigLoader;
+import de.alexanderlindhorst.imapmcp.app.config.UpstreamProvider;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.dataformat.yaml.YAMLMapper;
@@ -50,6 +52,26 @@ class DistDockerTest {
         } catch (IOException | InterruptedException e) {
             return true;
         }
+    }
+
+    @Test
+    void configExampleCarriesACommentedOutUpstreamOauthExampleThatLoadsWhenUncommented(@TempDir Path tmp)
+            throws IOException {
+        Path example = DOCKER.resolve("config.yaml.example");
+        assertThat(PublicConfigLoader.load(example, Map.of()).oauth().upstreamProviders()).isEmpty();
+        StringBuilder out = new StringBuilder();
+        boolean in = false;
+        for (String line : read(example).split("\n", -1)) {
+            in = in ? line.startsWith("  #") : line.equals("  # upstream:");
+            out.append(in ? "  " + line.substring(4) : line).append('\n');
+        }
+        Path file = tmp.resolve("config.yaml");
+        // the owner adds the provider IMAP hosts to ssrf.allowedHosts, as the example's comment says
+        Files.writeString(file, out.toString().replace("allowedHosts: [\"imap.example.com\"]",
+                "allowedHosts: [\"imap.example.com\", \"imap.gmail.com\", \"outlook.office365.com\"]"));
+        var providers = PublicConfigLoader.load(file, Map.of()).oauth().upstreamProviders();
+        assertThat(providers).extracting(UpstreamProvider::id).containsExactly("gmail", "work-microsoft", "corp");
+        assertThat(providers).allSatisfy(p -> assertThat(p.clientSecret().value()).matches("(env|file):.+"));
     }
 
     @Test

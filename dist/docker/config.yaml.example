@@ -10,6 +10,33 @@ oauth:
   requiredRole: imap-mcp-user
   webClientId: imap-mcp-web
   webClientSecret: env:WEB_CLIENT_SECRET
+  # upstream:
+  #   providers:
+  #     # Experimental XOAUTH2 (SPEC 5.7, v0.29), not verified against the real providers. Uncomment to enable.
+  #     # Secrets are env: or file: references only. The redirect URI to register is
+  #     # <public.baseUrl>/accounts/oauth/<id>/callback. The IMAP host of every provider (imap.gmail.com,
+  #     # outlook.office365.com, or imap.host) must be in ssrf.allowedHosts, or startup fails.
+  #     gmail:
+  #       kind: google
+  #       clientId: your-google-client-id
+  #       clientSecret: env:GOOGLE_CLIENT_SECRET
+  #       label: Gmail
+  #     work-microsoft:
+  #       kind: microsoft
+  #       clientId: your-microsoft-client-id
+  #       clientSecret: env:MICROSOFT_CLIENT_SECRET
+  #       tenant: organizations
+  #     corp:
+  #       kind: generic
+  #       clientId: your-client-id
+  #       clientSecret: file:/run/secrets/corp_client_secret
+  #       authorizationEndpoint: https://login.corp.example.com/authorize
+  #       tokenEndpoint: https://login.corp.example.com/token
+  #       scopes: ["https://imap.example.com/.default", "offline_access"]
+  #       imap:
+  #         host: imap.example.com
+  #         port: 993
+  #         security: implicit-tls
 public:
   baseUrl: https://mail.example.com
 security:
