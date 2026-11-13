@@ -24,7 +24,10 @@ class UpstreamProviderConfigTest {
     }
 
     private static PublicConfig bind(String providers) {
-        return PublicConfigLoader.bindYaml(withProviders(providers), Map.of());
+        // the fixed IMAP hosts of google and microsoft must be allowed like any other (SPEC 5.7)
+        return PublicConfigLoader.bindYaml(withProviders(providers).replace(
+                "allowedHosts: [\"imap.example.com\"",
+                "allowedHosts: [\"imap.gmail.com\", \"outlook.office365.com\", \"imap.example.com\""), Map.of());
     }
 
     private static final String GENERIC = block("""
@@ -312,6 +315,21 @@ class UpstreamProviderConfigTest {
         // a suffix pattern matches
         assertThat(bind(GENERIC.replace("host: imap.example.com", "host: imap.mail.example.net"))
                 .oauth().upstreamProviders()).hasSize(1);
+    }
+
+    @Test
+    void theFixedImapHostsOfGoogleAndMicrosoftMustBeInTheSsrfAllowlistToo() {
+        String google = provider("g1", "kind: google\nclientId: c\nclientSecret: env:S\n");
+        String ms = provider("m1", "kind: microsoft\nclientId: c\nclientSecret: env:S\n");
+        assertThatThrownBy(() -> PublicConfigLoader.bindYaml(withProviders(google), Map.of()))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("oauth.upstream.providers.g1").hasMessageContaining("ssrf.allowedHosts");
+        assertThatThrownBy(() -> PublicConfigLoader.bindYaml(withProviders(ms), Map.of()))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("oauth.upstream.providers.m1").hasMessageContaining("ssrf.allowedHosts");
+        String anyHost = withProviders(google + ms).replace(
+                "allowedHosts: [\"imap.example.com\", \"*.mail.example.net\"]", "allowAnyPublicHost: true");
+        assertThat(PublicConfigLoader.bindYaml(anyHost, Map.of()).oauth().upstreamProviders()).hasSize(2);
     }
 
     @Test
