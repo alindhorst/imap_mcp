@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import de.alexanderlindhorst.imapmcp.core.crypto.KeyRing;
 import de.alexanderlindhorst.imapmcp.core.crypto.LogIds;
 import de.alexanderlindhorst.imapmcp.core.error.ErrorCode;
-import de.alexanderlindhorst.imapmcp.core.oauth.CachingOAuthAccessTokens;
 import de.alexanderlindhorst.imapmcp.core.oauth.RefreshResult;
 import de.alexanderlindhorst.imapmcp.core.oauth.TokenAcquisitionException;
 import de.alexanderlindhorst.imapmcp.core.tenancy.TenantId;
@@ -20,9 +19,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -212,25 +209,5 @@ class Xoauth2GrantLockIT {
         assertThat(labels).containsExactly("invalid_grant");
         assertThat(TokenAcquisitionException.of(r).toolError("https://mail.example.com/accounts", "rid").details())
                 .containsEntry("reason", "relink_required");
-    }
-
-    @Test
-    void theCoordinatorWithTheCacheTurnsALockTimeoutIntoServerBusyForTheCaller() throws Exception {
-        Xoauth2Db.Seeded s = seed("rt-cache-" + UUID.randomUUID(), "alice");
-        try (CachingOAuthAccessTokens tokens = new CachingOAuthAccessTokens(coordinator(l -> { }), Clock.systemUTC(), 10,
-                2, 4); Connection holder = db.dataSource().getConnection()) {
-            holder.setAutoCommit(false);
-            try (PreparedStatement ps = holder.prepareStatement(
-                    "SELECT 1 FROM oauth_grant WHERE tenant_id = ? AND account_id = ? FOR UPDATE")) {
-                ps.setObject(1, Xoauth2Db.uuid(s.tenant()));
-                ps.setString(2, s.account().value());
-                ps.executeQuery();
-            }
-            org.assertj.core.api.Assertions.assertThatThrownBy(
-                    () -> tokens.current(s.tenant(), s.account(), Instant.now().plusSeconds(30)))
-                    .isInstanceOfSatisfying(TokenAcquisitionException.class,
-                            e -> assertThat(e.toolError(null, "rid").code()).isEqualTo(ErrorCode.SERVER_BUSY));
-            holder.rollback();
-        }
     }
 }

@@ -19,7 +19,7 @@ import javax.sql.DataSource;
 final class Xoauth2Db {
 
     static final String PROVIDER = "stub";
-    private static final String BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    private static final String BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private Xoauth2Db() {
