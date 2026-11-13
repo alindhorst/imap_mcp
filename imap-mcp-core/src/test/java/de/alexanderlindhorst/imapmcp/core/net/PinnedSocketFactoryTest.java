@@ -93,6 +93,46 @@ class PinnedSocketFactoryTest {
     }
 
     @Test
+    void theTestPortMappingChangesOnlyTheTcpPortAfterThePortCheck() throws Exception {
+        PinnedSocketFactory f = new PinnedSocketFactory(SsrfPolicy.of(List.of(), true, List.of()),
+                h -> new InetAddress[] {named(NAME, 127, 0, 0, 1)}, ALLOW_LOOPBACK, p -> p == 993, p -> port);
+        try (Socket s = f.createSocket()) {
+            s.connect(InetSocketAddress.createUnresolved(NAME, 993), 5000);
+            assertThat(s.getInetAddress().isLoopbackAddress()).isTrue();
+            assertThat(s.getPort()).as("connected to the mapped port").isEqualTo(port);
+        }
+        try (Socket s = f.createSocket()) {
+            assertThatThrownBy(() -> s.connect(InetSocketAddress.createUnresolved(NAME, port), 5000))
+                    .as("the check still sees the requested port, not the mapped one")
+                    .isInstanceOf(AddressBlockedException.class);
+        }
+    }
+
+    @Test
+    void aMappedPortStillRefusesABlockedAddressBeforeAnyConnect() throws Exception {
+        AtomicInteger lookups = new AtomicInteger();
+        PinnedSocketFactory f = new PinnedSocketFactory(SsrfPolicy.of(List.of(), true, List.of()), h -> {
+            lookups.incrementAndGet();
+            return new InetAddress[] {named(NAME, 127, 0, 0, 1), named(NAME, 10, 0, 0, 5)};
+        }, ALLOW_LOOPBACK, p -> p == 993, p -> port);
+        try (Socket s = f.createSocket()) {
+            assertThatThrownBy(() -> s.connect(InetSocketAddress.createUnresolved(NAME, 993), 5000))
+                    .isInstanceOf(AddressBlockedException.class);
+            assertThat(s.isConnected()).isFalse();
+        }
+        assertThat(lookups).hasValue(1);
+    }
+
+    @Test
+    void theProductionConstructorsKeepTheRequestedPort() throws Exception {
+        PinnedSocketFactory f = factory(h -> new InetAddress[] {named(NAME, 127, 0, 0, 1)}, ALLOW_LOOPBACK);
+        try (Socket s = f.createSocket()) {
+            s.connect(InetSocketAddress.createUnresolved(NAME, port), 5000);
+            assertThat(s.getPort()).isEqualTo(port);
+        }
+    }
+
+    @Test
     void theRealTableBlocksLoopbackFixture() throws Exception {
         PinnedSocketFactory f = new PinnedSocketFactory(SsrfPolicy.of(List.of(), true, List.of()),
                 h -> new InetAddress[] {named(NAME, 127, 0, 0, 1)}, new AddressBlocklist(List.of())::isBlocked,

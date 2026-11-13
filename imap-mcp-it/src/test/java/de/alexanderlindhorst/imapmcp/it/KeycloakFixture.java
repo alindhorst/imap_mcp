@@ -18,6 +18,9 @@ import org.testcontainers.utility.MountableFile;
  *   <li>{@value #REALM}, the linking surface (C1): confidential client {@value #CLIENT_ID} with PKCE S256, users alice
  *       and carol with the role {@code imap-user} and bob without. Its issuer is derived from the request host, so
  *       {@link #issuer()} is the issuer for clients that use {@link #baseUrl()}.
+ *       The same realm has the strict-rotation settings (Revoke Refresh Token, max reuse 0) and a second confidential
+ *       client {@value #UPSTREAM_CLIENT_ID} that serves as the {@code generic} upstream OAuth provider of the XOAUTH2
+ *       linking ITs (#500; email in the access token).
  *   <li>{@value #PUBLIC_REALM} and {@value #OTHER_REALM}, the resource server of {@code http-public} (B6): public
  *       test clients that issue real access tokens by the password grant (audience mapper for {@value #RESOURCE},
  *       optional scopes {@code imap-mcp:read} and {@code imap-mcp:write}). Their realm attribute {@code frontendUrl}
@@ -38,6 +41,12 @@ public final class KeycloakFixture extends GenericContainer<KeycloakFixture> {
     public static final String BOB = "bob";
     public static final String BOB_PASSWORD = "bob-pw";
 
+    // upstream OAuth provider (X1-3, #500): a second confidential client of the linking-surface realm
+    public static final String UPSTREAM_CLIENT_ID = "imap-mcp-upstream";
+    public static final String UPSTREAM_CLIENT_SECRET = "upstream-secret-for-tests";
+    public static final String ADMIN_USER = "admin";
+    public static final String ADMIN_PASSWORD = "admin-for-tests";
+
     // resource server (B6)
     public static final String PUBLIC_REALM = "imap-public";
     public static final String OTHER_REALM = "imap-other";
@@ -55,8 +64,8 @@ public final class KeycloakFixture extends GenericContainer<KeycloakFixture> {
         withStartupAttempts(3);
         // bounded heap: the JVM default is a quarter of the host memory, which hurts when ITs run in parallel
         withEnv("JAVA_OPTS_KC_HEAP", "-Xms128m -Xmx768m");
-        withEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin");
-        withEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin-for-tests");
+        withEnv("KC_BOOTSTRAP_ADMIN_USERNAME", ADMIN_USER);
+        withEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", ADMIN_PASSWORD);
         for (String realm : new String[] {"imap-realm", "imap-public-realm", "imap-other-realm"}) {
             withCopyFileToContainer(MountableFile.forClasspathResource("keycloak/" + realm + ".json"),
                     "/opt/keycloak/data/import/" + realm + ".json");

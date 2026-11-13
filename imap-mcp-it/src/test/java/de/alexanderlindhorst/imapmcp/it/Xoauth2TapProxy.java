@@ -26,11 +26,21 @@ final class Xoauth2TapProxy implements AutoCloseable {
     private final String upstreamHost;
     private final int upstreamPort;
     private final SSLContext upstreamTls;
+    private final boolean plainUpstream;
+    private volatile String hostHeader;
     private final StringBuilder client = new StringBuilder();
     private final StringBuilder server = new StringBuilder();
+    private final java.util.Set<Socket> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
 
     Xoauth2TapProxy(SSLContext serverTls, String upstreamHost, int upstreamPort) throws Exception {
+        this(serverTls, upstreamHost, upstreamPort, false);
+    }
+
+    /** {@code plainUpstream}: the relay terminates TLS only and talks plain TCP to the target (an http Keycloak). */
+    Xoauth2TapProxy(SSLContext serverTls, String upstreamHost, int upstreamPort, boolean plainUpstream)
+            throws Exception {
+        this.plainUpstream = plainUpstream;
         this.upstreamHost = upstreamHost;
         this.upstreamPort = upstreamPort;
         TrustManager trustAll = new X509TrustManager() {
@@ -54,6 +64,27 @@ final class Xoauth2TapProxy implements AutoCloseable {
         Thread acceptor = new Thread(this::acceptLoop, "xoauth2-tap-accept");
         acceptor.setDaemon(true);
         acceptor.start();
+    }
+
+    /**
+     * Replaces the {@code Host} header of the first request line block of each connection (an HTTP target that derives
+     * its issuer from the request host, #500). Null: bytes pass unchanged.
+     */
+    Xoauth2TapProxy rewriteHost(String host) {
+        this.hostHeader = host;
+        return this;
+    }
+
+    /** Closes every relayed connection now (the client's pooled connections die; new ones are accepted as usual). */
+    void dropConnections() {
+        for (Socket s : open) {
+            try {
+                s.close();
+            } catch (IOException ignored) {
+                // already closed
+            }
+        }
+        open.clear();
     }
 
     int port() {
@@ -96,25 +127,37 @@ final class Xoauth2TapProxy implements AutoCloseable {
     }
 
     private void relay(Socket in) {
-        try (Socket down = in; SSLSocket up = (SSLSocket) upstreamTls.getSocketFactory().createSocket(upstreamHost,
-                upstreamPort)) {
-            up.startHandshake();
-            Thread back = new Thread(() -> pump(up, down, server), "xoauth2-tap-back");
+        try (Socket down = in; Socket up = plainUpstream ? new Socket(upstreamHost, upstreamPort)
+                : upstreamTls.getSocketFactory().createSocket(upstreamHost, upstreamPort)) {
+            open.add(down);
+            open.add(up);
+            if (up instanceof SSLSocket tls) {
+                tls.startHandshake();
+            }
+            Thread back = new Thread(() -> pump(up, down, server, null), "xoauth2-tap-back");
             back.setDaemon(true);
             back.start();
-            pump(down, up, client);
+            pump(down, up, client, hostHeader);
         } catch (IOException e) {
             // the peer went away; nothing to record
         }
     }
 
-    private static void pump(Socket from, Socket to, StringBuilder record) {
+    private static void pump(Socket from, Socket to, StringBuilder record, String rewriteHost) {
+        boolean first = true;
         try {
             InputStream in = from.getInputStream();
             OutputStream out = to.getOutputStream();
             byte[] buf = new byte[8192];
             int n;
             while ((n = in.read(buf)) >= 0) {
+                if (first && rewriteHost != null) {
+                    String head = new String(buf, 0, n, StandardCharsets.ISO_8859_1)
+                            .replaceFirst("(?im)^Host:[^\\r\\n]*", "Host: " + rewriteHost);
+                    buf = head.getBytes(StandardCharsets.ISO_8859_1);
+                    n = buf.length;
+                }
+                first = false;
                 synchronized (record) {
                     record.append(new String(buf, 0, n, StandardCharsets.ISO_8859_1));
                 }

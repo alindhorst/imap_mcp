@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.function.IntPredicate;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 import javax.net.SocketFactory;
 
@@ -38,6 +39,7 @@ public final class PinnedSocketFactory extends SocketFactory {
     private final Resolver resolver;
     private final Predicate<InetAddress> blocked;
     private final IntPredicate portAllowed;
+    private final IntUnaryOperator connectPort;
 
     public PinnedSocketFactory(SsrfPolicy policy) {
         this(policy, InetAddress::getAllByName, Objects.requireNonNull(policy, "policy")::isBlocked,
@@ -47,6 +49,17 @@ public final class PinnedSocketFactory extends SocketFactory {
     /** Test seam: own resolver, block predicate and port predicate. Never fed from config. */
     public PinnedSocketFactory(SsrfPolicy policy, Resolver resolver, Predicate<InetAddress> blocked,
             IntPredicate portAllowed) {
+        this(policy, resolver, blocked, portAllowed, IntUnaryOperator.identity());
+    }
+
+    /**
+     * Test seam, package-private (an IT reaches it through a helper in this package): as above, and {@code connectPort}
+     * maps the configured port to the TCP port actually connected to. The port check, the block list and the pinning
+     * all run on the configured port and the checked address; only the final connect target is mapped.
+     */
+    PinnedSocketFactory(SsrfPolicy policy, Resolver resolver, Predicate<InetAddress> blocked,
+            IntPredicate portAllowed, IntUnaryOperator connectPort) {
+        this.connectPort = Objects.requireNonNull(connectPort, "connectPort");
         this.policy = Objects.requireNonNull(policy, "policy");
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.blocked = Objects.requireNonNull(blocked, "blocked");
@@ -135,7 +148,8 @@ public final class PinnedSocketFactory extends SocketFactory {
                 RefusalMarker.mark(); // here only: link-time checks run on pooled threads (see RefusalMarker)
                 throw e;
             }
-            super.connect(target, timeout);
+            super.connect(connectPort.applyAsInt(target.getPort()) == target.getPort() ? target
+                    : new InetSocketAddress(target.getAddress(), connectPort.applyAsInt(target.getPort())), timeout);
         }
     }
 }
