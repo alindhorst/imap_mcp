@@ -299,6 +299,30 @@ public record ToolError(ErrorCode code, String message, String hint, Integer ret
                 detail("reason", "relink_required", "link_url", linkUrl), requestId);
     }
 
+    /** The provider refused the server's OAuth client (SPEC 5.5, XOAUTH2); the operator must act. Not retryable. */
+    public static ToolError oauthClientRejected(String requestId) {
+        String hint = "The provider rejected the server's OAuth client; the operator must check the provider registration. "
+                + "Do not retry.";
+        return of(ErrorCode.UPSTREAM_ERROR, "The mail provider refused the server's OAuth client. " + hint, hint,
+                detail("reason", "oauth_client_rejected"), requestId);
+    }
+
+    /** The token endpoint is unavailable (5xx, timeout, 429); {@code retryAfterMs} is capped at 60 s (SPEC 5.5). */
+    public static ToolError tokenRefreshUnavailable(long retryAfterMs, String requestId) {
+        int capped = (int) Math.max(0, Math.min(retryAfterMs, 60_000));
+        return new ToolError(ErrorCode.UPSTREAM_UNAVAILABLE,
+                "The provider's token endpoint is temporarily unavailable. Retry later.",
+                "Retry the same call after retry_after_ms.", capped, detail("reason", "token_refresh_unavailable"),
+                requestId);
+    }
+
+    /** The account's provider id is no longer configured (SPEC 5.5). Not retryable. */
+    public static ToolError providerUnconfigured(String requestId) {
+        String hint = "The account's provider is no longer configured; the operator must restore it. Do not retry.";
+        return of(ErrorCode.UPSTREAM_ERROR, "The account's mail provider is not configured. " + hint, hint,
+                detail("reason", "provider_unconfigured"), requestId);
+    }
+
     /** purge_messages on an account without {@code allowPurge} (SPEC 4 check order step 3). */
     public static ToolError purgeDisabled(String requestId) {
         String hint = "Permanent deletion is off for this account; the operator enables it with accounts[].allowPurge "
