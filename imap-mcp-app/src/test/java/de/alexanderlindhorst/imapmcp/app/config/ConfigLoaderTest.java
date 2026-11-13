@@ -202,6 +202,26 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void anOauthUpstreamKeyFailsStartupInTheSingleTenantModesNamingThePath() {
+        assertThatThrownBy(() -> load(ACCOUNT + "oauth:\n  upstream:\n    providers: {}\n"))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("oauth.upstream: not available in stdio and http-local")
+                .hasMessageContaining("http-public");
+        assertThatThrownBy(() -> load(ACCOUNT + "oauth:\n  other: 1\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("oauth: unknown key");
+    }
+
+    @Test
+    void authXoauth2InAnAccountFailsStartupNamingThePath() {
+        assertThatThrownBy(() -> load(ACCOUNT + "    auth: xoauth2\n"))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("accounts[0].auth: xoauth2 is not available in stdio and http-local")
+                .hasMessageContaining("http-public");
+        assertThatThrownBy(() -> load(ACCOUNT + "    auth: password\n"))
+                .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].auth: unknown key");
+    }
+
+    @Test
     void allowPurgeMustBeBoolean() {
         assertThatThrownBy(() -> load(ACCOUNT + "    allowPurge: maybe\n"))
                 .isInstanceOf(ConfigException.class).hasMessageContaining("accounts[0].allowPurge");
