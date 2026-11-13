@@ -509,4 +509,17 @@ class ReadmeTest {
         assertThat(sec.group(1)).contains("`oauth_client_rejected`").contains("`token_refresh_unavailable`")
                 .contains("`provider_unconfigured`").contains("`xoauth2_rejected`");
     }
+
+    /** #328: the smoke section documents the XOAUTH2 smoke variables, the Docker need and its unrun status. */
+    @Test
+    void theSmokeSectionDocumentsTheXoauth2SmokeAndMarksItNotYetRun() {
+        String start = readme.substring(readme.indexOf("### Smoke tests (opt-in)"));
+        String section = start.substring(0, start.indexOf("\n### Notes"));
+        for (String v : new String[] {"IMAP_MCP_SMOKE_<GMAIL|M365>_USER", "_OAUTH_CLIENT_ID", "_OAUTH_CLIENT_SECRET_REF",
+                "_OAUTH_REFRESH_TOKEN", "_OAUTH_REVOKED_REFRESH_TOKEN", "_OAUTH_TENANT", "IMAP_MCP_SMOKE_OAUTH_WRITE",
+                "IMAP_MCP_SMOKE_OAUTH_PURGE_SUBJECT"}) {
+            assertThat(section).as(v).contains(v);
+        }
+        assertThat(section).contains("Docker").contains("pending, not yet run");
+    }
 }
