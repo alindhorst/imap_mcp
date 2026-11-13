@@ -262,6 +262,8 @@ public final class UpstreamLinking implements UpstreamLinker {
                     provider.id(), host, port, security, flavor, row.readOnly(), scope), g.refreshToken().chars(),
                     maxAccounts, requestId);
             return done(UpstreamOutcome.OK, false);
+        } catch (UpstreamAccountStore.TenantDisabledException e) {
+            return outcome(type, row, UpstreamOutcome.TENANT_DISABLED, "tenant_disabled");
         } catch (UpstreamAccountStore.DuplicateException e) {
             return outcome(type, row, UpstreamOutcome.DUPLICATE, "duplicate");
         } catch (LinkedAccountStore.LimitReachedException e) {
